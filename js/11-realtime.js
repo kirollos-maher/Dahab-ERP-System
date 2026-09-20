@@ -869,9 +869,14 @@
      محاكي أحداث Realtime للاستخدام بدون Supabase
      ═════════════════════════════════════════════════════════════════════ */
 
-  function startDemoSimulator() {
-    if (RTState.demoRunning) return;
+function startDemoSimulator() {
+  /* ✅ لا تعمل تلقائياً — فقط عند الطلب اليدوي */
+  if (window.ENABLE_DEMO_SIMULATOR !== true) {
+    console.log('[RT] Demo simulator disabled (manual mode)');
+    return;
+  }
 
+  if (RTState.demoRunning) return;
     RTState.demoRunning = true;
     RTState.connectedAt = new Date().toISOString();
 
