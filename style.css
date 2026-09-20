@@ -5074,5 +5074,121 @@ kbd{
 
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §73 · SOURCE ORDER — END OF style.css
-   ══════════════════════════════════════
+   §75 · Filter Select & Inputs (توضيح الرؤية)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* حقل الفلتر المنسدل */
+.filter-select {
+  padding: 9px 32px 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all var(--transition);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7a95' stroke-width='2.5' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: left 10px center;
+  background-size: 12px;
+  font-family: var(--font-ui);
+}
+
+html[dir="ltr"] .filter-select {
+  background-position: right 10px center;
+  padding: 9px 12px 9px 32px;
+}
+
+.filter-select:hover {
+  border-color: var(--border-strong);
+  background-color: var(--surface-2);
+}
+
+.filter-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+  background-color: var(--surface);
+}
+
+/* خيارات القائمة المنسدلة */
+.filter-select option {
+  background-color: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
+/* الوضع الداكن */
+[data-theme="dark"] .filter-select {
+  background-color: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] .filter-select:hover {
+  background-color: var(--surface-3);
+}
+
+[data-theme="dark"] .filter-select option {
+  background-color: #131e34;
+  color: #e8eefb;
+}
+
+/* حقل البحث النصي */
+.search-wrap input {
+  color: var(--text);
+  background-color: var(--surface);
+}
+
+.search-wrap input::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .search-wrap input {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+
+[data-theme="dark"] .search-wrap input::placeholder {
+  color: var(--muted);
+}
+
+/* حقل التاريخ */
+input[type="date"] {
+  color: var(--text);
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-family: var(--font-ui);
+}
+
+input[type="date"]:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+[data-theme="dark"] input[type="date"] {
+  background-color: var(--surface-2);
+  color-scheme: dark;
+}
+
+/* إصلاح أي input عام داخل toolbar */
+.toolbar-row input:not([type="checkbox"]):not([type="radio"]),
+.toolbar input:not([type="checkbox"]):not([type="radio"]) {
+  color: var(--text);
+  background-color: var(--surface);
+}
+
+[data-theme="dark"] .toolbar-row input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="dark"] .toolbar input:not([type="checkbox"]):not([type="radio"]) {
+  color: var(--text);
+  background-color: var(--surface-2);
+}
