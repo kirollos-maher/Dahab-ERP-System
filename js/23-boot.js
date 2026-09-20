@@ -186,8 +186,15 @@
 
       if (errEl) errEl.classList.add('hidden');
 
-      try {
+            try {
         const profile = await GMS.Auth.signIn(email, password);
+
+        /* ✅ إخفاء شاشة تسجيل الدخول وإظهار التطبيق */
+        const loginScreen = document.getElementById('login-screen');
+        if (loginScreen) loginScreen.style.display = 'none';
+
+        const app = document.getElementById('app');
+        if (app) app.classList.add('visible');
 
         if (GMS.Audit) {
           await GMS.Audit.log(
