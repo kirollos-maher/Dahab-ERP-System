@@ -164,7 +164,7 @@
     'returns',
     'analytics',
     'loss',
-    'repair',      // ✅ NEW
+    'repair',
     'audit',
     'queue',
     'settings',
@@ -549,10 +549,29 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
+   * ✅ فحص إذا كان هناك Modal مفتوح
+   * @returns {boolean}
+   */
+  function isModalOpen() {
+    if (!GMS.Modal) return false;
+    if (typeof GMS.Modal.count !== 'function') return false;
+    return GMS.Modal.count() > 0;
+  }
+
+  /**
    * جدولة إعادة تصيير للصفحة الحالية (debounced)
    * مفيد عند وصول أحداث Realtime متعددة
+   *
+   * ✅ التحديث: لا يُعيد التصيير إذا كان هناك Modal مفتوح
+   *    (يمنع إغلاق Modal "إضافة صنف" عند وصول حدث Realtime)
    */
   function scheduleRerender(delay) {
+    /* ✅ لا تُعِد التصيير إذا كان هناك Modal مفتوح */
+    if (isModalOpen()) {
+      console.log('[Router] Skipping rerender — modal is open');
+      return;
+    }
+
     if (RState.scheduledRerender) {
       clearTimeout(RState.scheduledRerender);
     }
@@ -561,6 +580,14 @@
 
     RState.scheduledRerender = setTimeout(async () => {
       RState.scheduledRerender = null;
+
+      /* ✅ فحص إضافي عند تنفيذ Rerender — قد يكون Modal فُتح بعد الجدولة */
+      if (isModalOpen()) {
+        console.log('[Router] Deferred rerender — modal opened meanwhile');
+        // جدول مرة أخرى بعد فترة قصيرة
+        scheduleRerender(d);
+        return;
+      }
 
       /* تجاهل إذا كان هناك تصيير جارٍ */
       if (RState.rendering) {
@@ -967,6 +994,7 @@
       historyLength: RState.history.length,
       accessible: getAccessibleRoutes().length,
       total: TAB_ORDER.length,
+      modalOpen: isModalOpen(),
     };
   }
 
@@ -999,6 +1027,7 @@
     /* Schedule */
     scheduleRerender,
     cancelScheduledRerender,
+    isModalOpen,
 
     /* Routes */
     getRoutes,
@@ -1046,6 +1075,11 @@
   console.log(
     `%c📍 ${TAB_ORDER.length} routes · Guards · Scheduled rerender · Alt+1..9 shortcuts`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🛡️  Modal-aware: rerender يُؤجَّل تلقائياً عند فتح Modal`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
