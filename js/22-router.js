@@ -10,7 +10,7 @@
      - Navigation history
      - Browser back/forward
      - Route guards
-     - ✅ Form Interaction Tracker (يحمي النماذج أثناء الكتابة)
+     - ✅ Form Interaction Tracker (يحمي النماذج والفلاتر أثناء التفاعل)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -20,6 +20,16 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · ROUTES DEFINITION
+     ─────────────────────────────────────────────────────────────────────
+     تعريف كل الصفحات مع:
+     - id: مفتاح الصفحة
+     - label: العنوان في التبويب
+     - subtitle: العنوان الفرعي
+     - icon: أيقونة Lucide
+     - permission: الصلاحية المطلوبة (اختياري)
+     - roles: الأدوار المسموحة (اختياري)
+     - view: اسم الـ View في GMS.Views
+     - hidden: إخفاء من التبويبات (اختياري)
      ═════════════════════════════════════════════════════════════════════ */
   const ROUTES = {
     dashboard: {
@@ -145,6 +155,7 @@
     },
   };
 
+  /* ترتيب التبويبات في الواجهة */
   const TAB_ORDER = [
     'dashboard',
     'pos',
@@ -163,15 +174,22 @@
      §2 · ROUTER STATE
      ═════════════════════════════════════════════════════════════════════ */
   const RState = {
+    /* الصفحة الحالية */
     current: null,
     previous: null,
+
+    /* هل الراوتر جاهز؟ */
     initialized: false,
+
+    /* هل نحن في عملية تصيير؟ */
     rendering: false,
+
+    /* آخر render time */
     lastRenderAt: null,
 
     /* Scheduled rerender */
     scheduledRerender: null,
-    scheduledDelay: 400,
+    scheduledDelay: 400,   /* ms */
 
     /* سجل التنقل */
     history: [],
@@ -192,6 +210,7 @@
 
   /**
    * قراءة hash الحالي
+   * @returns {string}
    */
   function getHashRoute() {
     const hash = location.hash || '';
@@ -201,6 +220,7 @@
 
   /**
    * كتابة hash جديد بدون إعادة تحميل
+   * @param {string} route
    */
   function setHashRoute(route) {
     const newHash = '#/' + route;
@@ -211,16 +231,20 @@
 
   /**
    * التحقق من صلاحية المسار
+   * @param {Object} route
+   * @returns {{allowed: boolean, reason: string}}
    */
   function checkRouteAccess(route) {
     if (!route) {
       return { allowed: false, reason: 'ROUTE_NOT_FOUND' };
     }
 
+    /* إذا لم يكن هناك Auth — اسمح (وضع تجريبي) */
     if (!GMS.Auth?.profile) {
       return { allowed: true, reason: '' };
     }
 
+    /* فحص الصلاحية */
     if (route.permission && !GMS.Auth.can(route.permission)) {
       return {
         allowed: false,
@@ -229,6 +253,7 @@
       };
     }
 
+    /* فحص الأدوار */
     if (route.roles && route.roles.length > 0) {
       const userRole = GMS.Auth.profile.role;
       if (!route.roles.includes(userRole)) {
@@ -258,7 +283,7 @@
      §3.5 · FORM INTERACTION TRACKER
      ─────────────────────────────────────────────────────────────────────
      يتابع آخر مرة تفاعل فيها المستخدم مع حقل إدخال
-     لمنع Rerender فجائي أثناء الكتابة أو اختيار قيم
+     لمنع Rerender فجائي أثناء الكتابة أو اختيار قيم من القوائم
      ═════════════════════════════════════════════════════════════════════ */
   (function initFormTracker() {
     const markInteraction = () => {
@@ -267,7 +292,7 @@
     };
 
     /* تفعيل المستمعين على document بمستوى capture */
-    ['focusin', 'keydown', 'pointerdown'].forEach(evt => {
+    ['focusin', 'keydown', 'pointerdown', 'input', 'change'].forEach(evt => {
       document.addEventListener(evt, (e) => {
         const target = e.target;
         if (!target) return;
@@ -293,18 +318,26 @@
 
   /**
    * الانتقال إلى مسار
+   * @param {string} routeId
+   * @param {Object} [opts]
+   * @param {boolean} [opts.force=false]  — تجاهل الفحوصات
+   * @param {boolean} [opts.replace=false] — استبدال التاريخ بدل الإضافة
+   * @param {Object} [opts.params={}]     — معاملات إضافية
+   * @returns {Promise<boolean>}
    */
   async function go(routeId, opts = {}) {
     const { force = false, replace = false } = opts;
 
+    /* تأكد من وجود المسار */
     const route = ROUTES[routeId];
     if (!route) {
       console.warn('[Router] Unknown route:', routeId);
       return go('dashboard');
     }
 
-    /* إذا كان نفس الصفحة → لا حاجة لإعادة التصيير */
+    /* لا حاجة لإعادة التصيير إذا كان نفس الصفحة */
     if (RState.current === routeId && !force) {
+      /* إغلاق أي modal مفتوح */
       if (GMS.Modal) GMS.Modal.closeAll();
       return true;
     }
@@ -331,6 +364,7 @@
 
         emit('navigationBlocked', { ...navData, reason: access.reason });
 
+        /* ارجع للصفحة الافتراضية */
         if (routeId !== 'dashboard') {
           return go('dashboard', { force: true });
         }
@@ -396,6 +430,7 @@
     } catch (e) {
       console.error('[Router] Render failed:', e);
 
+      /* عرض صفحة خطأ */
       renderError(route, e);
 
       emit('renderError', { ...navData, error: e.message });
@@ -413,6 +448,8 @@
 
   /**
    * تصيير الصفحة الحالية
+   * @param {Object} route
+   * @returns {Promise<void>}
    */
   async function renderView(route) {
     const host = document.getElementById('page');
@@ -420,12 +457,14 @@
       throw new Error('عنصر #page غير موجود');
     }
 
+    /* ابحث عن الـ View */
     const view = GMS.Views?.[route.view];
 
     if (!view) {
       throw new Error(`View "${route.view}" غير معرّف`);
     }
 
+    /* إذا كان للصفحة دوال خاصة */
     if (view.render && typeof view.render === 'function') {
       await view.render(host);
     } else if (view.mount && typeof view.mount === 'function') {
@@ -434,6 +473,7 @@
       throw new Error(`View "${route.view}" لا يحتوي على دالة render`);
     }
 
+    /* إعادة رسم الأيقونات */
     window.lucide?.createIcons();
   }
 
@@ -488,6 +528,7 @@
 
     window.lucide?.createIcons();
 
+    /* Bind buttons */
     document.getElementById('route-retry')?.addEventListener('click', () => {
       go(route.id, { force: true });
     });
@@ -499,6 +540,7 @@
 
   /**
    * تحديث التبويب النشط
+   * @param {string} routeId
    */
   function updateActiveTab(routeId) {
     document.querySelectorAll('[data-tab]').forEach(tab => {
@@ -509,6 +551,7 @@
 
   /**
    * تحديث عنوان الصفحة
+   * @param {Object} route
    */
   function updatePageTitle(route) {
     const titleEl = document.getElementById('page-title');
@@ -522,6 +565,7 @@
       subtitleEl.textContent = route.subtitle || '';
     }
 
+    /* عنوان الصفحة (browser tab) */
     document.title = `${route.label} — ${GMS.APP_CONFIG.NAME_AR}`;
   }
 
@@ -619,6 +663,7 @@
 
       /* تجاهل إذا كان هناك تصيير جارٍ */
       if (RState.rendering) {
+        /* أعد الجدولة */
         scheduleRerender(d);
         return;
       }
@@ -652,6 +697,9 @@
      §6 · NAVIGATION HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * الانتقال للصفحة السابقة
+   */
   function back() {
     if (RState.history.length > 1) {
       const previous = RState.history[1];
@@ -659,25 +707,47 @@
         return go(previous.route, { force: true });
       }
     }
+
+    /* fallback */
     return go('dashboard', { force: true });
   }
 
+  /**
+   * إعادة تحميل الصفحة الحالية
+   */
   function reload() {
     return go(RState.current, { force: true });
   }
 
+  /**
+   * قراءة المسار الحالي
+   * @returns {Object|null}
+   */
   function current() {
     return RState.current ? ROUTES[RState.current] : null;
   }
 
+  /**
+   * قراءة معرف المسار الحالي
+   * @returns {string|null}
+   */
   function currentId() {
     return RState.current;
   }
 
+  /**
+   * قراءة المسار السابق
+   * @returns {Object|null}
+   */
   function previous() {
     return RState.previous ? ROUTES[RState.previous] : null;
   }
 
+  /**
+   * فحص إذا كان مسار محدد هو الحالي
+   * @param {string} routeId
+   * @returns {boolean}
+   */
   function isCurrent(routeId) {
     return RState.current === routeId;
   }
@@ -690,6 +760,7 @@
     const hashRoute = getHashRoute();
 
     if (!hashRoute) {
+      /* انتقل للصفحة الافتراضية */
       if (RState.current !== 'dashboard') {
         go('dashboard', { replace: true });
       }
@@ -703,6 +774,7 @@
     if (ROUTES[hashRoute]) {
       go(hashRoute);
     } else {
+      /* مسار غير معروف — انتقل للافتراضي */
       console.warn('[Router] Unknown hash route:', hashRoute);
       go('dashboard', { replace: true });
     }
@@ -716,10 +788,13 @@
     const tabBar = document.getElementById('tabs-bar');
     if (!tabBar) return;
 
+    /* ابحث عن كل التبويبات */
     tabBar.querySelectorAll('[data-tab]').forEach(tab => {
+      /* إزالة أي handler سابق */
       const newTab = tab.cloneNode(true);
       tab.parentNode.replaceChild(newTab, tab);
 
+      /* إذا كان التبويب يحتاج صلاحية غير متاحة — اخفيه */
       const route = ROUTES[newTab.dataset.tab];
       if (route) {
         const access = checkRouteAccess(route);
@@ -730,6 +805,7 @@
         }
       }
 
+      /* ربط الحدث */
       newTab.onclick = (e) => {
         e.preventDefault();
         const routeId = newTab.dataset.tab;
@@ -744,9 +820,11 @@
 
   function bindKeyboardShortcuts() {
     const handler = (e) => {
+      /* تجاهل داخل حقول الإدخال */
       const tag = document.activeElement?.tagName;
       const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
+      /* Alt + رقم = التنقل السريع */
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
         const num = parseInt(e.key, 10);
         if (num >= 1 && num <= 9) {
@@ -758,6 +836,7 @@
           }
         }
 
+        /* Alt + 0 = الصفحة الأخيرة */
         if (e.key === '0') {
           const routeId = TAB_ORDER[TAB_ORDER.length - 1];
           if (routeId) {
@@ -768,6 +847,7 @@
         }
       }
 
+      /* Alt + Left/Right = التنقل بين الصفحات */
       if (e.altKey && !inField) {
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
@@ -775,6 +855,7 @@
         }
       }
 
+      /* Ctrl + R — تعطيل إعادة تحميل المتصفح، بدلاً منها نعيد تحميل الصفحة */
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r' && !inField) {
         e.preventDefault();
         reload();
@@ -783,6 +864,8 @@
     };
 
     document.addEventListener('keydown', handler);
+
+    /* احفظ مرجعاً للتنظيف */
     RState._keyboardHandler = handler;
   }
 
@@ -790,14 +873,26 @@
      §10 · PUBLIC API — GET ROUTES
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * قراءة كل المسارات
+   * @returns {Object}
+   */
   function getRoutes() {
     return { ...ROUTES };
   }
 
+  /**
+   * قراءة ترتيب التبويبات
+   * @returns {Array<string>}
+   */
   function getTabOrder() {
     return TAB_ORDER.slice();
   }
 
+  /**
+   * قراءة المسارات المتاحة للمستخدم الحالي
+   * @returns {Array<Object>}
+   */
   function getAccessibleRoutes() {
     return TAB_ORDER
       .map(id => ROUTES[id])
@@ -808,6 +903,11 @@
       });
   }
 
+  /**
+   * قراءة المسار بالمعرف
+   * @param {string} id
+   * @returns {Object|null}
+   */
   function getRoute(id) {
     return ROUTES[id] || null;
   }
@@ -816,6 +916,11 @@
      §11 · ROUTE GUARD
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * إضافة حارس مخصص لمسار
+   * @param {string} routeId
+   * @param {Function} guard — (route, user) => { allowed: boolean, message?: string }
+   */
   const customGuards = new Map();
 
   function addGuard(routeId, guard) {
@@ -857,6 +962,14 @@
      §13 · INITIALIZATION
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * تهيئة الراوتر
+   * @param {Object} [opts]
+   * @param {string} [opts.defaultRoute='dashboard']
+   * @param {boolean} [opts.listenHash=true]
+   * @param {boolean} [opts.listenKeyboard=true]
+   * @returns {Promise<Object>}
+   */
   async function init(opts = {}) {
     const {
       defaultRoute = 'dashboard',
@@ -938,6 +1051,10 @@
      §14 · DIAGNOSTICS
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * قراءة حالة الراوتر كاملة
+   * @returns {Object}
+   */
   function getState() {
     return {
       current: RState.current,
@@ -954,6 +1071,9 @@
     };
   }
 
+  /**
+   * تفريغ سجل التنقل
+   */
   function clearHistory() {
     RState.history = [];
     console.log('[Router] History cleared');
@@ -1008,6 +1128,14 @@
   /* ─── Aliases مختصرة ──────────────────────────────────────────── */
   GMS.navigate = go;
   GMS.navTo = go;
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §16 · AUTO-INIT ON DOMContentLoaded (اختياري)
+     ─────────────────────────────────────────────────────────────────────
+     ملاحظة: `23-boot.js` هو المسؤول عن استدعاء `Router.init()`
+     هذا الجزء يبقى معطّلاً لتجنب التعارض.
+     ═════════════════════════════════════════════════════════════════════ */
+  /* تم التعطيل عمداً — يُدار عبر 23-boot.js */
 
   /* ═════════════════════════════════════════════════════════════════════
      §17 · LOADED CONFIRMATION
