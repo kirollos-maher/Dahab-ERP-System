@@ -1173,6 +1173,168 @@
       return this.ls.get(GMS.LS_KEYS.CACHE_KARAT_BOARD) || this._deriveKaratBoard(this.getPrice());
     }
 
+    /* ═════════════════════════════════════════════════════════════════
+       ✅ NEW: MANUFACTURERS MANAGEMENT
+       ─────────────────────────────────────────────────────────────────
+       إدارة كاملة للمصانع مع تخزين دائم في LocalStorage
+       ═════════════════════════════════════════════════════════════════ */
+
+    /**
+     * قراءة قائمة المصانع المحفوظة (مع fallback للافتراضي)
+     * @returns {Array}
+     */
+    getManufacturersList() {
+      try {
+        const raw = localStorage.getItem(GMS.LS_KEYS.MANUFACTURERS);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length) {
+            return parsed;
+          }
+        }
+      } catch (_) {}
+
+      /* fallback: القائمة الافتراضية من config */
+      return GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
+    }
+
+    /**
+     * حفظ قائمة المصانع كاملة
+     * @param {Array} list
+     * @returns {boolean}
+     */
+    setManufacturersList(list) {
+      if (!Array.isArray(list)) return false;
+
+      try {
+        localStorage.setItem(
+          GMS.LS_KEYS.MANUFACTURERS,
+          JSON.stringify(list)
+        );
+
+        /* حدِّث النسخة المؤقتة أيضاً */
+        this.ls.set(GMS.LS_KEYS.CACHE_MANUFACTURERS, list);
+
+        return true;
+      } catch (e) {
+        console.warn('[Cache.setManufacturersList]', e.message);
+        return false;
+      }
+    }
+
+    /**
+     * إضافة مصنع جديد
+     * @param {Object} manufacturer
+     * @returns {Object|null}
+     */
+    addManufacturer(manufacturer) {
+      if (!manufacturer) return null;
+
+      const list = this.getManufacturersList();
+
+      /* التحقق من عدم تكرار الـ code */
+      const exists = list.find(m => m.code === manufacturer.code);
+      if (exists) {
+        console.warn('[Cache.addManufacturer] Code already exists:', manufacturer.code);
+        return null;
+      }
+
+      /* إضافة الحقول الافتراضية */
+      const entry = {
+        id: 'manu-' + GMS.uid(),
+        code: manufacturer.code || 'X',
+        letter: manufacturer.letter || manufacturer.code || '؟',
+        name: manufacturer.name || 'مصنع جديد',
+        phone: manufacturer.phone || '',
+        pricingMode: manufacturer.pricingMode || 'fixed',
+        letterRates: manufacturer.letterRates || [],
+        colorRates: manufacturer.colorRates || [],
+        itemRates: manufacturer.itemRates || [],
+        fixedRate: manufacturer.fixedRate || 0,
+        purchaseRate: manufacturer.purchaseRate || 0,
+        saleRate: manufacturer.saleRate || 0,
+        rate: manufacturer.rate || 0,
+        isActive: manufacturer.isActive !== false,
+        notes: manufacturer.notes || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      list.push(entry);
+      this.setManufacturersList(list);
+      return entry;
+    }
+
+    /**
+     * تحديث مصنع موجود
+     * @param {string} id
+     * @param {Object} updates
+     * @returns {Object|null}
+     */
+    updateManufacturer(id, updates = {}) {
+      const list = this.getManufacturersList();
+      const idx = list.findIndex(m => m.id === id);
+
+      if (idx < 0) return null;
+
+      list[idx] = {
+        ...list[idx],
+        ...updates,
+        id: list[idx].id,         /* لا يُسمح بتغيير id */
+        updatedAt: new Date().toISOString(),
+      };
+
+      this.setManufacturersList(list);
+      return list[idx];
+    }
+
+    /**
+     * حذف مصنع
+     * @param {string} id
+     * @returns {boolean}
+     */
+    deleteManufacturer(id) {
+      const list = this.getManufacturersList();
+      const filtered = list.filter(m => m.id !== id);
+
+      if (filtered.length === list.length) return false;
+
+      this.setManufacturersList(filtered);
+      return true;
+    }
+
+    /**
+     * إعادة ضبط المصانع إلى الافتراضي
+     * @returns {Array}
+     */
+    resetManufacturers() {
+      const defaults = GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
+      this.setManufacturersList(defaults);
+      return defaults;
+    }
+
+    /**
+     * قراءة مصنع بالمعرف
+     * @param {string} id
+     * @returns {Object|null}
+     */
+    getManufacturerById(id) {
+      const list = this.getManufacturersList();
+      return list.find(m => m.id === id) || null;
+    }
+
+    /**
+     * قراءة مصنع بالكود
+     * @param {string} code
+     * @returns {Object|null}
+     */
+    getManufacturerByCode(code) {
+      const list = this.getManufacturersList();
+      return list.find(m =>
+        String(m.code || '').toUpperCase() === String(code || '').toUpperCase()
+      ) || null;
+    }
+
     /* ─── Invalidation ────────────────────────────────────────────── */
 
     /**
@@ -1449,6 +1611,11 @@
     `IDB v${GMS.IDB_CONFIG.DB_VERSION} · 4 stores · ` +
     `9 indexes · Auto-cleanup enabled`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🏭 Manufacturers API: getList/setList/add/update/delete/reset`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
