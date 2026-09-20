@@ -10,6 +10,7 @@
      - تصدير/استيراد Excel
      - طباعة تاجات QR
      - عرض تفاصيل الصنف
+     - ✅ Filter interactions محمية من Rerender الفجائي
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -127,7 +128,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §3 · DATA LOADING
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   /**
    * تحميل كل الأصناف
@@ -685,7 +686,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · MAIN RENDER
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function render(root) {
     const branches = GMS.Demo?.getBranches() || [];
@@ -798,7 +799,9 @@
           </button>
         </div>
 
-        ${renderActiveFilters()}
+        <div data-active-filters-host>
+          ${renderActiveFilters()}
+        </div>
       </div>
 
       <!-- Bulk Bar -->
@@ -818,6 +821,84 @@
     window.lucide?.createIcons();
     bindControls();
     refreshBulkBar();
+  }
+
+  /**
+   * ✅ تحديث قسم "الفلاتر النشطة" (chips) دون إعادة بناء الصفحة كاملة
+   */
+  function updateActiveFiltersHost() {
+    const host = document.querySelector('[data-active-filters-host]');
+    if (!host) return;
+
+    host.innerHTML = renderActiveFilters();
+    window.lucide?.createIcons();
+
+    /* أعد ربط أزرار مسح الفلاتر الجديدة */
+    host.querySelectorAll('[data-clear-filter]').forEach(btn => {
+      btn.onclick = () => {
+        const key = btn.dataset.clearFilter;
+        InvState.filters[key] = '';
+        InvState.page = 1;
+        applyFilters();
+        syncFilterSelects();
+        refreshTable();
+        updateActiveFiltersHost();
+      };
+    });
+
+    const clearAllBtn = host.querySelector('#inv-clear-all-filters');
+    if (clearAllBtn) {
+      clearAllBtn.onclick = () => {
+        InvState.filters = {
+          search: '',
+          karat: '',
+          status: '',
+          branch: '',
+          manufacturer: '',
+          category: '',
+        };
+        InvState.page = 1;
+        applyFilters();
+        syncFilterSelects();
+        refreshTable();
+        updateActiveFiltersHost();
+      };
+    }
+
+    /* تحديث زر مسح البحث إن وُجد */
+    const searchClearBtn = document.getElementById('inv-search-clear');
+    if (searchClearBtn) {
+      searchClearBtn.onclick = () => {
+        InvState.filters.search = '';
+        InvState.page = 1;
+        applyFilters();
+        syncFilterSelects();
+        refreshTable();
+        updateActiveFiltersHost();
+      };
+    }
+  }
+
+  /**
+   * ✅ مزامنة قيم الـ select مع InvState.filters
+   * (بديل خفيف عن إعادة بناء الصفحة)
+   */
+  function syncFilterSelects() {
+    const map = [
+      { id: 'inv-filter-karat', key: 'karat' },
+      { id: 'inv-filter-status', key: 'status' },
+      { id: 'inv-filter-branch', key: 'branch' },
+      { id: 'inv-filter-manufacturer', key: 'manufacturer' },
+      { id: 'inv-filter-category', key: 'category' },
+    ];
+
+    map.forEach(({ id, key }) => {
+      const el = document.getElementById(id);
+      if (el) el.value = InvState.filters[key] || '';
+    });
+
+    const searchEl = document.getElementById('inv-search-input');
+    if (searchEl) searchEl.value = InvState.filters.search || '';
   }
 
   /**
@@ -873,7 +954,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §6 · CONTROLS BINDING
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
     /* ─── Search ─────────────────────────────────────────────── */
@@ -899,7 +980,9 @@
         InvState.filters.search = '';
         InvState.page = 1;
         applyFilters();
-        render(document.getElementById('page'));
+        syncFilterSelects();
+        refreshTable();
+        updateActiveFiltersHost();
       };
     }
 
@@ -920,18 +1003,23 @@
         InvState.filters[key] = el.value;
         InvState.page = 1;
         applyFilters();
-        render(document.getElementById('page'));
+        /* ✅ إصلاح: بدلاً من render() الكامل — نُحدّث فقط الجدول والفلاتر النشطة */
+        refreshTable();
+        updateActiveFiltersHost();
       };
     });
 
-    /* ─── Clear individual filter ───────────────────────────── */
+    /* ─── Clear individual filter (initial bindings) ──────── */
     document.querySelectorAll('[data-clear-filter]').forEach(btn => {
       btn.onclick = () => {
         const key = btn.dataset.clearFilter;
         InvState.filters[key] = '';
         InvState.page = 1;
         applyFilters();
-        render(document.getElementById('page'));
+        /* ✅ إصلاح: نفس المبدأ */
+        syncFilterSelects();
+        refreshTable();
+        updateActiveFiltersHost();
       };
     });
 
@@ -949,7 +1037,10 @@
         };
         InvState.page = 1;
         applyFilters();
-        render(document.getElementById('page'));
+        /* ✅ إصلاح: نُحدّث الجدول + الفلاتر النشطة + نُعيد تصيير الـ select values */
+        syncFilterSelects();
+        refreshTable();
+        updateActiveFiltersHost();
       };
     }
 
@@ -1111,7 +1202,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §7 · ROW ACTIONS
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function handleRowAction(action, sku) {
     const item = InvState.items.find(i => i.sku === sku);
@@ -1138,7 +1229,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §8 · ITEM DETAILS MODAL
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function showItemDetails(item) {
     const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
@@ -1285,7 +1376,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §9 · ITEM MODAL (ADD / EDIT)
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openItemModal(item = null) {
     const isEdit = Boolean(item);
@@ -1674,7 +1765,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §10 · DELETE ITEM
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function deleteItem(item) {
     const ok = await GMS.Confirm.delete(
@@ -1723,7 +1814,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §11 · BULK ACTIONS
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function handleBulkAction(action) {
     const selected = Array.from(InvState.selected);
@@ -1840,7 +1931,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §12 · EXPORT
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function exportFiltered() {
     if (!InvState.filtered.length) {
@@ -1860,7 +1951,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §13 · PRINT TAG
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function printTag(item) {
     if (!GMS.QR?.Printer) {
@@ -1877,7 +1968,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §14 · COLUMNS MANAGER
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openColumnsMenu(anchorEl) {
     /* إزالة أي menu موجود */
@@ -1978,7 +2069,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §15 · INITIALIZATION
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function init() {
     try {
@@ -1992,7 +2083,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §16 · CLEANUP
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function cleanup() {
     cleanupListeners();
@@ -2044,6 +2135,11 @@
   console.log(
     `%c📊 12 columns · 6 filters · Bulk select · Sort · Excel · QR Tags`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🛡️  Filter-aware: لا rerender عند تفاعل المستخدم مع الفلاتر`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
