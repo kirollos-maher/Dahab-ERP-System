@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F0D68C"/>
+      <stop offset="50%" stop-color="#D4A017"/>
+      <stop offset="100%" stop-color="#9C7726"/>
+    </linearGradient>
+  </defs>
+
+  <!-- خلفية كاملة (بدون حواف دائرية — النظام يقصّها) -->
+  <rect width="192" height="192" fill="#121212"/>
+
+  <!-- الدائرة الذهبية داخل منطقة آمنة (80% من المساحة) -->
+  <circle cx="96" cy="96" r="58" fill="url(#gold)"/>
+
+  <!-- Au text -->
+  <text
+    x="96" y="120"
+    font-family="'Cairo','Arial',sans-serif"
+    font-weight="900"
+    font-size="60"
+    text-anchor="middle"
+    fill="#2A1F05"
+    letter-spacing="-1.5"
+  >Au</text>
+</svg>
