@@ -302,20 +302,19 @@ async function handleCDNRequest(request) {
   const cached = await cache.match(request);
 
   if (cached) {
-    /* فحص العمر */
     const cachedAt = cached.headers.get('x-sw-cached-at');
     if (cachedAt) {
       const age = Date.now() - Number(cachedAt);
       if (age < CACHE_MAX_AGE_CDN_MS) {
-        /* لا يزال صالحاً — رجّعه + حدّث بالخلفية */
         fetch(request)
           .then(resp => {
             if (resp && resp.ok) {
-              const headers = new Headers(resp.headers);
+              const copy = resp.clone();
+              const headers = new Headers(copy.headers);
               headers.set('x-sw-cached-at', String(Date.now()));
-              const tagged = new Response(resp.body, {
-                status: resp.status,
-                statusText: resp.statusText,
+              const tagged = new Response(copy.body, {
+                status: copy.status,
+                statusText: copy.statusText,
                 headers
               });
               cache.put(request, tagged).catch(() => {});
@@ -329,22 +328,21 @@ async function handleCDNRequest(request) {
     }
   }
 
-  /* اجلب من الشبكة */
   try {
     const response = await fetch(request);
     if (response && response.ok) {
-      const headers = new Headers(response.headers);
+      const copy = response.clone();
+      const headers = new Headers(copy.headers);
       headers.set('x-sw-cached-at', String(Date.now()));
-      const tagged = new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
+      const tagged = new Response(copy.body, {
+        status: copy.status,
+        statusText: copy.statusText,
         headers
       });
       cache.put(request, tagged).catch(() => {});
     }
     return response;
   } catch (e) {
-    /* الشبكة فشلت — أعطِ أي نسخة مخزَّنة، وإن لم توجد ارجع خطأ */
     if (cached) return cached;
     return new Response(
       '/* CDN Unavailable */',
@@ -410,28 +408,30 @@ async function handleNavigationRequest(request) {
 
   try {
     const response = await fetch(request);
-    /* خزّن صفحة الـ HTML بنسخة عليها تاريخ */
+
     if (response && response.ok) {
-      const headers = new Headers(response.headers);
+      /* ✅ ناخد clone قبل استخدام body */
+      const copy = response.clone();
+      const headers = new Headers(copy.headers);
       headers.set('x-sw-cached-at', String(Date.now()));
-      const tagged = new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
+
+      const tagged = new Response(copy.body, {
+        status: copy.status,
+        statusText: copy.statusText,
         headers
       });
       cache.put(request, tagged).catch(() => {});
     }
+
     return response;
+
   } catch (e) {
-    /* الشبكة فشلت — رجّع الصفحة المخزَّنة */
     const cachedPage = await cache.match(request);
     if (cachedPage) return cachedPage;
 
-    /* رجّع index.html كـ SPA fallback */
     const fallback = await caches.match('./index.html');
     if (fallback) return fallback;
 
-    /* offline.html كخيار أخير */
     const offline = await caches.match('./offline.html');
     if (offline) return offline;
 
