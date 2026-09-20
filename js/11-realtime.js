@@ -187,6 +187,20 @@
       label: 'تحديث مرتجع',
       significant: false,
     },
+
+    /* Repairs (✅ جديد — الصيانة) */
+    'repairs.INSERT': {
+      icon: 'wrench',
+      cls: 'sale',
+      label: 'تكت صيانة جديد',
+      significant: false,
+    },
+    'repairs.UPDATE': {
+      icon: 'wrench',
+      cls: 'update',
+      label: 'تحديث تكت صيانة',
+      significant: false,
+    },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -356,6 +370,11 @@
       /* تجاهل إذا كان الحدث صادراً من المستخدم نفسه */
       if (event.isSelf) return;
 
+      /* ✅ تجاهل إذا كان هناك Modal مفتوح (حتى لا يُزعج المستخدم) */
+      if (GMS.Modal && typeof GMS.Modal.count === 'function' && GMS.Modal.count() > 0) {
+        return;
+      }
+
       const { meta, title, description, amount } = event;
 
       const desc = [description, amount]
@@ -437,7 +456,7 @@
     /* إبلاغ المستمعين */
     emit('event', event);
 
-    /* إعادة تصيير الصفحة الحالية إن كانت تستجيب */
+    /* ✅ إعادة تصيير الصفحة الحالية إن كانت تستجيب — مع فحص Modal */
     if (GMS.Router && shouldRerender(table)) {
       try {
         GMS.Router.scheduleRerender();
@@ -614,6 +633,35 @@
       };
     },
 
+    /* ═══ REPAIRS (✅ جديد) ═══ */
+    repairs(row, action) {
+      if (action === 'DELETE') {
+        return {
+          title: `حذف تكت صيانة ${row.ticket_no || ''}`,
+          description: row.customer_name || '—',
+        };
+      }
+
+      const isNew = action === 'INSERT';
+      const statusLabels = {
+        RECEIVED: 'مستلم',
+        IN_PROGRESS: 'قيد الصيانة',
+        READY: 'جاهز',
+        DELIVERED: 'مُسلَّم',
+        CANCELLED: 'ملغى',
+      };
+
+      return {
+        title: isNew
+          ? `تكت صيانة جديد · ${row.ticket_no || ''}`
+          : `تحديث تكت · ${row.ticket_no || ''}`,
+        description: `${row.customer_name || '—'} · ${statusLabels[row.status] || row.status}`,
+        amount: GMS.moneyFmt(row.grand_total || 0),
+        amountUnit: ' ج.م',
+        significance: row.is_suspicious === true,
+      };
+    },
+
     /* ═══ DEFAULT ═══ */
     default(row, action) {
       return {
@@ -624,13 +672,23 @@
   };
 
   /**
-   * هل يجب إعادة تصيير الصفحة عند هذا الحدث؟
+   * ✅ هل يجب إعادة تصيير الصفحة عند هذا الحدث؟
+   *
+   * التحديثات:
+   *   - إرجاع false إذا كان هناك Modal مفتوح (يمنع إغلاق النماذج)
+   *   - دعم مسار repairs
+   *
    * @param {string} table
    * @returns {boolean}
    * @private
    */
   function shouldRerender(table) {
-    const currentRoute = GMS.Router?.current();
+    /* ✅ لا تُعِد التصيير إذا كان هناك Modal مفتوح */
+    if (GMS.Modal && typeof GMS.Modal.count === 'function' && GMS.Modal.count() > 0) {
+      return false;
+    }
+
+    const currentRoute = GMS.Router?.currentId();
 
     const routesToTables = {
       dashboard: ['sales', 'inventory', 'entity_ledger', 'shifts', 'price_board'],
@@ -641,6 +699,8 @@
       analytics: ['sales', 'inventory'],
       audit: ['audit_logs'],
       queue: ['sales'],
+      repair: ['repairs'],       /* ✅ جديد */
+      loss: ['melting_batches', 'polishing_batches', 'assay_records'],
     };
 
     const tables = routesToTables[currentRoute] || [];
@@ -728,6 +788,13 @@
           'postgres_changes',
           { event: '*', schema: 'public', table: 'returns' },
           (payload) => handleRealtimeEvent({ ...payload, table: 'returns' })
+        )
+
+        /* ✅ Repairs (جديد — الصيانة) */
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'repairs' },
+          (payload) => handleRealtimeEvent({ ...payload, table: 'repairs' })
         )
 
         /* حالة الاشتراك */
@@ -869,14 +936,9 @@
      محاكي أحداث Realtime للاستخدام بدون Supabase
      ═════════════════════════════════════════════════════════════════════ */
 
-function startDemoSimulator() {
-  /* ✅ لا تعمل تلقائياً — فقط عند الطلب اليدوي */
-  if (window.ENABLE_DEMO_SIMULATOR !== true) {
-    console.log('[RT] Demo simulator disabled (manual mode)');
-    return;
-  }
+  function startDemoSimulator() {
+    if (RTState.demoRunning) return;
 
-  if (RTState.demoRunning) return;
     RTState.demoRunning = true;
     RTState.connectedAt = new Date().toISOString();
 
@@ -1230,6 +1292,7 @@ function startDemoSimulator() {
     _handleEvent: handleRealtimeEvent,
     _generateDemoEvent: generateDemoEvent,
     _buildEvent: buildEvent,
+    _shouldRerender: shouldRerender,
   };
 
   /* ─── Convenience shortcuts ─────────────────────────────────── */
@@ -1246,8 +1309,13 @@ function startDemoSimulator() {
   );
 
   console.log(
-    `%c🔌 6 tables · Dedup · Auto-reconnect · Demo simulator · Live feed (100 events)`,
+    `%c🔌 7 tables · Dedup · Auto-reconnect · Demo simulator · Live feed (100 events)`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🛡️  Modal-aware: notifications + rerenders يُؤجَّلان عند فتح Modal`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
