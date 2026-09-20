@@ -1291,8 +1291,8 @@
        ✅ تأكد من تفعيل RLS على كل الجداول
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SUPABASE_CREDENTIALS = Object.freeze({
-    URL:      'https://fhjhtgbvtkuhhzitvxtx.supabase.co',   // مثال: 'https://xxxxxxxxxxxx.supabase.co'
-    ANON_KEY: 'sb_publishable_X0aLD3gjXGqC_no4gW78ng_TWztP5cd',   // مثال: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+    URL:      '',   // مثال: 'https://xxxxxxxxxxxx.supabase.co'
+    ANON_KEY: '',   // مثال: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
   });
 
   /* ═════════════════════════════════════════════════════════════════════
