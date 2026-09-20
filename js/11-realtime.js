@@ -8,7 +8,8 @@
      - محاكي تلقائي (opt-in) عند عدم وجود Supabase
      - إعادة الاتصال التلقائي (Exponential Backoff)
      - منع التكرار (Event Deduplication)
-     - Form-aware: لا يُعيد التصيير أثناء الكتابة في الحقول
+     - ✅ Form-aware: لا يُعيد التصيير أثناء الكتابة في الحقول
+     - ✅ Modal-aware: لا يُعيد التصيير/يُطلق إشعارات أثناء فتح Modal
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -23,7 +24,7 @@
     /* الاتصال */
     channel: null,
     channelName: null,
-    channelStatus: 'idle',
+    channelStatus: 'idle',   // 'idle' | 'connecting' | 'connected' | 'error'
     connectedAt: null,
 
     /* إعادة الاتصال */
@@ -46,7 +47,7 @@
     feed: [],
     maxFeedSize: 100,
 
-    /* منع التكرار */
+    /* منع التكرار — مفاتيح الأحداث المعالَجة */
     processedEvents: new Set(),
     dedupWindowMs: 5000,
 
@@ -86,6 +87,8 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §3 · EVENT META (لكل جدول)
+     ─────────────────────────────────────────────────────────────────────
+     يحدد كيفية عرض كل حدث في الـ Feed
      ═════════════════════════════════════════════════════════════════════ */
   const EVENT_META = {
     /* Sales */
@@ -204,18 +207,28 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · FEED ENGINE
+     ─────────────────────────────────────────────────────────────────────
+     يدير سجل الأحداث الحي
      ═════════════════════════════════════════════════════════════════════ */
   const Feed = {
 
+    /**
+     * إضافة حدث للسجل
+     * @param {Object} event
+     * @returns {Object}
+     */
     add(event) {
       if (!event) return null;
 
+      /* فحص الحد الأقصى */
       if (RTState.feed.length >= RTState.maxFeedSize) {
         RTState.feed = RTState.feed.slice(0, RTState.maxFeedSize - 1);
       }
 
+      /* إضافة للبداية */
       RTState.feed.unshift(event);
 
+      /* حفظ آخر 30 في LocalStorage */
       try {
         const persisted = RTState.feed.slice(0, 30);
         localStorage.setItem(GMS.LS_KEYS.FEED, JSON.stringify(persisted));
@@ -225,6 +238,11 @@
       return event;
     },
 
+    /**
+     * قراءة السجل
+     * @param {Object} [filters={}]
+     * @returns {Array}
+     */
     getAll(filters = {}) {
       const { table = '', limit = 50 } = filters;
       let rows = RTState.feed;
@@ -236,6 +254,9 @@
       return rows.slice(0, limit);
     },
 
+    /**
+     * تفريغ السجل
+     */
     clear() {
       RTState.feed = [];
       try {
@@ -244,6 +265,9 @@
       emit('feedUpdate', null);
     },
 
+    /**
+     * تحميل من LocalStorage
+     */
     load() {
       try {
         const stored = localStorage.getItem(GMS.LS_KEYS.FEED);
@@ -256,10 +280,18 @@
       } catch (_) {}
     },
 
+    /**
+     * عدد الأحداث
+     * @returns {number}
+     */
     count() {
       return RTState.feed.length;
     },
 
+    /**
+     * آخر حدث
+     * @returns {Object|null}
+     */
     latest() {
       return RTState.feed[0] || null;
     },
@@ -267,9 +299,17 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · DEDUPLICATION
+     ─────────────────────────────────────────────────────────────────────
+     منع معالجة نفس الحدث مرتين
      ═════════════════════════════════════════════════════════════════════ */
   const Dedup = {
 
+    /**
+     * بناء مفتاح فريد للحدث
+     * @param {Object} payload
+     * @returns {string}
+     * @private
+     */
     _key(payload) {
       if (!payload) return '';
 
@@ -282,6 +322,11 @@
       return `${table}:${type}:${id}:${updatedAt}`;
     },
 
+    /**
+     * فحص إذا كان الحدث مكرراً
+     * @param {Object} payload
+     * @returns {boolean}
+     */
     isDuplicate(payload) {
       const key = this._key(payload);
       if (!key) return false;
@@ -292,6 +337,7 @@
 
       RTState.processedEvents.add(key);
 
+      /* تنظيف المفاتيح القديمة */
       if (RTState.processedEvents.size > 500) {
         const arr = Array.from(RTState.processedEvents);
         RTState.processedEvents = new Set(arr.slice(-200));
@@ -300,6 +346,9 @@
       return false;
     },
 
+    /**
+     * تفريغ سجل التكرار
+     */
     clear() {
       RTState.processedEvents.clear();
     },
@@ -307,13 +356,20 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §6 · NOTIFICATION ENGINE
+     ─────────────────────────────────────────────────────────────────────
+     إشعارات ذكية للأحداث المهمة
      ═════════════════════════════════════════════════════════════════════ */
   const Notifier = {
 
+    /**
+     * معالجة إشعار حدث
+     * @param {Object} event
+     */
     notify(event) {
       if (!event || !event.meta) return;
       if (!event.meta.toast) return;
 
+      /* تجاهل إذا كان الحدث صادراً من المستخدم نفسه */
       if (event.isSelf) return;
 
       /* ✅ تجاهل الإشعارات إذا كان هناك Modal مفتوح */
@@ -326,6 +382,9 @@
       if (active) {
         const tag = active.tagName;
         if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+          return;
+        }
+        if (active.isContentEditable) {
           return;
         }
       }
@@ -353,13 +412,21 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §7 · EVENT HANDLERS
+     ─────────────────────────────────────────────────────────────────────
+     معالجة أحداث كل جدول
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * معالج عام لأي حدث Realtime
+   * @param {Object} payload
+   */
   async function handleRealtimeEvent(payload) {
     if (!payload) return;
 
+    /* تجاهل إذا كان النظام موقوفاً */
     if (RTState.paused) return;
 
+    /* منع التكرار */
     if (Dedup.isDuplicate(payload)) {
       return;
     }
@@ -413,6 +480,13 @@
 
   /**
    * بناء حدث مُعالَج من payload
+   * @param {string} table
+   * @param {string} action
+   * @param {Object} row
+   * @param {Object} old
+   * @param {Object} payload
+   * @returns {Object}
+   * @private
    */
   function buildEvent(table, action, row, old, payload) {
     const metaKey = `${table}.${action}`;
@@ -448,6 +522,7 @@
 
   /**
    * بناة الأحداث حسب الجدول
+   * @private
    */
   const EVENT_BUILDERS = {
 
@@ -620,6 +695,7 @@
    *
    * @param {string} table
    * @returns {boolean}
+   * @private
    */
   function shouldRerender(table) {
     /* ✅ فحص 1: Modal مفتوح */
@@ -668,9 +744,15 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §8 · SUBSCRIPTION MANAGEMENT
+     ─────────────────────────────────────────────────────────────────────
+     الاشتراك في قنوات Supabase Realtime
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * بدء الاشتراك في قنوات Realtime
+   */
   function subscribe() {
+    /* إذا لم يكن Supabase جاهزاً → شغّل المحاكي */
     if (!GMS.Supabase || !GMS.Supabase.isReady()) {
       console.log('[RT] Supabase not ready — checking demo simulator');
       setChannelStatus('idle', 'غير متصل');
@@ -681,6 +763,7 @@
     setChannelStatus('connecting');
 
     try {
+      /* إزالة القناة القديمة */
       if (RTState.channel) {
         try {
           GMS.Supabase.get().removeChannel(RTState.channel);
@@ -688,9 +771,11 @@
         RTState.channel = null;
       }
 
+      /* اسم فريد للقناة */
       RTState.channelName = GMS.SUPABASE_CONFIG.REALTIME_CHANNELS.EXEC_DASHBOARD +
         '-' + Date.now();
 
+      /* الاشتراك */
       RTState.channel = GMS.Supabase.get()
         .channel(RTState.channelName, {
           config: {
@@ -762,6 +847,9 @@
     }
   }
 
+  /**
+   * إلغاء الاشتراك
+   */
   function unsubscribe() {
     if (RTState.channel && GMS.Supabase?.isReady()) {
       try {
@@ -776,6 +864,12 @@
     clearReconnectTimer();
   }
 
+  /**
+   * معالج حالة الاشتراك
+   * @param {string} status
+   * @param {*} err
+   * @private
+   */
   function handleSubscriptionStatus(status, err) {
     switch (status) {
       case 'SUBSCRIBED':
@@ -813,6 +907,10 @@
     }
   }
 
+  /**
+   * جدولة إعادة الاتصال
+   * @private
+   */
   function scheduleReconnect() {
     if (RTState.reconnectTimer) return;
 
@@ -825,6 +923,7 @@
     RTState.reconnectAttempts++;
     RTState.stats.totalReconnects++;
 
+    /* Exponential backoff */
     const baseDelay = GMS.SYNC_CONFIG.RECONNECT_BASE_MS;
     const maxDelay = GMS.SYNC_CONFIG.RECONNECT_MAX_MS;
     const delay = Math.min(maxDelay, baseDelay * Math.pow(1.6, RTState.reconnectAttempts - 1));
@@ -840,6 +939,10 @@
     }, delay);
   }
 
+  /**
+   * إلغاء مؤقت إعادة الاتصال
+   * @private
+   */
   function clearReconnectTimer() {
     if (RTState.reconnectTimer) {
       clearTimeout(RTState.reconnectTimer);
@@ -847,6 +950,12 @@
     }
   }
 
+  /**
+   * تحديث حالة القناة
+   * @param {string} status
+   * @param {string} [text]
+   * @private
+   */
   function setChannelStatus(status, text) {
     RTState.channelStatus = status;
     emit('connectionChange', {
@@ -858,18 +967,19 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §9 · DEMO SIMULATOR (OPT-IN)
+     ─────────────────────────────────────────────────────────────────────
+     محاكي أحداث Realtime للاستخدام بدون Supabase
+     
+     ✅ opt-in: لا يعمل تلقائياً — يحتاج تفعيل يدوي
+     
+     التفعيل:
+       window.ENABLE_DEMO_SIMULATOR = true;  (قبل التحميل)
+       أو: localStorage.setItem('gms.demo.simulator', 'true');
+     
+     الإيقاف:
+       localStorage.setItem('gms.demo.simulator', 'false');
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * ✅ بدء المحاكي — فقط عند الطلب اليدوي
-   *
-   * التفعيل:
-   *   window.ENABLE_DEMO_SIMULATOR = true;  (قبل التحميل)
-   *   أو: localStorage.setItem('gms.demo.simulator', 'true');
-   *
-   * الإيقاف:
-   *   localStorage.setItem('gms.demo.simulator', 'false');
-   */
   function startDemoSimulator() {
     const enabled =
       window.ENABLE_DEMO_SIMULATOR === true ||
@@ -890,9 +1000,11 @@
 
     RTState.demoTimer = setInterval(() => {
       if (RTState.paused) return;
+
       generateDemoEvent();
     }, 5000 + Math.random() * 4000);
 
+    /* إطلاق أول حدث بعد 3 ثوان */
     setTimeout(() => {
       if (!RTState.paused) generateDemoEvent();
     }, 3000);
@@ -909,6 +1021,7 @@
 
   /**
    * توليد حدث تجريبي عشوائي
+   * @private
    */
   function generateDemoEvent() {
     const rnd = Math.random();
@@ -1041,9 +1154,19 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · MANUAL EMIT
+     §10 · MANUAL EMIT (للاختبار والتكامل)
+     ─────────────────────────────────────────────────────────────────────
+     يسمح لأجزاء أخرى من التطبيق بإطلاق أحداث
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * إطلاق حدث يدوي
+   * @param {string} table
+   * @param {string} action
+   * @param {Object} row
+   * @param {Object} [old]
+   * @returns {Promise<void>}
+   */
   async function emitEvent(table, action, row, old) {
     await handleRealtimeEvent({
       table,
@@ -1057,6 +1180,10 @@
      §11 · STATISTICS
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * قراءة كل الإحصائيات
+   * @returns {Object}
+   */
   function getStats() {
     return {
       ...RTState.stats,
@@ -1070,6 +1197,9 @@
     };
   }
 
+  /**
+   * تفريغ الإحصائيات
+   */
   function resetStats() {
     RTState.stats = {
       totalEvents: 0,
@@ -1084,18 +1214,30 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §12 · PAUSE / RESUME
+     ─────────────────────────────────────────────────────────────────────
+     التحكم في استقبال الأحداث
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * إيقاف مؤقت
+   */
   function pause() {
     RTState.paused = true;
     console.log('[RT] Paused');
   }
 
+  /**
+   * استئناف
+   */
   function resume() {
     RTState.paused = false;
     console.log('[RT] Resumed');
   }
 
+  /**
+   * تبديل الحالة
+   * @returns {boolean} — الحالة الجديدة
+   */
   function toggle() {
     if (RTState.paused) {
       resume();
@@ -1105,27 +1247,42 @@
     return true;
   }
 
+  /**
+   * هل النظام موقوف؟
+   * @returns {boolean}
+   */
   function isPaused() {
     return RTState.paused;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
      §13 · INITIALIZATION
-     ═════════════════════════════════════════════════════════════════════ */
+     ───────────────────────────────────────────────────────────────────── */
 
+  /**
+   * تهيئة محرك Realtime
+   * @param {Object} [opts]
+   * @param {boolean} [opts.autoSubscribe=true]
+   * @param {boolean} [opts.loadFeed=true]
+   * @returns {Promise<Object>}
+   */
   async function init(opts = {}) {
     const {
       autoSubscribe = true,
       loadFeed = true,
     } = opts;
 
+    /* تحميل السجل */
     if (loadFeed) {
       Feed.load();
     }
 
+    /* تفريغ سجل التكرار */
     Dedup.clear();
 
+    /* بدء الاشتراك */
     if (autoSubscribe) {
+      /* تأخير بسيط لضمان جاهزية Supabase */
       setTimeout(() => subscribe(), 800);
     }
 
@@ -1143,6 +1300,9 @@
     };
   }
 
+  /**
+   * إيقاف كل شيء
+   */
   function shutdown() {
     unsubscribe();
     clearReconnectTimer();
@@ -1215,7 +1375,7 @@
   );
 
   console.log(
-    `%c🛡️  Form-aware: no rerender/notifications while typing in fields`,
+    `%c🛡️  Form-aware + Modal-aware: no rerender/notifications while interacting`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
