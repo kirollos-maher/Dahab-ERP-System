@@ -1,14 +1,15 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/08-demo.js
    مولّد البيانات التجريبية الكامل:
-     - الفروع والماركات والموردين
+     - الفروع والمصانع والموردين
      - العملاء والموظفين
-     - المخزون (10,000+ صنف)
+     - المخزون (1,200+ صنف) مع حقول المصنعية المزدوجة
      - الفواتير والبنود
      - دفتر الأستاذ (ذهبي + نقدي)
      - الورديات والمصروفات والعمولات
      - سجلات الخسس (سبك، تحميم، ششني)
      - طابور المزامنة
+     - ✅ دعم كامل لأنماط تسعير المصانع الأربعة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -69,14 +70,8 @@
     },
   ];
 
-  const MANUFACTURERS = [
-    { id: 'manu-1', code: 'A', letter: 'أ', name: 'مصنع النيل للذهب', rate: 120, is_active: true },
-    { id: 'manu-2', code: 'B', letter: 'ب', name: 'الشرق للمجوهرات', rate: 145, is_active: true },
-    { id: 'manu-3', code: 'C', letter: 'ج', name: 'الماسة الذهبية', rate: 100, is_active: true },
-    { id: 'manu-4', code: 'D', letter: 'د', name: 'الفتح جولد', rate: 160, is_active: true },
-    { id: 'manu-5', code: 'L', letter: 'ل', name: 'لازوردي', rate: 200, is_active: true },
-    { id: 'manu-6', code: 'M', letter: 'م', name: 'مصر للذهب والمجوهرات', rate: 135, is_active: true },
-  ];
+  /* ✅ المصانع الافتراضية — تُقرأ من GMS.DEFAULT_MANUFACTURERS */
+  const MANUFACTURERS = GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
 
   const CATEGORIES = [
     'خاتم', 'سلسلة', 'أسورة', 'حلق', 'توكة', 'دبلة',
@@ -187,7 +182,77 @@
   ];
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · INVENTORY GENERATOR
+     §3 · HELPERS — تكامل مع المصانع
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ✅ حساب مصنعية الشراء من مصنع + مدخلات
+   * @param {Object} manu
+   * @param {Object} context
+   * @returns {number}
+   */
+  function resolvePurchaseRate(manu, context = {}) {
+    if (!manu) return 150;
+
+    switch (manu.pricingMode) {
+      case 'letters': {
+        const letter = context.letter;
+        if (!letter || !manu.letterRates) return Number(manu.purchaseRate || 150);
+        const entry = manu.letterRates.find(l => l.letter === letter);
+        return entry ? Number(entry.rate) : Number(manu.purchaseRate || 150);
+      }
+
+      case 'colors': {
+        const color = context.color;
+        if (!color || !manu.colorRates) return Number(manu.purchaseRate || 150);
+        const entry = manu.colorRates.find(c => c.color === color);
+        return entry ? Number(entry.rate) : Number(manu.purchaseRate || 150);
+      }
+
+      case 'items': {
+        const category = context.category;
+        if (!category || !manu.itemRates) return Number(manu.purchaseRate || 150);
+        const entry = manu.itemRates.find(i => i.category === category);
+        return entry ? Number(entry.rate) : Number(manu.purchaseRate || 150);
+      }
+
+      case 'fixed':
+      default:
+        return Number(manu.fixedRate || manu.purchaseRate || 150);
+    }
+  }
+
+  /**
+   * ✅ توليد سياق عشوائي للمصنع (حرف أو لون)
+   * @param {Object} manu
+   * @param {Function} rnd
+   * @returns {Object}
+   */
+  function pickManufacturerContext(manu, rnd) {
+    if (!manu) return {};
+
+    switch (manu.pricingMode) {
+      case 'letters': {
+        if (!manu.letterRates || !manu.letterRates.length) return {};
+        const entry = manu.letterRates[Math.floor(rnd() * manu.letterRates.length)];
+        return { letter: entry.letter };
+      }
+
+      case 'colors': {
+        if (!manu.colorRates || !manu.colorRates.length) return {};
+        const entry = manu.colorRates[Math.floor(rnd() * manu.colorRates.length)];
+        return { color: entry.color };
+      }
+
+      case 'items':
+      case 'fixed':
+      default:
+        return {};
+    }
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §4 · INVENTORY GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
   let _inventoryCache = null;
@@ -196,7 +261,7 @@
    * توليد مصفوفة المخزون الكاملة
    * @param {number} [count=1200]
    * @param {number} [seed=1337]
-   * @param {number} [timeOffsetMs=0] — لإزاحة زمنية للاختبار
+   * @param {number} [timeOffsetMs=0]
    * @returns {Array}
    */
   function generateInventory(count = 1200, seed = 1337, timeOffsetMs = 0) {
@@ -213,7 +278,7 @@
   }
 
   /**
-   * توليد صنف واحد
+   * توليد صنف واحد — ✅ محدَّث بدعم المصانع الجديدة
    * @param {number} idx
    * @param {Function} rnd
    * @param {number} now
@@ -229,20 +294,35 @@
     const manu = MANUFACTURERS[Math.floor(rnd() * MANUFACTURERS.length)];
     const branch = BRANCHES[Math.floor(rnd() * BRANCHES.length)];
 
+    /* ✅ سياق المصنع (حرف/لون) */
+    const manuContext = pickManufacturerContext(manu, rnd);
+
     /* الأوزان */
     const gross = GMS.round(1.2 + rnd() * 12, 3);
-    const stones = rnd() < 0.15 ? GMS.round(rnd() * 0.5, 3) : 0;
+    const hasStones = rnd() < 0.15;
+    const stonesIncluded = hasStones && rnd() < 0.4; /* 40% من اللي عندهم فصوص → داخل الوزن */
+    const stones = (hasStones && !stonesIncluded)
+      ? GMS.round(rnd() * 0.5, 3)
+      : 0;
     const net = GMS.round(Math.max(0.3, gross - stones), 3);
     const pure = GMS.round(net * ratio, 4);
 
-    /* المصنعية */
-    const rateOptions = [95, 110, 125, 140, 160, 185, 210, 240];
-    const rate = rateOptions[Math.floor(rnd() * rateOptions.length)];
+    /* ✅ المصنعية المزدوجة */
+    const purchaseRate = resolvePurchaseRate(manu, {
+      ...manuContext,
+      category,
+    });
+
+    /* مصنعية البيع = مصنعية الشراء + هامش (15% - 35%) */
+    const marginPct = 0.15 + rnd() * 0.20;
+    const saleRate = GMS.round(purchaseRate * (1 + marginPct), 0);
 
     /* القيم */
     const goldValue = GMS.round(pure * price24, 2);
-    const makeValue = GMS.round(net * rate, 2);
-    const totalCost = GMS.round(goldValue + makeValue, 2);
+    const purchaseMakeValue = GMS.round(net * purchaseRate, 2);
+    const saleMakeValue = GMS.round(net * saleRate, 2);
+    const totalCost = GMS.round(goldValue + saleMakeValue, 2);
+    const profitMargin = GMS.round(saleMakeValue - purchaseMakeValue, 2);
 
     /* التواريخ */
     const daysBack = Math.floor(rnd() * 120);
@@ -277,40 +357,44 @@
       purity_ratio: ratio,
       weight_grams: gross,
       stone_weight: stones,
+      stones_included: stonesIncluded,        /* ✅ جديد */
       net_weight: net,
       pure_weight: pure,
-      workmanship_per_gram: rate,
-      workmanship_value: makeValue,
+
+      /* ✅ المصنعية المزدوجة */
+      workmanship_per_gram: saleRate,         /* مصنعية البيع */
+      purchase_workmanship: purchaseRate,     /* مصنعية الشراء */
+      workmanship_value: saleMakeValue,       /* قيمة مصنعية البيع */
+      purchase_workmanship_value: purchaseMakeValue,  /* قيمة مصنعية الشراء */
+      profit_margin: profitMargin,            /* هامش الربح */
+
       gold_value: goldValue,
       total_cost: totalCost,
       price_24: price24,
       status,
       quantity,
       notes,
+
       branch_id: branch.id,
       branch_name: branch.name,
       branch_code: branch.code,
+
       manufacturer_id: manu.id,
       manufacturer_code: manu.code,
       manufacturer_name: manu.name,
-      letter_code: manu.letter,
+      manufacturer_mode: manu.pricingMode,    /* ✅ جديد */
+      letter_code: manuContext.letter || null,   /* ✅ جديد */
+      color_code: manuContext.color || null,     /* ✅ جديد */
+
       created_at: created.toISOString(),
       updated_at: updated.toISOString(),
     };
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · SALES GENERATOR
+     §5 · SALES GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد فواتير البيع
-   * @param {Array} inventory
-   * @param {number} [count=500]
-   * @param {number} [daysBack=90]
-   * @param {number} [seed=4242]
-   * @returns {Array}
-   */
   function generateSales(inventory, count = 500, daysBack = 90, seed = 4242) {
     const rnd = mulberry32(seed);
     const soldItems = inventory.filter(i => i.status === 'SOLD');
@@ -336,7 +420,6 @@
       const paid = isPaid ? item.total_cost : GMS.round(item.total_cost * (0.3 + rnd() * 0.5), 2);
       const remaining = GMS.round(item.total_cost - paid, 2);
 
-      /* حالة الفاتورة */
       const statusRoll = rnd();
       const status = statusRoll < 0.7 ? 'APPROVED'
                     : statusRoll < 0.9 ? 'COMPLETED'
@@ -379,16 +462,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · LEDGER ENTRIES GENERATOR
+     §6 · LEDGER ENTRIES GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد قيود دفتر الأستاذ للموردين
-   * @param {number} [count=200]
-   * @param {number} [daysBack=180]
-   * @param {number} [seed=5555]
-   * @returns {Array}
-   */
   function generateLedgerEntries(count = 200, daysBack = 180, seed = 5555) {
     const rnd = mulberry32(seed);
     const entries = [];
@@ -403,7 +479,6 @@
       { type: 'return_to_supplier', weight: 0.3 },
     ];
 
-    /* جدول تراكمي */
     const weights = entryTypes.map(t => t.weight);
     const totalWeight = weights.reduce((a, b) => a + b, 0);
 
@@ -492,15 +567,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · SHIFTS GENERATOR
+     §7 · SHIFTS GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد الورديات
-   * @param {number} [count=30]
-   * @param {number} [seed=7777]
-   * @returns {Array}
-   */
   function generateShifts(count = 30, seed = 7777) {
     const rnd = mulberry32(seed);
     const shifts = [];
@@ -576,16 +645,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · EXPENSES GENERATOR
+     §8 · EXPENSES GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد مصروفات الفروع
-   * @param {number} [count=80]
-   * @param {number} [daysBack=90]
-   * @param {number} [seed=8888]
-   * @returns {Array}
-   */
   function generateExpenses(count = 80, daysBack = 90, seed = 8888) {
     const rnd = mulberry32(seed);
     const out = [];
@@ -640,14 +702,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · COMMISSIONS GENERATOR
+     §9 · COMMISSIONS GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد عمولات البائعين
-   * @param {number} [seed=9999]
-   * @returns {Array}
-   */
   function generateCommissions(seed = 9999) {
     const rnd = mulberry32(seed);
     const out = [];
@@ -692,15 +749,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · MELTING BATCHES GENERATOR
+     §10 · MELTING BATCHES GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد دفعات السبك
-   * @param {number} [count=25]
-   * @param {number} [seed=1010]
-   * @returns {Array}
-   */
   function generateMeltingBatches(count = 25, seed = 1010) {
     const rnd = mulberry32(seed);
     const out = [];
@@ -711,17 +762,13 @@
 
       const preWeight = GMS.round(50 + rnd() * 300, 3);
 
-      /* نسبة خسس عشوائية (معظمها طبيعي) */
       const lossRoll = rnd();
       let lossPct;
       if (lossRoll < 0.70) {
-        /* طبيعي: 0.10% - 0.30% */
         lossPct = 0.10 + rnd() * 0.20;
       } else if (lossRoll < 0.90) {
-        /* مراقبة: 0.30% - 0.50% */
         lossPct = 0.30 + rnd() * 0.20;
       } else {
-        /* مشبوه: 0.50% - 0.80% */
         lossPct = 0.50 + rnd() * 0.30;
       }
 
@@ -759,15 +806,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · ASSAY RECORDS GENERATOR
+     §11 · ASSAY RECORDS GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد سجلات الششني
-   * @param {number} [count=40]
-   * @param {number} [seed=2020]
-   * @returns {Array}
-   */
   function generateAssayRecords(count = 40, seed = 2020) {
     const rnd = mulberry32(seed);
     const out = [];
@@ -780,7 +821,6 @@
       const claimedPurity = GMS.karatRatio(karat);
       const weight = GMS.round(2 + rnd() * 30, 3);
 
-      /* النقاء المُختبَر — قريب من المُدَّعى مع اختلاف طفيف */
       const delta = (rnd() - 0.5) * 0.03;
       const testedPurity = Math.max(0.4, Math.min(1.0,
         GMS.round(claimedPurity + delta, 4)
@@ -824,15 +864,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · POLISHING BATCHES GENERATOR
+     §12 · POLISHING BATCHES GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد دفعات التحميم والجلخ
-   * @param {number} [count=30]
-   * @param {number} [seed=3030]
-   * @returns {Array}
-   */
   function generatePolishingBatches(count = 30, seed = 3030) {
     const rnd = mulberry32(seed);
     const out = [];
@@ -851,7 +885,6 @@
 
       const preWeight = GMS.round(20 + rnd() * 150, 3);
 
-      /* نسبة خسس عشوائية (طبيعي 0.05% - 0.15%) */
       const lossRoll = rnd();
       let lossPct;
       if (lossRoll < 0.75) {
@@ -900,16 +933,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · RETURNS GENERATOR
+     §13 · RETURNS GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد المرتجعات
-   * @param {Array} inventory
-   * @param {number} [count=50]
-   * @param {number} [seed=6060]
-   * @returns {Array}
-   */
   function generateReturns(inventory, count = 50, seed = 6060) {
     const rnd = mulberry32(seed);
     const out = [];
@@ -1003,7 +1029,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · CACHE CONTROLLER
+     §14 · CACHE CONTROLLER
      ─────────────────────────────────────────────────────────────────────
      يخزّن كل البيانات المُولَّدة ويوفرها بسرعة
      ═════════════════════════════════════════════════════════════════════ */
@@ -1159,7 +1185,17 @@
       return BRANCHES;
     },
 
+    /**
+     * ✅ قراءة المصانع — من Cache أو من الافتراضي
+     * @returns {Array}
+     */
     getManufacturers() {
+      try {
+        if (GMS.Cache?.getManufacturersList) {
+          const list = GMS.Cache.getManufacturersList();
+          if (list && list.length) return list;
+        }
+      } catch (_) {}
       return MANUFACTURERS;
     },
 
@@ -1200,7 +1236,7 @@
     generateAll() {
       return {
         branches: BRANCHES,
-        manufacturers: MANUFACTURERS,
+        manufacturers: this.getManufacturers(),
         suppliers: SUPPLIERS,
         customers: CUSTOMERS,
         salespeople: SALESPEOPLE,
@@ -1270,7 +1306,7 @@
 
       return {
         branches: BRANCHES.length,
-        manufacturers: MANUFACTURERS.length,
+        manufacturers: this.getManufacturers().length,
         suppliers: SUPPLIERS.length,
         customers: CUSTOMERS.length,
         salespeople: SALESPEOPLE.length,
@@ -1360,7 +1396,7 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · EXPORT
+     §15 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Demo = DemoData;
 
@@ -1390,9 +1426,12 @@
     generatePolishingBatches,
     generateReturns,
     mulberry32,
+    /* ✅ دوال مساعدة للمصانع */
+    resolvePurchaseRate,
+    pickManufacturerContext,
   };
 
-  /* ─── Backward-compat alias ──────────────────────────────────── */
+  /* ─── Backward-compat aliases ──────────────────────────────────── */
   GMS.DEMO_BRANCHES = BRANCHES;
   GMS.DEMO_MANUFACTURERS = MANUFACTURERS;
   GMS.DEMO_SUPPLIERS = SUPPLIERS;
@@ -1400,7 +1439,7 @@
   GMS.DEMO_SALESPEOPLE = SALESPEOPLE;
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · LOADED CONFIRMATION
+     §16 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
     '%c📊 Demo Data loaded · 9 entity types',
@@ -1412,6 +1451,11 @@
     `%c🏢 ${BRANCHES.length} branches · ${MANUFACTURERS.length} manufacturers · ` +
     `${SUPPLIERS.length} suppliers · 1,200 inventory items · 500 sales`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🏭 Dual workmanship (purchase + sale) + profit_margin + stones_included`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
