@@ -15,9 +15,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · نظام العيارات (CARAT SYSTEM)
-     ─────────────────────────────────────────────────────────────────────
-     معاملات النقاء الرسمية للسوق المصري:
-     24K = 1.0000 · 22K = 0.9167 · 21K = 0.8750 · 18K = 0.7500 · 14K = 0.5850
      ═════════════════════════════════════════════════════════════════════ */
   GMS.KARAT_RATIO = Object.freeze({
     24: 1.0000,
@@ -27,10 +24,8 @@
     14: 0.5850,
   });
 
-  /* ترتيب تنازلي للعرض */
   GMS.KARAT_ORDER = Object.freeze([24, 22, 21, 18, 14]);
 
-  /* ألوان العيارات للمخططات */
   GMS.KARAT_COLORS = Object.freeze({
     24: '#c8a24a',
     22: '#e8c874',
@@ -39,7 +34,6 @@
     14: '#6b3fa0',
   });
 
-  /* أسماء العيارات بالعربي */
   GMS.KARAT_LABELS = Object.freeze({
     24: 'عيار 24',
     22: 'عيار 22',
@@ -50,8 +44,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §2 · الأدوار الوظيفية (ROLES)
-     ─────────────────────────────────────────────────────────────────────
-     5 أدوار بمستويات صلاحية تصاعدية (20 → 100)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.ROLES = Object.freeze({
     SUPER_ADMIN: {
@@ -101,7 +93,6 @@
     },
   });
 
-  /* قائمة مصفوفة الأدوار بالترتيب */
   GMS.ROLE_KEYS = Object.freeze([
     'SUPER_ADMIN',
     'BRANCH_MANAGER',
@@ -143,6 +134,7 @@
       'editGeneralLedger',
       'manageBranches',
       'manageSettings',
+      'manageManufacturers',
       'exportData',
       'impersonateUser',
       'viewRealtime',
@@ -170,6 +162,7 @@
       'viewVault',
       'closeShift',
       'reopenShift',
+      'manageManufacturers',
       'exportData',
       'viewRealtime',
       'viewReports',
@@ -230,6 +223,7 @@
     impersonateUser:    'انتحال هوية مستخدم',
     manageBranches:     'إدارة الفروع',
     manageSettings:     'إدارة إعدادات النظام',
+    manageManufacturers:'إدارة المصانع والماركات',
     manageBackups:      'إدارة النسخ الاحتياطي',
 
     // المبيعات والفواتير
@@ -284,6 +278,7 @@
         'manageEmployees',
         'manageBranches',
         'manageSettings',
+        'manageManufacturers',
         'impersonateUser',
         'manageBackups',
       ],
@@ -553,10 +548,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §11 · حدود الخسس الطبيعية (LOSS TOLERANCES)
-     ─────────────────────────────────────────────────────────────────────
-     القيم المعتمدة من السوق المصري:
-     - سبك الكسر: 0.1% – 0.3% طبيعي
-     - التحميم والجلخ: 0.05% – 0.15% طبيعي
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEFAULT_TOLERANCES = Object.freeze({
     melting: {
@@ -579,6 +570,13 @@
       warningMax: 0.015,
       label: 'الششني',
       unit: 'pt',
+    },
+    repair: {
+      naturalMin: 0.00,
+      naturalMax: 0.50,
+      warningMax: 1.00,
+      label: 'الصيانة',
+      unit: '%',
     },
   });
 
@@ -855,6 +853,9 @@
     FEED:              'gms.rt.feed',
     AUDIT:             'gms.audit',
     SYNC_LOG:          'gms.sync.log',
+
+    // ✅ Manufacturers (custom, persistent)
+    MANUFACTURERS:     'gms.manufacturers.v2',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -875,8 +876,8 @@
      §22 · إعدادات المزامنة (SYNC CONFIG)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SYNC_CONFIG = Object.freeze({
-    CACHE_TTL_MS: 12 * 60 * 60 * 1000,        // 12 ساعة
-    REFRESH_DEBOUNCE_MS: 600,                 // تأخير تجميع الأحداث
+    CACHE_TTL_MS: 12 * 60 * 60 * 1000,
+    REFRESH_DEBOUNCE_MS: 600,
     FEED_MAX_ITEMS: 60,
     RECONNECT_BASE_MS: 1500,
     RECONNECT_MAX_MS: 30000,
@@ -929,7 +930,7 @@
       'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup',
     ],
     ALLOWED_PROTOCOLS: ['http:', 'https:', 'mailto:', 'tel:'],
-    SESSION_TIMEOUT_MS: 8 * 60 * 60 * 1000,   // 8 ساعات
+    SESSION_TIMEOUT_MS: 8 * 60 * 60 * 1000,
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -993,6 +994,7 @@
       GENERAL_LEDGER: 'general_ledger',
       BRANCH_EXPENSES: 'branch_expenses',
       COMMISSIONS: 'salesperson_commissions',
+      REPAIRS: 'repairs',
     },
     REALTIME_CHANNELS: {
       INVENTORY: 'inventory-changes',
@@ -1002,7 +1004,6 @@
       PRICE_BOARD: 'price-changes',
       EXEC_DASHBOARD: 'exec-dashboard',
     },
-    // الأعمدة المستخدمة في الاستعلامات
     INVENTORY_COLUMNS: [
       'id', 'sku', 'category', 'karat', 'purity_ratio',
       'weight_grams', 'stone_weight', 'net_weight', 'pure_weight',
@@ -1010,7 +1011,6 @@
       'total_cost', 'price_24', 'status', 'quantity', 'notes',
       'branch_id', 'manufacturer_id', 'created_at', 'updated_at',
     ],
-    // الحد الأقصى للصفوف في الاستعلام الواحد
     MAX_ROWS_PER_QUERY: 10000,
     MAX_ROWS_PER_BATCH: 500,
   });
@@ -1025,19 +1025,226 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §30 · بيانات الماركات الافتراضية (DEMO MANUFACTURERS)
+     §30 · طرق تسعير المصانع (MANUFACTURER PRICING MODES) — ✅ جديد
+     ─────────────────────────────────────────────────────────────────────
+     4 أنماط:
+       • letters : حسب الأحرف (أ، ب، جـ، د...)
+       • colors  : حسب الألوان (أحمر، أزرق، ذهبي...)
+       • items   : حسب نوع القطعة (سلسلة، خاتم، أسورة...)
+       • fixed   : سعر ثابت لكل القطع
      ═════════════════════════════════════════════════════════════════════ */
-  GMS.DEFAULT_MANUFACTURERS = Object.freeze([
-    { code: 'A', letter: 'أ', name: 'مصنع النيل للذهب',          rate: 120 },
-    { code: 'B', letter: 'ب', name: 'الشرق للمجوهرات',            rate: 145 },
-    { code: 'C', letter: 'ج', name: 'الماسة الذهبية',             rate: 100 },
-    { code: 'D', letter: 'د', name: 'الفتح جولد',                 rate: 160 },
-    { code: 'L', letter: 'ل', name: 'لازوردي',                    rate: 200 },
-    { code: 'M', letter: 'م', name: 'مصر للذهب والمجوهرات',       rate: 135 },
+  GMS.PRICING_MODES = Object.freeze({
+    letters: {
+      key: 'letters',
+      label: 'حسب الأحرف',
+      labelEn: 'By Letters',
+      icon: 'letter-text',
+      description: 'مصنع بيحدد سعره بالحروف: أ، ب، جـ، د...',
+      color: 'primary',
+    },
+    colors: {
+      key: 'colors',
+      label: 'حسب الألوان',
+      labelEn: 'By Colors',
+      icon: 'palette',
+      description: 'مصنع بيحدد سعره بالألوان: أحمر، أزرق، ذهبي...',
+      color: 'violet',
+    },
+    items: {
+      key: 'items',
+      label: 'حسب نوع القطعة',
+      labelEn: 'By Item Type',
+      icon: 'shapes',
+      description: 'مصنع بيحدد سعره حسب نوع القطعة: سلسلة، خاتم...',
+      color: 'info',
+    },
+    fixed: {
+      key: 'fixed',
+      label: 'سعر ثابت',
+      labelEn: 'Fixed Rate',
+      icon: 'equal',
+      description: 'مصنع بيعطي سعر واحد ثابت لكل القطع',
+      color: 'success',
+    },
+  });
+
+  /* قائمة الألوان الجاهزة — يُستخدم مع pricingMode='colors' */
+  GMS.PRICING_COLORS = Object.freeze([
+    { key: 'red',     label: 'أحمر',      hex: '#dc2626' },
+    { key: 'blue',    label: 'أزرق',      hex: '#2563eb' },
+    { key: 'green',   label: 'أخضر',      hex: '#16a34a' },
+    { key: 'yellow',  label: 'أصفر',      hex: '#facc15' },
+    { key: 'black',   label: 'أسود',      hex: '#0a0a0a' },
+    { key: 'white',   label: 'أبيض',      hex: '#f5f5f5' },
+    { key: 'gold',    label: 'ذهبي',      hex: '#c8a24a' },
+    { key: 'silver',  label: 'فضي',       hex: '#94a3b8' },
+    { key: 'rose',    label: 'وردي',      hex: '#f472b6' },
+    { key: 'violet',  label: 'بنفسجي',    hex: '#7c3aed' },
+    { key: 'orange',  label: 'برتقالي',   hex: '#ea580c' },
+    { key: 'brown',   label: 'بني',       hex: '#78350f' },
+    { key: 'teal',    label: 'تركوازي',   hex: '#14b8a6' },
+    { key: 'navy',    label: 'كحلي',      hex: '#1e3a8a' },
+  ]);
+
+  /* أحرف عربية جاهزة — يُستخدم مع pricingMode='letters' */
+  GMS.PRICING_LETTERS = Object.freeze([
+    'أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي',
+    'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر',
+    'ش', 'ت', 'ث', 'خ', 'ذ', 'ض', 'ظ', 'غ',
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §31 · مصفوفة المصنعية (WORKMANSHIP MATRIX)
+     §31 · بيانات المصانع الافتراضية (DEMO MANUFACTURERS) — ✅ محدَّث
+     ─────────────────────────────────────────────────────────────────────
+     كل مصنع له:
+       • pricingMode: نوع التسعير (letters/colors/items/fixed)
+       • letterRates: [{ letter, rate }]  (لو letters)
+       • colorRates:  [{ color, rate }]   (لو colors)
+       • itemRates:   [{ category, rate }] (لو items)
+       • fixedRate:   رقم                  (لو fixed)
+       • purchaseRate: مصنعية الشراء الافتراضية (fallback)
+       • saleRate:     مصنعية البيع الافتراضية (fallback)
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.DEFAULT_MANUFACTURERS = Object.freeze([
+    {
+      id: 'manu-1',
+      code: 'A',
+      letter: 'أ',
+      name: 'مصنع النيل للذهب',
+      phone: '',
+      pricingMode: 'letters',
+      letterRates: [
+        { letter: 'أ', rate: 120 },
+        { letter: 'ب', rate: 145 },
+        { letter: 'ج', rate: 165 },
+        { letter: 'د', rate: 185 },
+      ],
+      colorRates: [],
+      itemRates: [],
+      fixedRate: null,
+      purchaseRate: 120,
+      saleRate: 150,
+      rate: 120,
+      isActive: true,
+      notes: '',
+    },
+    {
+      id: 'manu-2',
+      code: 'B',
+      letter: 'ب',
+      name: 'الشرق للمجوهرات',
+      phone: '',
+      pricingMode: 'colors',
+      letterRates: [],
+      colorRates: [
+        { color: 'red',   rate: 100 },
+        { color: 'blue',  rate: 130 },
+        { color: 'green', rate: 160 },
+        { color: 'gold',  rate: 200 },
+      ],
+      itemRates: [],
+      fixedRate: null,
+      purchaseRate: 130,
+      saleRate: 165,
+      rate: 145,
+      isActive: true,
+      notes: '',
+    },
+    {
+      id: 'manu-3',
+      code: 'C',
+      letter: 'ج',
+      name: 'الماسة الذهبية',
+      phone: '',
+      pricingMode: 'items',
+      letterRates: [],
+      colorRates: [],
+      itemRates: [
+        { category: 'خاتم',   rate: 150 },
+        { category: 'دبلة',   rate: 180 },
+        { category: 'سلسلة',  rate: 100 },
+        { category: 'أسورة',  rate: 130 },
+        { category: 'حلق',    rate: 140 },
+        { category: 'توكة',   rate: 110 },
+        { category: 'قلادة',  rate: 160 },
+        { category: 'تعليقة', rate: 120 },
+      ],
+      fixedRate: null,
+      purchaseRate: 100,
+      saleRate: 130,
+      rate: 100,
+      isActive: true,
+      notes: '',
+    },
+    {
+      id: 'manu-4',
+      code: 'D',
+      letter: 'د',
+      name: 'الفتح جولد',
+      phone: '',
+      pricingMode: 'fixed',
+      letterRates: [],
+      colorRates: [],
+      itemRates: [],
+      fixedRate: 160,
+      purchaseRate: 160,
+      saleRate: 195,
+      rate: 160,
+      isActive: true,
+      notes: 'سعر ثابت لكل الأصناف',
+    },
+    {
+      id: 'manu-5',
+      code: 'L',
+      letter: 'ل',
+      name: 'لازوردي',
+      phone: '',
+      pricingMode: 'letters',
+      letterRates: [
+        { letter: 'ل', rate: 180 },
+        { letter: 'م', rate: 200 },
+        { letter: 'ن', rate: 220 },
+        { letter: 'ص', rate: 250 },
+      ],
+      colorRates: [],
+      itemRates: [],
+      fixedRate: null,
+      purchaseRate: 200,
+      saleRate: 240,
+      rate: 200,
+      isActive: true,
+      notes: '',
+    },
+    {
+      id: 'manu-6',
+      code: 'M',
+      letter: 'م',
+      name: 'مصر للذهب والمجوهرات',
+      phone: '',
+      pricingMode: 'items',
+      letterRates: [],
+      colorRates: [],
+      itemRates: [
+        { category: 'خاتم',   rate: 135 },
+        { category: 'دبلة',   rate: 155 },
+        { category: 'سلسلة',  rate: 110 },
+        { category: 'أسورة',  rate: 125 },
+        { category: 'حلق',    rate: 140 },
+        { category: 'قلادة',  rate: 145 },
+      ],
+      fixedRate: null,
+      purchaseRate: 135,
+      saleRate: 165,
+      rate: 135,
+      isActive: true,
+      notes: '',
+    },
+  ]);
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX)
+     ─────────────────────────────────────────────────────────────────────
+     ✅ محدَّث: يبقى للاستخدام كـ fallback فقط إذا لم يكن هناك مصنع
      ═════════════════════════════════════════════════════════════════════ */
   GMS.WORKMANSHIP_MATRIX = Object.freeze([
     { karat: 24, min: 40,  max: 80,  default: 55 },
@@ -1048,7 +1255,7 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §32 · أسماء الأشخاص الوهمية (DEMO SALESPEOPLE)
+     §33 · أسماء الأشخاص الوهمية (DEMO SALESPEOPLE)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEMO_SALESPEOPLE = Object.freeze([
     'أحمد محمود',
@@ -1066,7 +1273,7 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §33 · أسماء الورش (DEMO WORKSHOPS)
+     §34 · أسماء الورش (DEMO WORKSHOPS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEMO_WORKSHOPS = Object.freeze([
     'ورشة الصاغة الرئيسية',
@@ -1077,7 +1284,7 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §34 · أسماء مكاتب الششني (ASSAY OFFICES)
+     §35 · أسماء مكاتب الششني (ASSAY OFFICES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEMO_ASSAY_OFFICES = Object.freeze([
     'مكتب الششني المعتمد — القاهرة',
@@ -1087,21 +1294,20 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §35 · الفئات المُحجوبة عن البائع (MASKED FIELDS)
-     ─────────────────────────────────────────────────────────────────────
-     الأعمدة التي لا يستطيع البائع رؤيتها في المخزون
+     §36 · الفئات المُحجوبة عن البائع (MASKED FIELDS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SALESPERSON_MASKED_FIELDS = Object.freeze([
     'cost_price',
     'total_cost',
     'gold_value',
     'workmanship_value',
+    'purchase_workmanship',
     'profit_margin',
     'purchase_price',
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §36 · تعيينات أنواع الحركة (AUDIT ACTION TYPES)
+     §37 · تعيينات أنواع الحركة (AUDIT ACTION TYPES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.AUDIT_ACTIONS = Object.freeze({
     CREATE:  { key: 'CREATE',  label: 'إنشاء',      icon: 'plus-circle',   cls: 'create' },
@@ -1122,61 +1328,37 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §37 · دوال مساعدة للتكوين (CONFIG HELPERS)
+     §38 · دوال مساعدة للتكوين (CONFIG HELPERS)
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * الحصول على ترتيب العيار في القائمة
-   */
   GMS.karatIndex = function (karat) {
     return GMS.KARAT_ORDER.indexOf(Number(karat));
   };
 
-  /**
-   * الحصول على معامل النقاء لعيار معين
-   */
   GMS.karatRatio = function (karat) {
     return GMS.KARAT_RATIO[Number(karat)] || 0;
   };
 
-  /**
-   * الحصول على لون العيار
-   */
   GMS.karatColor = function (karat) {
     return GMS.KARAT_COLORS[Number(karat)] || '#6b7a95';
   };
 
-  /**
-   * الحصول على تسمية العيار
-   */
   GMS.karatLabel = function (karat) {
     return GMS.KARAT_LABELS[Number(karat)] || `عيار ${karat}`;
   };
 
-  /**
-   * الحصول على معلومات دور معين
-   */
   GMS.getRole = function (roleKey) {
     return GMS.ROLES[roleKey] || null;
   };
 
-  /**
-   * الحصول على صلاحيات دور معين
-   */
   GMS.getRolePermissions = function (roleKey) {
     return GMS.PERMISSIONS[roleKey] || [];
   };
 
-  /**
-   * الحصول على تسمية صلاحية
-   */
   GMS.getPermLabel = function (permKey) {
     return GMS.PERM_LABELS[permKey] || permKey;
   };
 
-  /**
-   * الحصول على معلومات حالة صنف
-   */
   GMS.getStatus = function (statusKey) {
     return GMS.ITEM_STATUS[statusKey] || {
       key: statusKey,
@@ -1186,16 +1368,10 @@
     };
   };
 
-  /**
-   * الحصول على معلومات نوع فاتورة
-   */
   GMS.getInvoiceType = function (typeKey) {
     return GMS.INVOICE_TYPES[typeKey] || null;
   };
 
-  /**
-   * الحصول على معلومات طريقة دفع
-   */
   GMS.getPaymentMethod = function (methodKey) {
     return GMS.PAYMENT_METHODS[methodKey] || {
       key: methodKey,
@@ -1204,41 +1380,92 @@
     };
   };
 
-  /**
-   * الحصول على معلومات مستوى خطورة الخسس
-   */
   GMS.getSeverity = function (severityKey) {
     return GMS.LOSS_SEVERITY[severityKey] || GMS.LOSS_SEVERITY.natural;
   };
 
-  /**
-   * التحقق من صحة عيار
-   */
   GMS.isValidKarat = function (karat) {
     return GMS.KARAT_ORDER.includes(Number(karat));
   };
 
-  /**
-   * التحقق من صحة دور
-   */
   GMS.isValidRole = function (roleKey) {
     return GMS.ROLE_KEYS.includes(roleKey);
   };
 
-  /**
-   * التحقق من صحة حالة صنف
-   */
   GMS.isValidStatus = function (statusKey) {
     return Object.keys(GMS.ITEM_STATUS).includes(statusKey);
   };
 
+  /* ─── ✅ دوال مساعدة للمصانع ───────────────────────────────────── */
+
+  /**
+   * قراءة نمط التسعير
+   * @param {string} modeKey
+   * @returns {Object}
+   */
+  GMS.getPricingMode = function (modeKey) {
+    return GMS.PRICING_MODES[modeKey] || GMS.PRICING_MODES.fixed;
+  };
+
+  /**
+   * قراءة لون من قائمة الألوان
+   * @param {string} colorKey
+   * @returns {Object|null}
+   */
+  GMS.getPricingColor = function (colorKey) {
+    return GMS.PRICING_COLORS.find(c => c.key === colorKey) || null;
+  };
+
+  /**
+   * حساب المصنعية تلقائياً من مصنع + مدخلات
+   * @param {Object} manufacturer
+   * @param {Object} context
+   * @param {string} [context.letter]
+   * @param {string} [context.color]
+   * @param {string} [context.category]
+   * @returns {number} — 0 إذا لم يمكن الحساب
+   */
+  GMS.resolveManufacturerRate = function (manufacturer, context = {}) {
+    if (!manufacturer) return 0;
+
+    switch (manufacturer.pricingMode) {
+      case 'letters': {
+        const letter = context.letter || '';
+        if (!letter) return Number(manufacturer.purchaseRate || 0);
+        const entry = (manufacturer.letterRates || [])
+          .find(l => l.letter === letter);
+        return entry ? Number(entry.rate || 0) : Number(manufacturer.purchaseRate || 0);
+      }
+
+      case 'colors': {
+        const color = context.color || '';
+        if (!color) return Number(manufacturer.purchaseRate || 0);
+        const entry = (manufacturer.colorRates || [])
+          .find(c => c.color === color);
+        return entry ? Number(entry.rate || 0) : Number(manufacturer.purchaseRate || 0);
+      }
+
+      case 'items': {
+        const category = context.category || '';
+        if (!category) return Number(manufacturer.purchaseRate || 0);
+        const entry = (manufacturer.itemRates || [])
+          .find(i => i.category === category);
+        return entry ? Number(entry.rate || 0) : Number(manufacturer.purchaseRate || 0);
+      }
+
+      case 'fixed':
+      default:
+        return Number(manufacturer.fixedRate || manufacturer.purchaseRate || 0);
+    }
+  };
+
   /* ═════════════════════════════════════════════════════════════════════
-     §38 · حدود النظام (SYSTEM LIMITS)
+     §39 · حدود النظام (SYSTEM LIMITS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.LIMITS = Object.freeze({
-    MAX_WEIGHT_GRAMS: 100000,          // 100 كجم
-    MAX_PRICE_24: 50000,               // 50,000 ج.م / جرام
-    MIN_PRICE_24: 100,                 // 100 ج.م / جرام
+    MAX_WEIGHT_GRAMS: 100000,
+    MAX_PRICE_24: 50000,
+    MIN_PRICE_24: 100,
     MAX_PURITY_RATIO: 1.0,
     MIN_PURITY_RATIO: 0.4,
     MAX_WORKMANSHIP: 5000,
@@ -1249,7 +1476,7 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §39 · أنماط التحقق (VALIDATION PATTERNS)
+     §40 · أنماط التحقق (VALIDATION PATTERNS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PATTERNS = Object.freeze({
     EMAIL: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
@@ -1263,7 +1490,7 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §40 · الإصدار والبناء (VERSION INFO)
+     §41 · الإصدار والبناء (VERSION INFO)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.VERSION_INFO = Object.freeze({
     APP_VERSION: '1.0.0',
@@ -1274,29 +1501,15 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §41 · Supabase Credentials (افتراضي — يُستبدَل من الإعدادات)
-     ─────────────────────────────────────────────────────────────────────
-     ⚠️ هذه القيم تُستخدم كـ fallback فقط.
-     ⚠️ لو ضبطها المستخدم من صفحة الإعدادات → localStorage يتقدّم.
-     
-     كيف تُملأ هذه القيم؟
-       1. اذهب إلى  https://supabase.com/dashboard
-       2. اختر مشروعك → Settings → API
-       3. انسخ "Project URL" → ضعه في URL
-       4. انسخ "anon public" key → ضعه في ANON_KEY
-     
-     🛡️ ملاحظات أمنية:
-       ✅ مفتاح anon عام (public) — آمن للمتصفح
-       ❌ لا تضع service_role key هنا أبداً
-       ✅ تأكد من تفعيل RLS على كل الجداول
+     §42 · Supabase Credentials (افتراضي — يُستبدَل من الإعدادات)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SUPABASE_CREDENTIALS = Object.freeze({
-    URL:      '',   // مثال: 'https://xxxxxxxxxxxx.supabase.co'
-    ANON_KEY: '',   // مثال: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+    URL:      '',
+    ANON_KEY: '',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §42 · رسالة التحميل (LOADED CONFIRMATION)
+     §43 · رسالة التحميل (LOADED CONFIRMATION)
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
     '%c📦 Gold MS Config loaded',
@@ -1316,7 +1529,13 @@
     'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
-  /* فحص أولي لـ Supabase Credentials */
+  console.log(
+    `%c🏭 ${GMS.DEFAULT_MANUFACTURERS.length} manufacturers · ` +
+    `${Object.keys(GMS.PRICING_MODES).length} pricing modes · ` +
+    `${GMS.PRICING_COLORS.length} colors available`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
   if (GMS.SUPABASE_CREDENTIALS.URL && GMS.SUPABASE_CREDENTIALS.ANON_KEY) {
     console.log(
       '%c🔌 Supabase credentials pre-configured ✓',
