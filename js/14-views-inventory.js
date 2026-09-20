@@ -1,19 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة:
+   صفحة المخزون الشاملة — النسخة v2.0
      - جدول أصناف مع pagination
-     - بحث فوري (IndexedDB)
-     - فلاتر (عيار، حالة، فرع، ماركة، تصنيف)
-     - إدارة أعمدة
-     - تحديد متعدد (Bulk actions)
-     - CRUD كامل (إضافة/تعديل/حذف)
-     - تصدير/استيراد Excel
-     - طباعة تاجات QR
-     - عرض تفاصيل الصنف
-     - ✅ Modal إضافة صنف ديناميكي (حسب نمط المصنع)
-     - ✅ مصنعية الشراء + مصنعية البيع + هامش الربح
+     - بحث فوري + فلاتر (عيار، حالة، فرع، ماركة، تصنيف)
+     - CRUD كامل + تحديد متعدد + تصدير Excel + QR Tags
+     - ✅ إدخال عدد القطع (Quantity) مع خياري الوزن الموحّد/المتنوع
+     - ✅ SKU فريد لكل وحدة: BASE-001, BASE-002, ..., BASE-NNN
+     - ✅ QR فريد لكل وحدة تلقائياً
+     - ✅ Modal إضافة صنف ديناميكي حسب نمط المصنع
+     - ✅ مصنعية الشراء + البيع + هامش الربح
      - ✅ وزن الفصوص اختياري
-     - ✅ Filter interactions محمية من Rerender الفجائي
+     - ✅ حماية التفاعل: القوائم لا تُغلق أثناء الاستخدام
+     - ✅ زر الإلغاء يعمل
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -22,19 +20,90 @@
   const GMS = window.GMS = window.GMS || {};
 
   /* ═════════════════════════════════════════════════════════════════════
+     §0 · INTERACTION LOCK
+     ─────────────────────────────────────────────────────────────────────
+     ✅ حماية شاملة: أي تفاعل مع حقل = قفل rerender لـ 10 ثواني
+     يمنع إغلاق القوائم المنسدلة بسبب أحداث Realtime أو Router
+     ═════════════════════════════════════════════════════════════════════ */
+  const INTERACTION_LOCK_MS = 10000;
+
+  function lockInteraction() {
+    window.GMS = window.GMS || {};
+    window.GMS._invInteractionUntil = Date.now() + INTERACTION_LOCK_MS;
+  }
+
+  function isInteractionLocked() {
+    const until = window.GMS?._invInteractionUntil || 0;
+    return Date.now() < until;
+  }
+
+  /* ✅ تثبيت المستمعين على document (يتم مرة واحدة فقط) */
+  (function installInteractionListeners() {
+    if (window.GMS._invListenersInstalled) return;
+    window.GMS._invListenersInstalled = true;
+
+    const handler = (e) => {
+      const t = e.target;
+      if (!t) return;
+      const tag = t.tagName;
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' ||
+          t.isContentEditable) {
+        lockInteraction();
+      }
+    };
+
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('focusin', handler, true);
+    document.addEventListener('keydown', handler, true);
+    document.addEventListener('change', handler, true);
+    document.addEventListener('input', handler, true);
+
+    console.log('[Inventory] ✅ Interaction lock installed');
+  })();
+
+  /* ✅ Patch Router لمنع rerender أثناء التفاعل */
+  (function patchRouter() {
+    if (!window.GMS) return;
+
+    const tryPatch = () => {
+      if (!window.GMS.Router) return false;
+      if (window.GMS.Router._invPatched) return true;
+
+      const original = window.GMS.Router.scheduleRerender;
+      window.GMS.Router.scheduleRerender = function (...args) {
+        if (isInteractionLocked() && window.GMS.Router.currentId() === 'inventory') {
+          console.log('[Inventory] ⛔ Rerender blocked — interaction locked');
+          return;
+        }
+        return original.apply(this, args);
+      };
+
+      window.GMS.Router._invPatched = true;
+      console.log('[Inventory] ✅ Router patched for interaction lock');
+      return true;
+    };
+
+    if (!tryPatch()) {
+      // حاول مرة أخرى بعد تحميل Router
+      let attempts = 0;
+      const timer = setInterval(() => {
+        attempts++;
+        if (tryPatch() || attempts > 20) clearInterval(timer);
+      }, 200);
+    }
+  })();
+
+  /* ═════════════════════════════════════════════════════════════════════
      §1 · INVENTORY STATE
      ═════════════════════════════════════════════════════════════════════ */
   const InvState = {
-    /* البيانات */
     items: [],
     filtered: [],
 
-    /* Pagination */
     page: 1,
     pageSize: 50,
     totalPages: 1,
 
-    /* Filters */
     filters: {
       search: '',
       karat: '',
@@ -44,14 +113,11 @@
       category: '',
     },
 
-    /* Selection */
     selected: new Set(),
 
-    /* Sorting */
     sortBy: 'created_at',
     sortDir: 'desc',
 
-    /* Column visibility */
     columns: {
       sku: true,
       category: true,
@@ -67,9 +133,9 @@
       created_at: false,
     },
 
-    /* Stats */
     stats: {
       total: 0,
+      filtered: 0,
       inStock: 0,
       sold: 0,
       reserved: 0,
@@ -77,22 +143,18 @@
       totalValue: 0,
     },
 
-    /* Loading */
     loading: false,
     lastRenderAt: null,
 
-    /* المستمعون */
     unsubscribers: [],
 
-    /* مؤقتات */
     timers: {
       search: null,
     },
   };
 
-  /* تعريفات الأعمدة */
   const COLUMNS = [
-    { key: 'sku', label: 'كود التاج', width: 155, sortable: true, align: 'start' },
+    { key: 'sku', label: 'كود التاج', width: 175, sortable: true, align: 'start' },
     { key: 'category', label: 'التصنيف', width: 100, sortable: true, align: 'start' },
     { key: 'karat', label: 'العيار', width: 75, sortable: true, align: 'center' },
     { key: 'weight_grams', label: 'قائم', width: 85, sortable: true, align: 'end' },
@@ -117,9 +179,6 @@
     }
   }
 
-  /**
-   * تدمير مستمعي الفلاتر السابقين
-   */
   function cleanupListeners() {
     InvState.unsubscribers.forEach(fn => {
       try { fn(); } catch (_) {}
@@ -129,18 +188,30 @@
     clearTimeout(InvState.timers.search);
   }
 
-  /**
-   * ✅ قراءة المصانع من الـ Cache (مع fallback)
-   * @returns {Array}
-   */
   function getManufacturers() {
     if (GMS.Cache?.getManufacturersList) {
-      return GMS.Cache.getManufacturersList();
+      const list = GMS.Cache.getManufacturersList();
+      if (list && list.length) return list;
     }
-    if (GMS.Demo?.getManufacturers) {
-      return GMS.Demo.getManufacturers();
-    }
+    if (GMS.Demo?.getManufacturers) return GMS.Demo.getManufacturers();
     return GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
+  }
+
+  /**
+   * ✅ توليد SKU فريد لكل وحدة
+   * BASE-001, BASE-002, ..., BASE-NNN
+   * @param {string} baseSku
+   * @param {number} index — يبدأ من 1
+   * @param {number} total — إجمالي القطع
+   * @returns {string}
+   */
+  function buildUniqueSku(baseSku, index, total) {
+    if (total <= 1) return baseSku;
+
+    const suffix = String(index).padStart(3, '0');
+    // إزالة أي لاحقة سابقة
+    const clean = String(baseSku || '').replace(/-\d{3}$/, '');
+    return `${clean}-${suffix}`;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -151,7 +222,6 @@
     try {
       InvState.loading = true;
 
-      /* 1 · IndexedDB */
       if (GMS.IDB && GMS.IDB.isOpen) {
         try {
           const items = await GMS.IDB.getAll();
@@ -164,7 +234,6 @@
         }
       }
 
-      /* 2 · Demo fallback */
       if (GMS.Demo) {
         InvState.items = GMS.Demo.getInventory();
         return InvState.items;
@@ -172,7 +241,6 @@
 
       InvState.items = [];
       return [];
-
     } finally {
       InvState.loading = false;
     }
@@ -182,7 +250,6 @@
     const f = InvState.filters;
     let rows = InvState.items.slice();
 
-    /* Search */
     if (f.search) {
       const q = f.search.toLowerCase().trim();
       rows = rows.filter(i =>
@@ -193,34 +260,18 @@
       );
     }
 
-    /* Karat */
-    if (f.karat) {
-      rows = rows.filter(i => Number(i.karat) === Number(f.karat));
-    }
+    if (f.karat) rows = rows.filter(i => Number(i.karat) === Number(f.karat));
+    if (f.status) rows = rows.filter(i => i.status === f.status);
+    if (f.branch) rows = rows.filter(i => i.branch_id === f.branch);
 
-    /* Status */
-    if (f.status) {
-      rows = rows.filter(i => i.status === f.status);
-    }
-
-    /* Branch */
-    if (f.branch) {
-      rows = rows.filter(i => i.branch_id === f.branch);
-    }
-
-    /* Manufacturer */
     if (f.manufacturer) {
       rows = rows.filter(i =>
         (i.manufacturer_code || '').toUpperCase() === f.manufacturer.toUpperCase()
       );
     }
 
-    /* Category */
-    if (f.category) {
-      rows = rows.filter(i => i.category === f.category);
-    }
+    if (f.category) rows = rows.filter(i => i.category === f.category);
 
-    /* Sort */
     const dir = InvState.sortDir === 'desc' ? -1 : 1;
     const key = InvState.sortBy;
 
@@ -234,16 +285,13 @@
       if (typeof av === 'number' && typeof bv === 'number') {
         return (av - bv) * dir;
       }
-
       return String(av).localeCompare(String(bv), 'ar') * dir;
     });
 
     InvState.filtered = rows;
     InvState.totalPages = Math.max(1, Math.ceil(rows.length / InvState.pageSize));
 
-    if (InvState.page > InvState.totalPages) {
-      InvState.page = InvState.totalPages;
-    }
+    if (InvState.page > InvState.totalPages) InvState.page = InvState.totalPages;
 
     updateStats();
     return rows;
@@ -274,8 +322,7 @@
 
   function getPageItems() {
     const start = (InvState.page - 1) * InvState.pageSize;
-    const end = start + InvState.pageSize;
-    return InvState.filtered.slice(start, end);
+    return InvState.filtered.slice(start, start + InvState.pageSize);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -308,11 +355,8 @@
         ? (InvState.sortDir === 'asc' ? 'arrow-up' : 'arrow-down')
         : 'arrow-up-down';
 
-    const alignClass = col.align === 'end'
-      ? 'col-num'
-      : col.align === 'center'
-        ? 'col-c'
-        : '';
+    const alignClass = col.align === 'end' ? 'col-num'
+                     : col.align === 'center' ? 'col-c' : '';
 
     return `
       <th class="${col.sortable ? 'sortable' : ''} ${isSorted ? 'sorted' : ''} ${alignClass}"
@@ -579,19 +623,13 @@
 
     if (f.search) chips.push({ key: 'search', label: 'بحث', value: f.search });
     if (f.karat) chips.push({ key: 'karat', label: 'عيار', value: `${f.karat}K` });
-    if (f.status) {
-      chips.push({ key: 'status', label: 'حالة', value: GMS.getStatus(f.status).label });
-    }
+    if (f.status) chips.push({ key: 'status', label: 'حالة', value: GMS.getStatus(f.status).label });
     if (f.branch) {
       const b = GMS.Demo?.getBranches()?.find(x => x.id === f.branch);
       chips.push({ key: 'branch', label: 'فرع', value: b?.name || f.branch });
     }
-    if (f.manufacturer) {
-      chips.push({ key: 'manufacturer', label: 'ماركة', value: f.manufacturer });
-    }
-    if (f.category) {
-      chips.push({ key: 'category', label: 'تصنيف', value: f.category });
-    }
+    if (f.manufacturer) chips.push({ key: 'manufacturer', label: 'ماركة', value: f.manufacturer });
+    if (f.category) chips.push({ key: 'category', label: 'تصنيف', value: f.category });
 
     if (!chips.length) return '';
 
@@ -674,7 +712,6 @@
         <p>${GMS.t('inv.subtitle')}</p>
       </div>
 
-      <!-- KPIs -->
       <div class="kpi-row cols-4">
         ${renderKPI('gold', 'package', 'إجمالي الأصناف',
             GMS.intFmt(InvState.items.length), '',
@@ -696,7 +733,6 @@
             `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف`)}
       </div>
 
-      <!-- Toolbar -->
       <div class="card" style="margin-bottom:16px">
         <div class="toolbar-row">
           <div class="search-wrap" style="flex:1;min-width:240px;max-width:420px">
@@ -776,10 +812,8 @@
         </div>
       </div>
 
-      <!-- Bulk Bar -->
       <div id="inv-bulk-host"></div>
 
-      <!-- Table -->
       <div class="card">
         <div id="inv-table-host">
           ${renderTable()}
@@ -818,12 +852,8 @@
     if (clearAllBtn) {
       clearAllBtn.onclick = () => {
         InvState.filters = {
-          search: '',
-          karat: '',
-          status: '',
-          branch: '',
-          manufacturer: '',
-          category: '',
+          search: '', karat: '', status: '',
+          branch: '', manufacturer: '', category: '',
         };
         InvState.page = 1;
         applyFilters();
@@ -882,12 +912,8 @@
     const kpiHost = document.querySelector('.kpi-row');
     if (kpiHost) {
       const kpis = kpiHost.querySelectorAll('.kpi .kpi-value');
-      if (kpis[1]) {
-        kpis[1].innerHTML = `${GMS.intFmt(InvState.filtered.length)}`;
-      }
-      if (kpis[2]) {
-        kpis[2].innerHTML = `${GMS.gramFmt(InvState.stats.totalPure)} <small>جم</small>`;
-      }
+      if (kpis[1]) kpis[1].innerHTML = `${GMS.intFmt(InvState.filtered.length)}`;
+      if (kpis[2]) kpis[2].innerHTML = `${GMS.gramFmt(InvState.stats.totalPure)} <small>جم</small>`;
       if (kpis[3]) {
         const avg = InvState.filtered.length
           ? InvState.stats.totalValue / InvState.filtered.length
@@ -914,12 +940,12 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
-    /* Search */
     const searchInput = document.getElementById('inv-search-input');
     if (searchInput) {
       searchInput.value = InvState.filters.search;
 
       searchInput.oninput = (e) => {
+        lockInteraction();
         clearTimeout(InvState.timers.search);
         InvState.timers.search = setTimeout(() => {
           InvState.filters.search = e.target.value.trim();
@@ -930,7 +956,6 @@
       };
     }
 
-    /* Clear search */
     const clearBtn = document.getElementById('inv-search-clear');
     if (clearBtn) {
       clearBtn.onclick = () => {
@@ -943,7 +968,6 @@
       };
     }
 
-    /* Filters */
     const filterIds = [
       { id: 'inv-filter-karat', key: 'karat' },
       { id: 'inv-filter-status', key: 'status' },
@@ -956,7 +980,12 @@
       const el = document.getElementById(id);
       if (!el) return;
 
+      /* ✅ قفل التفاعل عند الفتح */
+      el.onfocus = () => lockInteraction();
+      el.onmousedown = () => lockInteraction();
+
       el.onchange = () => {
+        lockInteraction();
         InvState.filters[key] = el.value;
         InvState.page = 1;
         applyFilters();
@@ -965,7 +994,6 @@
       };
     });
 
-    /* Clear individual filter */
     document.querySelectorAll('[data-clear-filter]').forEach(btn => {
       btn.onclick = () => {
         const key = btn.dataset.clearFilter;
@@ -978,17 +1006,12 @@
       };
     });
 
-    /* Clear all */
     const clearAllBtn = document.getElementById('inv-clear-all-filters');
     if (clearAllBtn) {
       clearAllBtn.onclick = () => {
         InvState.filters = {
-          search: '',
-          karat: '',
-          status: '',
-          branch: '',
-          manufacturer: '',
-          category: '',
+          search: '', karat: '', status: '',
+          branch: '', manufacturer: '', category: '',
         };
         InvState.page = 1;
         applyFilters();
@@ -998,33 +1021,25 @@
       };
     }
 
-    /* Bulk bar */
     refreshBulkBar();
 
-    /* Actions */
     const addBtn = document.getElementById('inv-add-btn');
     if (addBtn) addBtn.onclick = () => openItemModal();
 
     const importBtn = document.getElementById('inv-import-btn');
     if (importBtn) {
-      importBtn.onclick = () => {
-        GMS.Excel?.Importer?.openFilePicker();
-      };
+      importBtn.onclick = () => GMS.Excel?.Importer?.openFilePicker();
     }
 
     const exportBtn = document.getElementById('inv-export-btn');
-    if (exportBtn) {
-      exportBtn.onclick = () => exportFiltered();
-    }
+    if (exportBtn) exportBtn.onclick = () => exportFiltered();
 
     const colsBtn = document.getElementById('inv-cols-btn');
     if (colsBtn) colsBtn.onclick = (e) => openColumnsMenu(e.currentTarget);
 
-    /* Table + Pagination */
     bindTableEvents();
     bindPaginationEvents();
 
-    /* Global ESC */
     const keyHandler = (e) => {
       if (GMS.Router?.current() !== 'inventory') return;
 
@@ -1047,10 +1062,7 @@
     document.querySelectorAll('[data-action][data-sku]').forEach(btn => {
       btn.onclick = (e) => {
         e.stopPropagation();
-        const action = btn.dataset.action;
-        const sku = btn.dataset.sku;
-
-        handleRowAction(action, sku);
+        handleRowAction(btn.dataset.action, btn.dataset.sku);
       };
     });
 
@@ -1059,11 +1071,8 @@
         e.stopPropagation();
         const sku = cb.dataset.sku;
 
-        if (cb.checked) {
-          InvState.selected.add(sku);
-        } else {
-          InvState.selected.delete(sku);
-        }
+        if (cb.checked) InvState.selected.add(sku);
+        else InvState.selected.delete(sku);
 
         const row = cb.closest('tr');
         if (row) row.classList.toggle('selected', cb.checked);
@@ -1078,11 +1087,8 @@
         const pageItems = getPageItems();
         const allSelected = pageItems.every(i => InvState.selected.has(i.sku));
 
-        if (allSelected) {
-          pageItems.forEach(i => InvState.selected.delete(i.sku));
-        } else {
-          pageItems.forEach(i => InvState.selected.add(i.sku));
-        }
+        if (allSelected) pageItems.forEach(i => InvState.selected.delete(i.sku));
+        else pageItems.forEach(i => InvState.selected.add(i.sku));
 
         refreshTable();
         refreshBulkBar();
@@ -1131,6 +1137,7 @@
 
     const sizeSelect = document.getElementById('inv-page-size');
     if (sizeSelect) {
+      sizeSelect.onfocus = () => lockInteraction();
       sizeSelect.onchange = () => {
         InvState.pageSize = Number(sizeSelect.value);
         InvState.page = 1;
@@ -1149,21 +1156,10 @@
     if (!item) return;
 
     switch (action) {
-      case 'view':
-        showItemDetails(item);
-        break;
-
-      case 'edit':
-        openItemModal(item);
-        break;
-
-      case 'tag':
-        await printTag(item);
-        break;
-
-      case 'delete':
-        await deleteItem(item);
-        break;
+      case 'view':   showItemDetails(item); break;
+      case 'edit':   openItemModal(item); break;
+      case 'tag':    await printTag(item); break;
+      case 'delete': await deleteItem(item); break;
     }
   }
 
@@ -1178,7 +1174,6 @@
     const branchName = item.branch_name
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
 
-    /* حساب هامش الربح (إن وُجد) */
     const purchaseRate = Number(item.purchase_workmanship || item.workmanship_per_gram || 0);
     const saleRate = Number(item.workmanship_per_gram || 0);
     const marginPerGram = saleRate - purchaseRate;
@@ -1235,7 +1230,8 @@
             <span class="v">${GMS.gramFmt(item.weight_grams)} جم</span>
           </div>
           <div class="cl-row">
-            <span class="k"><i data-lucide="gem"></i> وزن الأحجار</span>
+            <span class="k"><i data-lucide="gem"></i> وزن الأحجار
+              ${item.stones_included ? '<span class="chip" style="font-size:9px">داخل الوزن</span>' : ''}</span>
             <span class="v">${GMS.gramFmt(item.stone_weight)} جم</span>
           </div>
           <div class="cl-row">
@@ -1271,7 +1267,7 @@
 
         <div class="calc-list" style="margin-top:16px">
           <div class="cl-row">
-            <span class="k"><i data-lucide="coins"></i> قيمة المصنعية</span>
+            <span class="k"><i data-lucide="coins"></i> قيمة المصنعية (بيع)</span>
             <span class="v">${GMS.moneyFmt(item.workmanship_value)} ج.م</span>
           </div>
           <div class="cl-row">
@@ -1323,11 +1319,11 @@
         </button>
       `,
       onMount: (el, close) => {
+        el.querySelector('[data-close]').onclick = () => close();
         el.querySelector('[data-edit]').onclick = () => {
           close();
           openItemModal(item);
         };
-
         el.querySelector('[data-print-tag]').onclick = async () => {
           close();
           await printTag(item);
@@ -1337,7 +1333,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · ✅ ITEM MODAL (ADD / EDIT) — ديناميكي حسب المصنع
+     §9 · ITEM MODAL (ADD / EDIT)
      ═════════════════════════════════════════════════════════════════════ */
 
   function openItemModal(item = null) {
@@ -1348,8 +1344,7 @@
     const branches = GMS.Demo?.getBranches() || [];
     const categories = GMS.CATEGORIES;
 
-    /* حالة الـ Modal */
-    const modalState = {
+    const mstate = {
       pricingMode: 'fixed',
       selectedManufacturer: null,
       selectedLetter: item_.letter_code || '',
@@ -1357,15 +1352,19 @@
       purchaseRate: Number(item_.purchase_workmanship || 0),
       saleRate: Number(item_.workmanship_per_gram || 0),
       stonesIncluded: Boolean(item_.stones_included) || false,
+
+      /* ✅ Quantity */
+      quantity: 1,
+      sameWeight: true,
+      individualWeights: [],  /* تُملأ إذا sameWeight=false */
     };
 
-    /* ابحث عن المصنع الحالي */
     const currentManu = manufacturers.find(m => m.code === item_.manufacturer_code);
     if (currentManu) {
-      modalState.selectedManufacturer = currentManu;
-      modalState.pricingMode = currentManu.pricingMode || 'fixed';
-      modalState.purchaseRate = modalState.purchaseRate || Number(currentManu.purchaseRate || 0);
-      modalState.saleRate = modalState.saleRate || Number(currentManu.saleRate || 0);
+      mstate.selectedManufacturer = currentManu;
+      mstate.pricingMode = currentManu.pricingMode || 'fixed';
+      mstate.purchaseRate = mstate.purchaseRate || Number(currentManu.purchaseRate || 0);
+      mstate.saleRate = mstate.saleRate || Number(currentManu.saleRate || 0);
     }
 
     GMS.Modal.open({
@@ -1374,7 +1373,7 @@
       size: 'xl',
       body: `
         <div id="item-modal-body">
-          ${renderItemForm(isEdit, item_, manufacturers, branches, categories, modalState)}
+          ${renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate)}
         </div>
       `,
       footer: `
@@ -1384,7 +1383,7 @@
         </button>
       `,
       onMount: (el, close) => {
-        bindItemForm(el, close, isEdit, item_, modalState, manufacturers, categories);
+        bindItemForm(el, close, isEdit, item_, mstate, manufacturers, categories);
       },
     });
   }
@@ -1393,14 +1392,16 @@
      §9.1 · Render Item Form
      ───────────────────────────────────────────────────────────────────── */
   function renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate) {
-    const karat = Number(item_.karat) || 21;
     const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
 
     return `
       <!-- Section 1: SKU + Manufacturer + Category -->
       <div class="grid-form three">
         <div class="field">
-          <label>كود التاج <span class="req">*</span></label>
+          <label>كود التاج الأساسي <span class="req">*</span>
+            ${!isEdit ? `<span class="hint" style="display:inline">
+              — سيُضاف رقم مسلسل لكل قطعة</span>` : ''}
+          </label>
           <div style="display:flex;gap:8px">
             <input id="f-sku" value="${GMS.esc(item_.sku || '')}"
                    class="mono" dir="ltr"
@@ -1482,12 +1483,201 @@
         </div>
       </div>
 
-      <!-- ✅ Section 3: Dynamic Pricing (Depends on Manufacturer) -->
+      <!-- Section 3: Dynamic Pricing -->
       <div id="f-pricing-section" style="margin-top:18px">
         ${renderPricingSection(mstate)}
       </div>
 
-      <!-- Section 4: Weights -->
+      <!-- ✅ Section 4: Quantity & Weights (NEW) -->
+      ${!isEdit ? renderQuantitySection(mstate) : renderSingleWeightSection(item_, mstate)}
+
+      <!-- Section 5: Notes -->
+      <div class="field" style="margin-top:13px">
+        <label>ملاحظات</label>
+        <input id="f-notes" value="${GMS.esc(item_.notes || '')}"
+               placeholder="ملاحظات على الصنف…">
+      </div>
+
+      <!-- Preview Box -->
+      <div id="f-preview" style="margin-top:16px"></div>
+    `;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     §9.2 · Render Quantity Section (لإضافة صنف جديد)
+     ───────────────────────────────────────────────────────────────────── */
+  function renderQuantitySection(mstate) {
+    return `
+      <div class="divider" style="margin:18px 0 14px"></div>
+
+      <div style="font-size:11px;font-weight:800;color:var(--muted);
+                  text-transform:uppercase;letter-spacing:.5px;
+                  margin-bottom:12px;display:flex;align-items:center;gap:6px">
+        <i data-lucide="package" style="width:12px;height:12px"></i>
+        عدد القطع والأوزان
+      </div>
+
+      <div style="padding:16px 18px;background:var(--info-bg);
+                  border-radius:12px;
+                  border:1px solid color-mix(in srgb,var(--info) 30%,var(--border))">
+
+        <!-- Quantity + Same weight toggle -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;
+                    align-items:end">
+          <div class="field">
+            <label>عدد القطع <span class="req">*</span>
+              <span class="hint" style="display:inline">
+                — أدخل عدد الوحدات (1 - 9999)
+              </span>
+            </label>
+            <input type="number" id="f-quantity"
+                   step="1" min="1" max="9999"
+                   value="${mstate.quantity || 1}"
+                   class="mono"
+                   style="font-size:16px;font-weight:900;
+                          text-align:center;color:var(--info)">
+          </div>
+
+          <div class="field">
+            <label style="justify-content:flex-start">
+              <span>طريقة إدخال الأوزان</span>
+            </label>
+            <div style="display:flex;gap:6px;padding:4px;
+                        background:var(--surface);
+                        border-radius:10px;
+                        border:1px solid var(--border)">
+              <button type="button" id="f-mode-same"
+                      style="flex:1;padding:9px 12px;border-radius:8px;
+                             font-weight:800;font-size:11.5px;
+                             cursor:pointer;border:none;
+                             font-family:inherit;
+                             background:${mstate.sameWeight ? 'var(--primary)' : 'transparent'};
+                             color:${mstate.sameWeight ? '#2a1f05' : 'var(--text-2)'};
+                             transition:all .2s">
+                <i data-lucide="equal" style="width:11px;height:11px;
+                           display:inline;vertical-align:-1px"></i>
+                وزن موحّد
+              </button>
+              <button type="button" id="f-mode-diff"
+                      style="flex:1;padding:9px 12px;border-radius:8px;
+                             font-weight:800;font-size:11.5px;
+                             cursor:pointer;border:none;
+                             font-family:inherit;
+                             background:${!mstate.sameWeight ? 'var(--primary)' : 'transparent'};
+                             color:${!mstate.sameWeight ? '#2a1f05' : 'var(--text-2)'};
+                             transition:all .2s">
+                <i data-lucide="list" style="width:11px;height:11px;
+                           display:inline;vertical-align:-1px"></i>
+                أوزان متنوعة
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Unified weight mode -->
+        <div id="f-unified-weight-host"
+             style="margin-top:14px;${mstate.sameWeight ? '' : 'display:none'}">
+          <div class="grid-form three">
+            <div class="field">
+              <label>الوزن القائم (للوحدة) <span class="req">*</span></label>
+              <input type="number" id="f-weight" step="0.001" min="0"
+                     value="" class="mono"
+                     style="font-size:15px;font-weight:800;text-align:center"
+                     placeholder="0.000">
+            </div>
+
+            <div class="field">
+              <label style="justify-content:space-between">
+                <span>وزن الأحجار (للوحدة)</span>
+                <label class="toggle-switch" style="font-size:10px;
+                            font-weight:700;gap:5px">
+                  <input type="checkbox" id="f-stones-included"
+                         ${mstate.stonesIncluded ? 'checked' : ''}>
+                  <span class="track" style="width:28px;height:16px"></span>
+                  <span style="color:var(--muted)">داخل الوزن</span>
+                </label>
+              </label>
+              <input type="number" id="f-stone" step="0.001" min="0"
+                     value="0" class="mono"
+                     ${mstate.stonesIncluded ? 'disabled' : ''}
+                     style="text-align:center">
+            </div>
+
+            <div class="field">
+              <label>إجمالي الوزن القائم (لكل القطع)</label>
+              <input id="f-total-weight" readonly class="mono"
+                     style="text-align:center;font-weight:900;
+                            color:var(--primary);
+                            background:var(--surface-3)">
+            </div>
+          </div>
+        </div>
+
+        <!-- Individual weights mode -->
+        <div id="f-individual-weight-host"
+             style="margin-top:14px;${!mstate.sameWeight ? '' : 'display:none'}">
+          <div class="field">
+            <label>أوزان القطع <span class="req">*</span>
+              <span class="hint" style="display:inline">
+                — أدخل وزن كل قطعة في سطر منفصل (يجب أن يطابق عدد القطع)
+              </span>
+            </label>
+            <textarea id="f-weights-list"
+                      rows="6"
+                      placeholder="مثال:&#10;5.234&#10;5.421&#10;5.156&#10;..."
+                      class="mono"
+                      style="width:100%;padding:11px 13px;
+                             border-radius:var(--radius-sm);
+                             border:1px solid var(--border);
+                             background:var(--surface-2);
+                             font-weight:700;font-size:13px;
+                             line-height:1.8;direction:ltr;
+                             text-align:left;resize:vertical"></textarea>
+          </div>
+
+          <div style="display:flex;justify-content:space-between;
+                      align-items:center;margin-top:8px;
+                      font-size:11.5px;font-weight:700">
+            <span id="f-weights-counter"
+                  style="color:var(--muted)">
+              عدد الأوزان المُدخلة: 0
+            </span>
+            <span id="f-weights-status"></span>
+          </div>
+        </div>
+
+        <!-- Computed output (for both modes) -->
+        <div class="grid-form three" style="margin-top:14px">
+          <div class="field">
+            <label>الوزن الصافي (للوحدة)</label>
+            <input id="f-net" readonly class="mono"
+                   style="text-align:center;font-weight:800;
+                          background:var(--surface-3)">
+          </div>
+
+          <div class="field">
+            <label>البندق 24K (للوحدة)</label>
+            <input id="f-pure" readonly class="mono"
+                   style="text-align:center;color:var(--primary);
+                          font-weight:900;background:var(--surface-3)">
+          </div>
+
+          <div class="field">
+            <label>الإجمالي (للوحدة)</label>
+            <input id="f-total" readonly class="mono"
+                   style="text-align:center;font-weight:800;
+                          background:var(--surface-3)">
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     §9.3 · Render Single Weight Section (للتعديل)
+     ───────────────────────────────────────────────────────────────────── */
+  function renderSingleWeightSection(item_, mstate) {
+    return `
       <div class="divider" style="margin:18px 0 14px"></div>
 
       <div style="font-size:11px;font-weight:800;color:var(--muted);
@@ -1502,8 +1692,7 @@
           <label>الوزن القائم (جم) <span class="req">*</span></label>
           <input type="number" id="f-weight" step="0.001" min="0"
                  value="${item_.weight_grams || ''}" class="mono"
-                 style="font-size:15px;font-weight:800;text-align:center"
-                 placeholder="0.000">
+                 style="font-size:15px;font-weight:800;text-align:center">
         </div>
 
         <div class="field">
@@ -1552,25 +1741,16 @@
         <div class="field">
           <label>سعر 24K الحالي</label>
           <input readonly class="mono"
-                 value="${GMS.moneyFmt(price24)} ج.م"
+                 value="${GMS.moneyFmt(GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24)} ج.م"
                  style="text-align:center;font-weight:700;
                         background:var(--surface-3)">
         </div>
       </div>
-
-      <div class="field" style="margin-top:13px">
-        <label>ملاحظات</label>
-        <input id="f-notes" value="${GMS.esc(item_.notes || '')}"
-               placeholder="ملاحظات على الصنف…">
-      </div>
-
-      <!-- ✅ Preview Box -->
-      <div id="f-preview" style="margin-top:16px"></div>
     `;
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.2 · Render Pricing Section (Dynamic)
+     §9.4 · Render Pricing Section
      ───────────────────────────────────────────────────────────────────── */
   function renderPricingSection(mstate) {
     const mode = mstate.pricingMode || 'fixed';
@@ -1596,7 +1776,6 @@
                   border-radius:12px;
                   border:1.5px solid color-mix(in srgb,var(--primary) 30%,var(--border))">
 
-        <!-- Header -->
         <div style="display:flex;align-items:center;gap:10px;
                     margin-bottom:14px;flex-wrap:wrap">
           <div style="width:34px;height:34px;border-radius:9px;
@@ -1618,20 +1797,14 @@
           </div>
         </div>
 
-        <!-- Dynamic selector (letter/color) -->
         ${renderDynamicSelector(mode, manu, mstate)}
 
-        <!-- Purchase + Sale Workmanship -->
         <div class="grid-form" style="gap:12px;margin-top:14px">
           <div class="field">
             <label style="color:var(--danger)">
               <i data-lucide="shopping-cart"
                  style="width:12px;height:12px"></i>
               مصنعية الشراء (ج.م/جم)
-              <span class="hint" style="display:inline;
-                          color:var(--muted)">
-                اللي بتدفعه للمصنع
-              </span>
             </label>
             <input type="number" id="f-purchase-rate"
                    step="1" min="0"
@@ -1646,10 +1819,6 @@
               <i data-lucide="tag"
                  style="width:12px;height:12px"></i>
               مصنعية البيع (ج.م/جم)
-              <span class="hint" style="display:inline;
-                          color:var(--muted)">
-                اللي هتبيع بيه للعميل
-              </span>
             </label>
             <input type="number" id="f-sale-rate"
                    step="1" min="0"
@@ -1660,7 +1829,6 @@
           </div>
         </div>
 
-        <!-- Margin indicator -->
         <div id="f-margin-indicator"
              style="margin-top:12px;padding:10px 14px;
                     background:var(--surface);border-radius:9px;
@@ -1675,11 +1843,7 @@
     if (mode === 'letters') {
       return `
         <div class="field">
-          <label>الحرف <span class="req">*</span>
-            <span class="hint" style="display:inline">
-              اختر الحرف لتحديد السعر تلقائياً
-            </span>
-          </label>
+          <label>الحرف <span class="req">*</span></label>
           <select id="f-letter">
             <option value="">— اختر حرف —</option>
             ${(manu.letterRates || []).map(l => `
@@ -1697,11 +1861,7 @@
     if (mode === 'colors') {
       return `
         <div class="field">
-          <label>اللون <span class="req">*</span>
-            <span class="hint" style="display:inline">
-              اختر اللون لتحديد السعر تلقائياً
-            </span>
-          </label>
+          <label>اللون <span class="req">*</span></label>
           <select id="f-color">
             <option value="">— اختر لون —</option>
             ${(manu.colorRates || []).map(c => {
@@ -1784,35 +1944,61 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.3 · Bind Item Form
+     §9.5 · Bind Item Form
      ───────────────────────────────────────────────────────────────────── */
   function bindItemForm(el, closeFn, isEdit, item_, mstate, manufacturers, categories) {
-    const $ = (sel) => el.querySelector(sel);
     const $id = (id) => el.querySelector('#' + id);
+
+    /* ✅ ربط زر الإلغاء */
+    const closeBtn = el.querySelector('[data-close]');
+    if (closeBtn) {
+      closeBtn.onclick = () => closeFn();
+    }
 
     /* ─── Recalc ─────────────────────────────────────────────────── */
     const recalc = () => {
-      const karat = Number($id('f-karat').value) || 21;
-      const gross = parseFloat($id('f-weight').value) || 0;
-      const stonesIncluded = $id('f-stones-included').checked;
-      const stone = stonesIncluded ? 0 : (parseFloat($id('f-stone').value) || 0);
+      const karat = Number($id('f-karat')?.value) || 21;
+      const stonesIncluded = $id('f-stones-included')?.checked || false;
       const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
       const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
+      const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+      const qty = isEdit ? 1 : (parseInt($id('f-quantity')?.value) || 1);
 
-      const price24 = GMS.Cache?.getPrice()?.price_24
-        || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+      const ratio = GMS.karatRatio(karat);
 
-      const net = GMS.round(Math.max(0, gross - stone), 3);
-      const pure = GMS.round(net * GMS.karatRatio(karat), 4);
-      const goldValue = GMS.round(pure * price24, 2);
-      const purchaseMakeValue = GMS.round(net * purchaseRate, 2);
-      const saleMakeValue = GMS.round(net * saleRate, 2);
-      const totalCost = GMS.round(goldValue + saleMakeValue, 2);
-      const totalProfit = GMS.round(saleMakeValue - purchaseMakeValue, 2);
+      /* حساب لكل وحدة */
+      let netUnit = 0;
+      let stoneUnit = 0;
 
-      $id('f-net').value = net.toFixed(3);
-      $id('f-pure').value = pure.toFixed(3);
-      $id('f-total').value = GMS.moneyFmt(totalCost);
+      if (mstate.sameWeight || isEdit) {
+        const gross = parseFloat($id('f-weight')?.value) || 0;
+        stoneUnit = stonesIncluded ? 0 : (parseFloat($id('f-stone')?.value) || 0);
+        netUnit = GMS.round(Math.max(0, gross - stoneUnit), 3);
+      } else {
+        /* أوزان متنوعة — نستخدم أول وزن للمعاينة */
+        const weights = parseWeightsInput($id('f-weights-list')?.value);
+        if (weights.length) {
+          netUnit = GMS.round(weights[0], 3);
+        }
+      }
+
+      const pureUnit = GMS.round(netUnit * ratio, 4);
+      const goldValueUnit = GMS.round(pureUnit * price24, 2);
+      const purchaseMakeUnit = GMS.round(netUnit * purchaseRate, 2);
+      const saleMakeUnit = GMS.round(netUnit * saleRate, 2);
+      const totalUnit = GMS.round(goldValueUnit + saleMakeUnit, 2);
+      const profitUnit = GMS.round(saleMakeUnit - purchaseMakeUnit, 2);
+
+      /* Update preview fields */
+      if ($id('f-net')) $id('f-net').value = netUnit.toFixed(3);
+      if ($id('f-pure')) $id('f-pure').value = pureUnit.toFixed(3);
+      if ($id('f-total')) $id('f-total').value = GMS.moneyFmt(totalUnit);
+
+      /* Total weight */
+      if ($id('f-total-weight')) {
+        const gross = parseFloat($id('f-weight')?.value) || 0;
+        $id('f-total-weight').value = `${GMS.gramFmt(gross * qty)} جم`;
+      }
 
       /* Margin indicator */
       const marginHost = $id('f-margin-indicator');
@@ -1820,119 +2006,35 @@
         mstate.purchaseRate = purchaseRate;
         mstate.saleRate = saleRate;
         marginHost.innerHTML = renderMarginIndicator(mstate);
+        window.lucide?.createIcons();
       }
 
       /* Preview box */
-      const preview = $id('f-preview');
-      if (preview) {
-        preview.innerHTML = `
-          <div style="display:grid;grid-template-columns:repeat(5,1fr);
-                      gap:10px;padding:14px;
-                      background:var(--surface-2);border-radius:11px;
-                      border:1px solid var(--border)">
-            <div>
-              <div style="font-size:10px;color:var(--muted);
-                          font-weight:800;text-transform:uppercase">
-                قيمة الذهب
-              </div>
-              <div class="mono" style="font-size:13px;font-weight:900;
-                          margin-top:3px">
-                ${GMS.moneyFmt(goldValue)}
-              </div>
-            </div>
-            <div>
-              <div style="font-size:10px;color:var(--danger);
-                          font-weight:800;text-transform:uppercase">
-                مصنعية الشراء
-              </div>
-              <div class="mono" style="font-size:13px;font-weight:900;
-                          margin-top:3px;color:var(--danger)">
-                ${GMS.moneyFmt(purchaseMakeValue)}
-              </div>
-            </div>
-            <div>
-              <div style="font-size:10px;color:var(--success);
-                          font-weight:800;text-transform:uppercase">
-                مصنعية البيع
-              </div>
-              <div class="mono" style="font-size:13px;font-weight:900;
-                          margin-top:3px;color:var(--success)">
-                ${GMS.moneyFmt(saleMakeValue)}
-              </div>
-            </div>
-            <div>
-              <div style="font-size:10px;color:var(--muted);
-                          font-weight:800;text-transform:uppercase">
-                البندق
-              </div>
-              <div class="mono" style="font-size:13px;font-weight:900;
-                          margin-top:3px;color:var(--primary)">
-                ${pure.toFixed(3)} جم
-              </div>
-            </div>
-            <div>
-              <div style="font-size:10px;color:var(--primary);
-                          font-weight:800;text-transform:uppercase">
-                الإجمالي
-              </div>
-              <div class="mono" style="font-size:13px;font-weight:900;
-                          margin-top:3px;color:var(--primary)">
-                ${GMS.moneyFmt(totalCost)}
-              </div>
-            </div>
-          </div>
-
-          ${totalProfit > 0 ? `
-            <div style="margin-top:10px;padding:10px 14px;
-                        background:var(--success-bg);
-                        border-radius:9px;
-                        border:1px solid color-mix(in srgb,var(--success) 30%,var(--border));
-                        font-size:12px;font-weight:800;
-                        color:var(--success);
-                        display:flex;align-items:center;gap:8px">
-              <i data-lucide="check-circle-2"
-                 style="width:14px;height:14px"></i>
-              الربح المتوقع: <span class="mono">${GMS.moneyFmt(totalProfit)}</span> ج.م
-            </div>
-          ` : totalProfit < 0 ? `
-            <div style="margin-top:10px;padding:10px 14px;
-                        background:var(--danger-bg);
-                        border-radius:9px;
-                        border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));
-                        font-size:12px;font-weight:800;
-                        color:var(--danger);
-                        display:flex;align-items:center;gap:8px">
-              <i data-lucide="alert-triangle"
-                 style="width:14px;height:14px"></i>
-              خسارة محتملة: <span class="mono">${GMS.moneyFmt(Math.abs(totalProfit))}</span> ج.م
-            </div>
-          ` : ''}
-        `;
-        window.lucide?.createIcons();
-      }
+      updatePreviewBox(el, {
+        netUnit, pureUnit, goldValueUnit, purchaseMakeUnit,
+        saleMakeUnit, totalUnit, profitUnit, qty,
+      });
     };
 
     /* ─── Manufacturer change ─────────────────────────────────────── */
     const manuSelect = $id('f-manufacturer');
     if (manuSelect) {
+      manuSelect.onfocus = () => lockInteraction();
       manuSelect.onchange = () => {
+        lockInteraction();
         const opt = manuSelect.selectedOptions[0];
         const mode = opt?.dataset.mode || 'fixed';
         const purchase = Number(opt?.dataset.purchase || 0);
         const sale = Number(opt?.dataset.sale || 0);
         const fixed = Number(opt?.dataset.fixed || 0);
         const code = manuSelect.value;
-
-        /* ابحث عن المصنع */
         const manu = manufacturers.find(m => m.code === code);
 
-        /* تحديث الحالة */
         mstate.pricingMode = mode;
         mstate.selectedManufacturer = manu || null;
         mstate.selectedLetter = '';
         mstate.selectedColor = '';
 
-        /* مصنعية الشراء/البيع الافتراضية */
         if (mode === 'fixed') {
           mstate.purchaseRate = fixed;
           mstate.saleRate = sale || Math.round(fixed * 1.2);
@@ -1941,7 +2043,6 @@
           mstate.saleRate = sale;
         }
 
-        /* إعادة تصيير قسم التسعير */
         const section = $id('f-pricing-section');
         if (section) {
           section.innerHTML = renderPricingSection(mstate);
@@ -1960,11 +2061,7 @@
       stonesIncludedCb.onchange = () => {
         mstate.stonesIncluded = stonesIncludedCb.checked;
         stoneInput.disabled = stonesIncludedCb.checked;
-
-        if (stonesIncludedCb.checked) {
-          stoneInput.value = '0';
-        }
-
+        if (stonesIncludedCb.checked) stoneInput.value = '0';
         recalc();
       };
     }
@@ -1972,33 +2069,93 @@
     /* ─── Weight inputs ───────────────────────────────────────────── */
     ['f-weight', 'f-stone'].forEach(id => {
       const inp = $id(id);
-      if (inp) inp.oninput = recalc;
+      if (inp) {
+        inp.oninput = () => {
+          lockInteraction();
+          recalc();
+        };
+      }
     });
 
-    /* ─── Karat ───────────────────────────────────────────────────── */
+    /* ─── Quantity ────────────────────────────────────────────────── */
+    const qtyInput = $id('f-quantity');
+    if (qtyInput) {
+      qtyInput.oninput = () => {
+        lockInteraction();
+        let v = parseInt(qtyInput.value) || 1;
+        v = Math.max(1, Math.min(9999, v));
+        mstate.quantity = v;
+        updateWeightsCounter(el, mstate);
+        recalc();
+      };
+    }
+
+    /* ─── Weight mode toggle ──────────────────────────────────────── */
+    const sameModeBtn = $id('f-mode-same');
+    const diffModeBtn = $id('f-mode-diff');
+
+    if (sameModeBtn) {
+      sameModeBtn.onclick = () => {
+        mstate.sameWeight = true;
+        $id('f-unified-weight-host').style.display = '';
+        $id('f-individual-weight-host').style.display = 'none';
+        $id('f-mode-same').style.background = 'var(--primary)';
+        $id('f-mode-same').style.color = '#2a1f05';
+        $id('f-mode-diff').style.background = 'transparent';
+        $id('f-mode-diff').style.color = 'var(--text-2)';
+        recalc();
+      };
+    }
+
+    if (diffModeBtn) {
+      diffModeBtn.onclick = () => {
+        mstate.sameWeight = false;
+        $id('f-unified-weight-host').style.display = 'none';
+        $id('f-individual-weight-host').style.display = '';
+        $id('f-mode-diff').style.background = 'var(--primary)';
+        $id('f-mode-diff').style.color = '#2a1f05';
+        $id('f-mode-same').style.background = 'transparent';
+        $id('f-mode-same').style.color = 'var(--text-2)';
+        updateWeightsCounter(el, mstate);
+        recalc();
+      };
+    }
+
+    /* ─── Weights list ───────────────────────────────────────────── */
+    const weightsList = $id('f-weights-list');
+    if (weightsList) {
+      weightsList.oninput = () => {
+        lockInteraction();
+        updateWeightsCounter(el, mstate);
+        recalc();
+      };
+    }
+
+    /* ─── Karat / Category ────────────────────────────────────────── */
     const karatSelect = $id('f-karat');
     if (karatSelect) {
+      karatSelect.onfocus = () => lockInteraction();
       karatSelect.onchange = () => {
+        lockInteraction();
         recalc();
-
-        /* إذا كان النمط items — نُحدِّث السعر تلقائياً */
         if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
           applyItemBasedRate(el, mstate, recalc);
         }
       };
     }
 
-    /* ─── Category (for items mode) ───────────────────────────────── */
     const categorySelect = $id('f-category');
     if (categorySelect) {
+      categorySelect.onfocus = () => lockInteraction();
       categorySelect.onchange = () => {
+        lockInteraction();
         if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
           applyItemBasedRate(el, mstate, recalc);
         }
       };
     }
 
-    /* ─── Pricing inputs (initial) ────────────────────────────────── */
+    /* ─── Pricing inputs ──────────────────────────────────────────── */
     bindPricingInputs(el, mstate, manufacturers, recalc);
 
     /* ─── Generate SKU ────────────────────────────────────────────── */
@@ -2022,157 +2179,10 @@
 
     /* ─── Save ────────────────────────────────────────────────────── */
     $id('f-save').onclick = async () => {
-      const sku = $id('f-sku').value.trim().toUpperCase();
-      const karat = Number($id('f-karat').value);
-      const gross = parseFloat($id('f-weight').value) || 0;
-      const manuCode = manuSelect?.value || '';
-
-      /* Validation */
-      if (!sku) {
-        GMS.Beep?.error?.();
-        return GMS.Toast.err('كود SKU مطلوب');
-      }
-
-      if (!manuCode) {
-        GMS.Beep?.error?.();
-        return GMS.Toast.err('المصنع مطلوب');
-      }
-
-      if (gross <= 0) {
-        GMS.Beep?.error?.();
-        return GMS.Toast.err('الوزن مطلوب');
-      }
-
-      /* الحسابات */
-      const stonesIncluded = $id('f-stones-included').checked;
-      const stone = stonesIncluded ? 0 : (parseFloat($id('f-stone').value) || 0);
-      const net = GMS.round(Math.max(0, gross - stone), 3);
-      const pure = GMS.round(net * GMS.karatRatio(karat), 4);
-      const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
-      const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
-      const price24 = GMS.Cache?.getPrice()?.price_24
-        || GMS.APP_CONFIG.DEFAULT_PRICE_24;
-      const goldValue = GMS.round(pure * price24, 2);
-      const makeValue = GMS.round(net * saleRate, 2);
-      const purchaseMakeValue = GMS.round(net * purchaseRate, 2);
-      const total = GMS.round(goldValue + makeValue, 2);
-      const profit = GMS.round(makeValue - purchaseMakeValue, 2);
-
-      /* المصنع */
-      const manu = manufacturers.find(m => m.code === manuCode);
-
-      /* الحقول الديناميكية */
-      const letterCode = $id('f-letter')?.value || '';
-      const colorCode = $id('f-color')?.value || '';
-
-      const payload = {
-        sku,
-        category: $id('f-category').value,
-        karat,
-        purity_ratio: GMS.karatRatio(karat),
-        weight_grams: gross,
-        stone_weight: stone,
-        stones_included: stonesIncluded,
-        net_weight: net,
-        pure_weight: pure,
-        workmanship_per_gram: saleRate,        /* مصنعية البيع (للفاتورة) */
-        purchase_workmanship: purchaseRate,    /* ✅ مصنعية الشراء (للتكلفة) */
-        workmanship_value: makeValue,
-        purchase_workmanship_value: purchaseMakeValue,
-        profit_margin: profit,
-        gold_value: goldValue,
-        total_cost: total,
-        price_24: price24,
-        status: $id('f-status').value,
-        branch_id: $id('f-branch').value,
-        manufacturer_code: manuCode,
-        manufacturer_name: manu?.name || null,
-        manufacturer_id: manu?.id || null,
-        letter_code: letterCode || null,
-        color_code: colorCode || null,
-        notes: $id('f-notes').value.trim() || null,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (!isEdit) {
-        payload.id = 'inv-' + GMS.uid();
-        payload.created_at = new Date().toISOString();
-      }
-
-      try {
-        /* 1 · IndexedDB */
-        if (GMS.IDB) {
-          const full = {
-            id: item_?.id || payload.id,
-            ...payload,
-          };
-          await GMS.IDB.put(full);
-        }
-
-        /* 2 · Supabase */
-        if (GMS.Supabase?.isReady()) {
-          const client = GMS.Supabase.get();
-
-          if (isEdit) {
-            await client
-              .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
-              .update(payload)
-              .eq('sku', sku);
-          } else {
-            await client
-              .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
-              .insert(payload);
-          }
-        }
-
-        /* 3 · المصفوفة المحلية */
-        if (isEdit) {
-          const idx = InvState.items.findIndex(i => i.sku === sku);
-          if (idx >= 0) {
-            InvState.items[idx] = { ...InvState.items[idx], ...payload };
-          }
-        } else {
-          InvState.items.unshift({
-            id: payload.id,
-            ...payload,
-          });
-        }
-
-        /* 4 · Audit */
-        if (GMS.Audit) {
-          await GMS.Audit.log(
-            isEdit ? 'UPDATE' : 'CREATE',
-            'inventory',
-            payload.id,
-            isEdit
-              ? `عدّل الصنف ${sku}`
-              : `أضاف صنف جديد: ${sku}`,
-            { sku, karat, net, pure, total, profit }
-          );
-        }
-
-        /* 5 · إشعار */
-        GMS.Toast.ok(
-          isEdit ? 'تم حفظ التعديلات' : 'تمت إضافة الصنف',
-          `${sku} · ${GMS.gramFmt(net)} جم · ربح ${GMS.moneyFmt(profit)} ج.م`
-        );
-
-        /* 6 · صوت */
-        GMS.Beep?.success?.();
-
-        /* 7 · إغلاق + إعادة تصيير */
-        closeFn();
-        applyFilters();
-        render(document.getElementById('page'));
-
-      } catch (e) {
-        console.error('[Inventory.save]', e);
-        GMS.Beep?.error?.();
-        GMS.Toast.err('فشل الحفظ', e.message);
-      }
+      await handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories);
     };
 
-    /* ─── Initial recalc ──────────────────────────────────────────── */
+    /* ─── Initial recalc ─────────────────────────────────────────── */
     setTimeout(() => {
       if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
         applyItemBasedRate(el, mstate, recalc);
@@ -2182,43 +2192,213 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.4 · Bind Dynamic Pricing Inputs
+     §9.6 · Helpers
+     ───────────────────────────────────────────────────────────────────── */
+
+  function parseWeightsInput(text) {
+    if (!text) return [];
+    return String(text)
+      .split(/\r?\n/)
+      .map(line => parseFloat(line.trim()))
+      .filter(n => isFinite(n) && n > 0);
+  }
+
+  function updateWeightsCounter(el, mstate) {
+    const counter = el.querySelector('#f-weights-counter');
+    const status = el.querySelector('#f-weights-status');
+
+    if (!counter || !status) return;
+
+    const weights = parseWeightsInput(el.querySelector('#f-weights-list')?.value);
+    const qty = parseInt(el.querySelector('#f-quantity')?.value) || 1;
+
+    counter.textContent = `عدد الأوزان المُدخلة: ${weights.length}`;
+
+    if (weights.length === qty) {
+      status.innerHTML = `<span style="color:var(--success);font-weight:800">
+        <i data-lucide="check-circle-2" style="width:12px;height:12px;
+                   display:inline;vertical-align:-1px"></i>
+        مطابق ✓
+      </span>`;
+    } else if (weights.length < qty) {
+      status.innerHTML = `<span style="color:var(--warn);font-weight:800">
+        متبقي ${qty - weights.length} وزن
+      </span>`;
+    } else {
+      status.innerHTML = `<span style="color:var(--danger);font-weight:800">
+        زيادة ${weights.length - qty} وزن
+      </span>`;
+    }
+    window.lucide?.createIcons();
+  }
+
+  function updatePreviewBox(el, d) {
+    const preview = el.querySelector('#f-preview');
+    if (!preview) return;
+
+    const qty = d.qty || 1;
+
+    preview.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);
+                  gap:10px;padding:14px;
+                  background:var(--surface-2);border-radius:11px;
+                  border:1px solid var(--border)">
+        <div>
+          <div style="font-size:10px;color:var(--muted);
+                      font-weight:800;text-transform:uppercase">
+            قيمة الذهب${qty > 1 ? '/وحدة' : ''}
+          </div>
+          <div class="mono" style="font-size:13px;font-weight:900;
+                      margin-top:3px">
+            ${GMS.moneyFmt(d.goldValueUnit)}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--danger);
+                      font-weight:800;text-transform:uppercase">
+            مصنعية الشراء
+          </div>
+          <div class="mono" style="font-size:13px;font-weight:900;
+                      margin-top:3px;color:var(--danger)">
+            ${GMS.moneyFmt(d.purchaseMakeUnit)}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--success);
+                      font-weight:800;text-transform:uppercase">
+            مصنعية البيع
+          </div>
+          <div class="mono" style="font-size:13px;font-weight:900;
+                      margin-top:3px;color:var(--success)">
+            ${GMS.moneyFmt(d.saleMakeUnit)}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);
+                      font-weight:800;text-transform:uppercase">
+            البندق${qty > 1 ? '/وحدة' : ''}
+          </div>
+          <div class="mono" style="font-size:13px;font-weight:900;
+                      margin-top:3px;color:var(--primary)">
+            ${d.pureUnit.toFixed(3)} جم
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--primary);
+                      font-weight:800;text-transform:uppercase">
+            الإجمالي${qty > 1 ? '/وحدة' : ''}
+          </div>
+          <div class="mono" style="font-size:13px;font-weight:900;
+                      margin-top:3px;color:var(--primary)">
+            ${GMS.moneyFmt(d.totalUnit)}
+          </div>
+        </div>
+      </div>
+
+      ${qty > 1 ? `
+        <div style="margin-top:10px;display:grid;
+                    grid-template-columns:repeat(3,1fr);gap:10px;
+                    padding:12px 14px;background:var(--info-bg);
+                    border-radius:11px;
+                    border:1px solid color-mix(in srgb,var(--info) 30%,var(--border));
+                    text-align:center">
+          <div>
+            <div style="font-size:10px;color:var(--info);
+                        font-weight:800;text-transform:uppercase">
+              عدد القطع
+            </div>
+            <div class="mono" style="font-size:15px;font-weight:900;
+                        color:var(--info);margin-top:2px">
+              ${qty}
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--info);
+                        font-weight:800;text-transform:uppercase">
+              إجمالي الربح المتوقع
+            </div>
+            <div class="mono" style="font-size:15px;font-weight:900;
+                        color:var(--success);margin-top:2px">
+              ${GMS.moneyFmt(d.profitUnit * qty)}
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--info);
+                        font-weight:800;text-transform:uppercase">
+              SKU المولَّد
+            </div>
+            <div class="mono" style="font-size:11px;font-weight:700;
+                        color:var(--info);margin-top:2px;direction:ltr">
+              BASE-001 … BASE-${String(qty).padStart(3, '0')}
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      ${d.profitUnit > 0 ? `
+        <div style="margin-top:10px;padding:10px 14px;
+                    background:var(--success-bg);
+                    border-radius:9px;
+                    border:1px solid color-mix(in srgb,var(--success) 30%,var(--border));
+                    font-size:12px;font-weight:800;
+                    color:var(--success);
+                    display:flex;align-items:center;gap:8px">
+          <i data-lucide="check-circle-2"
+             style="width:14px;height:14px"></i>
+          الربح المتوقع${qty > 1 ? ` للوحدة` : ''}: <span class="mono">${GMS.moneyFmt(d.profitUnit)}</span> ج.م
+        </div>
+      ` : d.profitUnit < 0 ? `
+        <div style="margin-top:10px;padding:10px 14px;
+                    background:var(--danger-bg);
+                    border-radius:9px;
+                    border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));
+                    font-size:12px;font-weight:800;
+                    color:var(--danger);
+                    display:flex;align-items:center;gap:8px">
+          <i data-lucide="alert-triangle"
+             style="width:14px;height:14px"></i>
+          خسارة محتملة: <span class="mono">${GMS.moneyFmt(Math.abs(d.profitUnit))}</span> ج.م
+        </div>
+      ` : ''}
+    `;
+    window.lucide?.createIcons();
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     §9.7 · Bind Dynamic Pricing Inputs
      ───────────────────────────────────────────────────────────────────── */
   function bindPricingInputs(el, mstate, manufacturers, recalc) {
     const $id = (id) => el.querySelector('#' + id);
 
-    /* Letter select */
     const letterSelect = $id('f-letter');
     if (letterSelect) {
+      letterSelect.onfocus = () => lockInteraction();
       letterSelect.onchange = () => {
+        lockInteraction();
         const opt = letterSelect.selectedOptions[0];
         const rate = Number(opt?.dataset.rate || 0);
-
         mstate.selectedLetter = letterSelect.value;
-
         if (rate > 0) {
-          const purchaseInput = $id('f-purchase-rate');
-          if (purchaseInput) {
-            purchaseInput.value = rate;
+          const pi = $id('f-purchase-rate');
+          if (pi) {
+            pi.value = rate;
             mstate.purchaseRate = rate;
           }
         }
-
         recalc();
       };
     }
 
-    /* Color select */
     const colorSelect = $id('f-color');
     if (colorSelect) {
+      colorSelect.onfocus = () => lockInteraction();
       colorSelect.onchange = () => {
+        lockInteraction();
         const opt = colorSelect.selectedOptions[0];
         const rate = Number(opt?.dataset.rate || 0);
         const hex = opt?.dataset.hex || '#6b7a95';
-
         mstate.selectedColor = colorSelect.value;
 
-        /* Preview */
         const preview = $id('f-color-preview');
         if (preview && colorSelect.value) {
           preview.innerHTML = `
@@ -2237,44 +2417,35 @@
         }
 
         if (rate > 0) {
-          const purchaseInput = $id('f-purchase-rate');
-          if (purchaseInput) {
-            purchaseInput.value = rate;
+          const pi = $id('f-purchase-rate');
+          if (pi) {
+            pi.value = rate;
             mstate.purchaseRate = rate;
           }
         }
-
         recalc();
       };
     }
 
-    /* Purchase rate input */
     const purchaseInput = $id('f-purchase-rate');
     if (purchaseInput) {
       purchaseInput.oninput = (e) => {
+        lockInteraction();
         mstate.purchaseRate = parseFloat(e.target.value) || 0;
         recalc();
       };
     }
 
-    /* Sale rate input */
     const saleInput = $id('f-sale-rate');
     if (saleInput) {
       saleInput.oninput = (e) => {
+        lockInteraction();
         mstate.saleRate = parseFloat(e.target.value) || 0;
         recalc();
       };
     }
-
-    /* Fixed rate (if mode = fixed) — user can edit purchase rate */
-    if (mstate.pricingMode === 'fixed' && mstate.selectedManufacturer) {
-      /* لا حاجة لإجراء إضافي — purchaseInput هو نفسه */
-    }
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.5 · Apply Item-Based Rate (for items mode)
-     ───────────────────────────────────────────────────────────────────── */
   function applyItemBasedRate(el, mstate, recalc) {
     const categorySelect = el.querySelector('#f-category');
     if (!categorySelect || !mstate.selectedManufacturer) return;
@@ -2282,8 +2453,7 @@
     const category = categorySelect.value;
     const manu = mstate.selectedManufacturer;
 
-    const entry = (manu.itemRates || [])
-      .find(i => i.category === category);
+    const entry = (manu.itemRates || []).find(i => i.category === category);
 
     if (entry) {
       const purchaseInput = el.querySelector('#f-purchase-rate');
@@ -2295,21 +2465,234 @@
     }
   }
 
+  /* ─────────────────────────────────────────────────────────────────────
+     §9.8 · Save Handler (Single + Multi)
+     ───────────────────────────────────────────────────────────────────── */
+  async function handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories) {
+    const $id = (id) => el.querySelector('#' + id);
+
+    const baseSku = ($id('f-sku').value || '').trim().toUpperCase();
+    const karat = Number($id('f-karat').value);
+    const manuCode = $id('f-manufacturer')?.value || '';
+    const qty = isEdit ? 1 : (parseInt($id('f-quantity')?.value) || 1);
+    const stonesIncluded = $id('f-stones-included')?.checked || false;
+    const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
+    const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
+    const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+
+    /* Validation */
+    if (!baseSku) {
+      GMS.Beep?.error?.();
+      return GMS.Toast.err('كود SKU مطلوب');
+    }
+
+    if (!manuCode) {
+      GMS.Beep?.error?.();
+      return GMS.Toast.err('المصنع مطلوب');
+    }
+
+    /* جمع الأوزان */
+    let weights = [];
+
+    if (isEdit || mstate.sameWeight) {
+      const gross = parseFloat($id('f-weight')?.value) || 0;
+      if (gross <= 0) {
+        GMS.Beep?.error?.();
+        return GMS.Toast.err('الوزن مطلوب');
+      }
+      weights = Array(qty).fill(gross);
+    } else {
+      weights = parseWeightsInput($id('f-weights-list')?.value);
+      if (weights.length !== qty) {
+        GMS.Beep?.error?.();
+        return GMS.Toast.err(
+          'عدد الأوزان غير مطابق',
+          `أدخلت ${weights.length} وزن — المطلوب ${qty}`
+        );
+      }
+    }
+
+    const stoneUnit = stonesIncluded ? 0 : (parseFloat($id('f-stone')?.value) || 0);
+    const manu = manufacturers.find(m => m.code === manuCode);
+    const letterCode = $id('f-letter')?.value || '';
+    const colorCode = $id('f-color')?.value || '';
+    const now = new Date().toISOString();
+
+    /* بناء القطع */
+    const items = weights.map((gross, idx) => {
+      const net = GMS.round(Math.max(0, gross - stoneUnit), 3);
+      const pure = GMS.round(net * GMS.karatRatio(karat), 4);
+      const goldValue = GMS.round(pure * price24, 2);
+      const makeValue = GMS.round(net * saleRate, 2);
+      const purchaseMakeValue = GMS.round(net * purchaseRate, 2);
+      const total = GMS.round(goldValue + makeValue, 2);
+      const profit = GMS.round(makeValue - purchaseMakeValue, 2);
+
+      const uniqueSku = isEdit ? baseSku : buildUniqueSku(baseSku, idx + 1, qty);
+
+      const payload = {
+        sku: uniqueSku,
+        parent_sku: qty > 1 ? baseSku : null,
+        instance_number: qty > 1 ? (idx + 1) : null,
+        category: $id('f-category').value,
+        karat,
+        purity_ratio: GMS.karatRatio(karat),
+        weight_grams: GMS.round(gross, 3),
+        stone_weight: stoneUnit,
+        stones_included: stonesIncluded,
+        net_weight: net,
+        pure_weight: pure,
+        workmanship_per_gram: saleRate,
+        purchase_workmanship: purchaseRate,
+        workmanship_value: makeValue,
+        purchase_workmanship_value: purchaseMakeValue,
+        profit_margin: profit,
+        gold_value: goldValue,
+        total_cost: total,
+        price_24: price24,
+        status: $id('f-status').value,
+        branch_id: $id('f-branch').value,
+        manufacturer_code: manuCode,
+        manufacturer_name: manu?.name || null,
+        manufacturer_id: manu?.id || null,
+        manufacturer_mode: manu?.pricingMode || null,
+        letter_code: letterCode || null,
+        color_code: colorCode || null,
+        notes: $id('f-notes').value.trim() || null,
+        updated_at: now,
+      };
+
+      if (!isEdit) {
+        payload.id = 'inv-' + GMS.uid();
+        payload.created_at = now;
+      }
+
+      return { id: item_?.id || payload.id, ...payload };
+    });
+
+    try {
+      /* Show loading */
+      const saveBtn = $id('f-save');
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = `<i data-lucide="loader-circle"></i> جارٍ الحفظ…`;
+        window.lucide?.createIcons();
+      }
+
+      /* 1 · IndexedDB */
+      if (GMS.IDB) {
+        for (const item of items) {
+          await GMS.IDB.put(item);
+        }
+      }
+
+      /* 2 · Supabase */
+      if (GMS.Supabase?.isReady()) {
+        const client = GMS.Supabase.get();
+
+        if (isEdit) {
+          await client
+            .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
+            .update(items[0])
+            .eq('sku', items[0].sku);
+        } else {
+          /* إدراج جماعي */
+          await client
+            .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
+            .insert(items);
+        }
+      }
+
+      /* 3 · Update local array */
+      if (isEdit) {
+        const idx = InvState.items.findIndex(i => i.sku === items[0].sku);
+        if (idx >= 0) InvState.items[idx] = items[0];
+      } else {
+        items.forEach(it => InvState.items.unshift(it));
+      }
+
+      /* 4 · Audit */
+      if (GMS.Audit) {
+        await GMS.Audit.log(
+          isEdit ? 'UPDATE' : 'CREATE',
+          'inventory',
+          items[0].id,
+          isEdit
+            ? `عدّل الصنف ${items[0].sku}`
+            : `أضاف ${qty} قطعة — ${baseSku}`,
+          {
+            base_sku: baseSku,
+            count: qty,
+            karat,
+            total_weight: GMS.round(weights.reduce((a, b) => a + b, 0), 3),
+          }
+        );
+      }
+
+      /* 5 · Success toast */
+      if (isEdit) {
+        GMS.Toast.ok('تم حفظ التعديلات', `${items[0].sku}`);
+      } else if (qty === 1) {
+        GMS.Toast.ok('تمت إضافة الصنف', `${items[0].sku}`);
+      } else {
+        GMS.Toast.ok(
+          `تمت إضافة ${qty} قطعة`,
+          `${baseSku}-001 إلى ${baseSku}-${String(qty).padStart(3, '0')}`
+        );
+      }
+
+      GMS.Beep?.success?.();
+
+      /* 6 · Close + refresh */
+      closeFn();
+      applyFilters();
+      render(document.getElementById('page'));
+
+      /* 7 · Ask to print QR tags */
+      if (!isEdit && qty > 0) {
+        setTimeout(() => {
+          GMS.Confirm.ask(
+            `هل تريد طباعة تاجات QR للقطع الـ ${qty} المُضافة؟`,
+            {
+              title: 'طباعة تاجات',
+              okText: 'طباعة الآن',
+              cancelText: 'لاحقاً',
+              icon: 'qr-code',
+            }
+          ).then(shouldPrint => {
+            if (shouldPrint && GMS.QR?.Printer) {
+              GMS.QR.Printer.print(items);
+            }
+          });
+        }, 400);
+      }
+
+    } catch (e) {
+      console.error('[Inventory.save]', e);
+      GMS.Beep?.error?.();
+      GMS.Toast.err('فشل الحفظ', e.message);
+
+      const saveBtn = $id('f-save');
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = `<i data-lucide="save"></i> إعادة المحاولة`;
+        window.lucide?.createIcons();
+      }
+    }
+  }
+
   /* ═════════════════════════════════════════════════════════════════════
      §10 · DELETE ITEM
      ═════════════════════════════════════════════════════════════════════ */
 
   async function deleteItem(item) {
     const ok = await GMS.Confirm.delete(
-      `سيتم حذف الصنف "${item.sku}" نهائياً من قاعدة البيانات. لا يمكن التراجع.`
+      `سيتم حذف الصنف "${item.sku}" نهائياً. لا يمكن التراجع.`
     );
-
     if (!ok) return;
 
     try {
-      if (GMS.IDB) {
-        await GMS.IDB.delete(item.id);
-      }
+      if (GMS.IDB) await GMS.IDB.delete(item.id);
 
       if (GMS.Supabase?.isReady()) {
         await GMS.Supabase.get()
@@ -2333,7 +2716,6 @@
 
       applyFilters();
       render(document.getElementById('page'));
-
     } catch (e) {
       console.error('[Inventory.delete]', e);
       GMS.Toast.err('فشل الحذف', e.message);
@@ -2356,18 +2738,9 @@
         refreshTable();
         refreshBulkBar();
         break;
-
-      case 'tag':
-        await bulkPrintTags(items);
-        break;
-
-      case 'export':
-        bulkExport(items);
-        break;
-
-      case 'delete':
-        await bulkDelete(items);
-        break;
+      case 'tag': await bulkPrintTags(items); break;
+      case 'export': bulkExport(items); break;
+      case 'delete': await bulkDelete(items); break;
     }
   }
 
@@ -2393,17 +2766,13 @@
       GMS.Toast.err('محرك Excel غير متاح');
       return;
     }
-
-    GMS.Excel.Exporter.inventory(items, {
-      filters: InvState.filters,
-    });
+    GMS.Excel.Exporter.inventory(items, { filters: InvState.filters });
   }
 
   async function bulkDelete(items) {
     const ok = await GMS.Confirm.delete(
       `سيتم حذف ${items.length} صنف نهائياً. لا يمكن التراجع.`
     );
-
     if (!ok) return;
 
     GMS.Loading.show('جارٍ الحذف…');
@@ -2414,9 +2783,7 @@
     try {
       for (const item of items) {
         try {
-          if (GMS.IDB) {
-            await GMS.IDB.delete(item.id);
-          }
+          if (GMS.IDB) await GMS.IDB.delete(item.id);
 
           if (GMS.Supabase?.isReady()) {
             await GMS.Supabase.get()
@@ -2430,7 +2797,7 @@
 
           deleted++;
         } catch (e) {
-          console.warn('[Inventory] Bulk delete item failed:', item.sku, e);
+          console.warn('[Inventory] Bulk delete failed:', item.sku, e);
           failed++;
         }
       }
@@ -2443,22 +2810,20 @@
       }
 
       if (failed) {
-        GMS.Toast.warn('اكتمل الحذف مع أخطاء',
-          `${deleted} نجح · ${failed} فشل`);
+        GMS.Toast.warn('اكتمل الحذف مع أخطاء', `${deleted} نجح · ${failed} فشل`);
       } else {
         GMS.Toast.ok('تم الحذف', `${deleted} صنف`);
       }
 
       applyFilters();
       render(document.getElementById('page'));
-
     } finally {
       GMS.Loading.hide();
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · EXPORT
+     §12 · EXPORT & PRINT
      ═════════════════════════════════════════════════════════════════════ */
 
   function exportFiltered() {
@@ -2466,27 +2831,18 @@
       GMS.Toast.warn('لا توجد بيانات للتصدير');
       return;
     }
-
     if (!GMS.Excel?.Exporter) {
       GMS.Toast.err('محرك Excel غير متاح');
       return;
     }
-
-    GMS.Excel.Exporter.inventory(InvState.filtered, {
-      filters: InvState.filters,
-    });
+    GMS.Excel.Exporter.inventory(InvState.filtered, { filters: InvState.filters });
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §13 · PRINT TAG
-     ═════════════════════════════════════════════════════════════════════ */
 
   async function printTag(item) {
     if (!GMS.QR?.Printer) {
       GMS.Toast.err('محرك الطباعة غير متاح');
       return;
     }
-
     try {
       await GMS.QR.Printer.printOne(item);
     } catch (e) {
@@ -2495,7 +2851,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · COLUMNS MANAGER
+     §13 · COLUMNS MANAGER
      ═════════════════════════════════════════════════════════════════════ */
 
   function openColumnsMenu(anchorEl) {
@@ -2504,18 +2860,11 @@
     const el = document.createElement('div');
     el.className = 'col-mgr';
     el.style.cssText = `
-      position:absolute;
-      top:calc(100% + 6px);
-      inset-inline-end:0;
-      z-index:60;
-      background:var(--surface);
-      border:1px solid var(--border-strong);
-      border-radius:12px;
-      box-shadow:var(--shadow-2);
-      min-width:220px;
-      max-height:400px;
-      overflow-y:auto;
-      padding:9px;
+      position:absolute;top:calc(100% + 6px);inset-inline-end:0;
+      z-index:60;background:var(--surface);
+      border:1px solid var(--border-strong);border-radius:12px;
+      box-shadow:var(--shadow-2);min-width:220px;max-height:400px;
+      overflow-y:auto;padding:9px;
     `;
 
     el.innerHTML = `
@@ -2529,9 +2878,7 @@
       ${COLUMNS.map(c => `
         <label style="display:flex;align-items:center;gap:9px;
                       padding:7px 9px;border-radius:7px;font-size:12px;
-                      font-weight:700;cursor:pointer;transition:background .15s"
-               onmouseover="this.style.background='var(--surface-3)'"
-               onmouseout="this.style.background='transparent'">
+                      font-weight:700;cursor:pointer">
           <input type="checkbox" class="cb inv-col-toggle"
                  data-col="${c.key}"
                  ${InvState.columns[c.key] ? 'checked' : ''}>
@@ -2550,20 +2897,17 @@
     const parent = anchorEl.parentElement;
     parent.style.position = 'relative';
     parent.appendChild(el);
-
     window.lucide?.createIcons();
 
     el.querySelectorAll('.inv-col-toggle').forEach(cb => {
       cb.onchange = () => {
         const key = cb.dataset.col;
-
         const visibleCount = Object.values(InvState.columns).filter(Boolean).length;
         if (!cb.checked && visibleCount <= 2) {
           cb.checked = true;
           GMS.Toast.warn('يجب إبقاء عمودين على الأقل');
           return;
         }
-
         InvState.columns[key] = cb.checked;
         refreshTable();
       };
@@ -2591,7 +2935,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · INITIALIZATION
+     §14 · INIT & CLEANUP
      ═════════════════════════════════════════════════════════════════════ */
 
   async function init() {
@@ -2610,7 +2954,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · VIEW REGISTRATION
+     §15 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
@@ -2636,25 +2980,30 @@
     bulkDelete,
 
     columns: COLUMNS,
+
+    /* ✅ API جديد */
+    buildUniqueSku,
+    lockInteraction,
+    isInteractionLocked,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · LOADED CONFIRMATION
+     §16 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Inventory View loaded · Dynamic Manufacturer Pricing',
+    '%c📦 Inventory View v2.0 loaded · Quantity + Unique SKUs',
     'color:#b8912f;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#fdf3e3;border-radius:4px;'
   );
 
   console.log(
-    `%c📊 12 columns · 6 filters · Bulk select · Sort · Excel · QR Tags`,
-    'color:#6b7a95;font-weight:700;font-size:11px;'
+    `%c🎯 Multi-unit: same-weight OR individual-weights · SKU: BASE-001..BASE-NNN`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🏭 Dynamic pricing: letters/colors/items/fixed + Purchase vs Sale workmanship`,
-    'color:#0f7a43;font-weight:700;font-size:11px;'
+    `%c🛡️  Interaction lock (10s) — dropdowns no longer close during rerenders`,
+    'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
