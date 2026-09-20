@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F0D68C"/>
+      <stop offset="50%" stop-color="#D4A017"/>
+      <stop offset="100%" stop-color="#9C7726"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.4)"/>
+      <stop offset="60%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="192" height="192" rx="40" fill="#121212"/>
+
+  <!-- Gold circle -->
+  <circle cx="96" cy="96" r="72" fill="url(#gold)"/>
+
+  <!-- Shine overlay -->
+  <circle cx="96" cy="96" r="72" fill="url(#shine)"/>
+
+  <!-- Au text -->
+  <text
+    x="96" y="128"
+    font-family="'Cairo','Arial',sans-serif"
+    font-weight="900"
+    font-size="78"
+    text-anchor="middle"
+    fill="#2A1F05"
+    letter-spacing="-2"
+  >Au</text>
+</svg>

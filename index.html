@@ -1,0 +1,302 @@
+<!-- ═══════════════════════════════════════════════════════════════
+     GOLD MS ENTERPRISE — index.html
+     نظام إدارة الذهب والمجوهرات — PWA
+     ═══════════════════════════════════════════════════════════════ -->
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" data-theme="light" data-lang="ar">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="description" content="نظام إدارة الذهب والمجوهرات — Gold Management System Enterprise" />
+<title>Gold ERP Pro — نظام إدارة الذهب</title>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PWA META TAGS
+     ═══════════════════════════════════════════════════════════════ -->
+
+<!-- Manifest -->
+<link rel="manifest" href="manifest.json" />
+
+<!-- Theme Color (Chrome address bar) -->
+<meta name="theme-color" content="#D4A017" />
+
+<!-- iOS Safari Support -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Gold ERP Pro" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+<!-- Android Chrome -->
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="application-name" content="Gold ERP Pro" />
+
+<!-- Microsoft Tiles -->
+<meta name="msapplication-TileColor" content="#D4A017" />
+<meta name="msapplication-TileImage" content="icons/icon-192.png" />
+<meta name="msapplication-tap-highlight" content="no" />
+
+<!-- Regular icons -->
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
+
+<!-- ═══════════════════════════════════════════════════════════════
+     FONTS
+     ═══════════════════════════════════════════════════════════════ -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     STYLESHEET
+     ═══════════════════════════════════════════════════════════════ -->
+<link rel="stylesheet" href="style.css" />
+
+<!-- ═══════════════════════════════════════════════════════════════
+     CDN LIBRARIES
+     ═══════════════════════════════════════════════════════════════ -->
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     APPLICATION MODULES — Order Matters!
+     ═══════════════════════════════════════════════════════════════ -->
+<!-- Core -->
+<script defer src="js/01-config.js"></script>
+<script defer src="js/02-utils.js"></script>
+<script defer src="js/03-i18n.js"></script>
+
+<!-- Data Layer -->
+<script defer src="js/04-cache.js"></script>
+<script defer src="js/05-sync.js"></script>
+
+<!-- Security -->
+<script defer src="js/06-auth.js"></script>
+
+<!-- UI Primitives -->
+<script defer src="js/07-ui.js"></script>
+
+<!-- Demo Data -->
+<script defer src="js/08-demo.js"></script>
+
+<!-- Specialized Features -->
+<script defer src="js/09-qr.js"></script>
+<script defer src="js/10-excel.js"></script>
+<script defer src="js/11-realtime.js"></script>
+
+<!-- Views -->
+<script defer src="js/12-views-dashboard.js"></script>
+<script defer src="js/13-views-pos.js"></script>
+<script defer src="js/14-views-inventory.js"></script>
+<script defer src="js/15-views-suppliers.js"></script>
+<script defer src="js/16-views-returns.js"></script>
+<script defer src="js/17-views-analytics.js"></script>
+<script defer src="js/18-views-loss.js"></script>
+<script defer src="js/19-views-audit.js"></script>
+<script defer src="js/20-views-queue.js"></script>
+<script defer src="js/21-views-settings.js"></script>
+<script defer src="js/24-views-repair.js"></script>
+
+<!-- Router & Boot -->
+<script defer src="js/22-router.js"></script>
+<script defer src="js/23-boot.js"></script>
+
+<!-- ✅ PWA Manager (آخر ملف — يعتمد على كل ما سبق) -->
+<script defer src="js/25-pwa.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     LOGIN SCREEN
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="logo">Au</div>
+      <div>
+        <h1>Gold ERP Pro</h1>
+        <p>نظام إدارة الذهب والمجوهرات</p>
+      </div>
+    </div>
+
+    <form id="login-form" autocomplete="on">
+      <div class="field">
+        <label>البريد الإلكتروني <span class="req">*</span></label>
+        <input type="email" id="login-email" value="admin@goldms.eg"
+               required dir="ltr" class="mono" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>كلمة المرور <span class="req">*</span></label>
+        <input type="password" id="login-password" value="Admin@123"
+               required dir="ltr" class="mono" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-block" id="login-submit">
+        <i data-lucide="log-in"></i> تسجيل الدخول
+      </button>
+      <p id="login-error" class="hidden"></p>
+    </form>
+
+    <div class="demo-creds">
+      <b>🔐 بيانات تجريبية:</b><br>
+      <span class="mono" dir="ltr">admin@goldms.eg / Admin@123</span> — مدير عام<br>
+      <span class="mono" dir="ltr">manager@goldms.eg / Manage@123</span> — مدير فرع<br>
+      <span class="mono" dir="ltr">accountant@goldms.eg / Account@1</span> — محاسب<br>
+      <span class="mono" dir="ltr">cashier@goldms.eg / Cashier@1</span> — بائع<br>
+      <span class="mono" dir="ltr">data@goldms.eg / Data@1234</span> — مدخل بيانات
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     APP SHELL
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="app">
+
+  <!-- ─── TOPBAR ─── -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">Au</div>
+      <div class="brand-txt">
+        <strong data-i18n="app.name">نظام إدارة الذهب</strong>
+        <span data-i18n="app.tagline">Gold Management System</span>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <!-- ✅ PWA Install Button (مخفي افتراضياً — يظهر عند توفر التثبيت) -->
+    <button class="icon-btn pwa-install-btn"
+            id="pwa-install-btn"
+            title="تثبيت التطبيق"
+            type="button"
+            style="display:none">
+      <i data-lucide="download"></i>
+    </button>
+
+    <!-- Network status -->
+    <span class="net-pill online" id="net-pill">
+      <span class="net-dot"></span>
+      <span id="net-text" data-i18n="status.online">متصل</span>
+    </span>
+
+    <!-- Queue badge -->
+    <button class="icon-btn" id="queue-btn" title="طابور المزامنة">
+      <i data-lucide="package"></i>
+      <span class="badge-dot" id="queue-badge" style="display:none">0</span>
+    </button>
+
+    <!-- Sync now -->
+    <button class="icon-btn" id="sync-btn" title="مزامنة الآن">
+      <i data-lucide="refresh-cw"></i>
+    </button>
+
+    <!-- Refresh cache -->
+    <button class="icon-btn" id="cache-btn" title="تحديث الذاكرة المؤقتة">
+      <i data-lucide="database-zap"></i>
+    </button>
+
+    <!-- Language switcher -->
+    <div class="lang-switch" id="lang-switch">
+      <button class="lang-btn active" data-lang="ar" type="button">🇪🇬 ع</button>
+      <button class="lang-btn" data-lang="en" type="button">🇬🇧 EN</button>
+    </div>
+
+    <!-- Theme toggle -->
+    <button class="icon-btn" id="theme-btn" title="تبديل الوضع">
+      <i data-lucide="moon"></i>
+    </button>
+
+    <!-- Role badge -->
+    <span class="role-badge" id="topbar-role">
+      <i data-lucide="shield"></i>
+      <span>—</span>
+    </span>
+
+    <!-- Logout -->
+    <button class="icon-btn" id="logout-btn" title="تسجيل الخروج">
+      <i data-lucide="log-out"></i>
+    </button>
+  </header>
+
+  <!-- ─── TABS ─── -->
+  <nav class="tabs-bar" id="tabs-bar">
+    <button class="tab active" data-tab="dashboard" type="button">
+      <i data-lucide="layout-dashboard"></i>
+      <span data-i18n="nav.dashboard">لوحة التحكم</span>
+    </button>
+
+    <button class="tab" data-tab="pos" type="button">
+      <i data-lucide="scan-line"></i>
+      <span data-i18n="nav.pos">نقطة البيع</span>
+    </button>
+
+    <button class="tab" data-tab="inventory" type="button">
+      <i data-lucide="gem"></i>
+      <span data-i18n="nav.inventory">المخزون</span>
+    </button>
+
+    <button class="tab" data-tab="suppliers" type="button">
+      <i data-lucide="factory"></i>
+      <span data-i18n="nav.suppliers">الموردين</span>
+    </button>
+
+    <button class="tab" data-tab="returns" type="button">
+      <i data-lucide="rotate-ccw"></i>
+      <span data-i18n="nav.returns">المرتجعات</span>
+    </button>
+
+    <button class="tab" data-tab="analytics" type="button">
+      <i data-lucide="bar-chart-3"></i>
+      <span data-i18n="nav.analytics">التحليلات</span>
+    </button>
+
+    <button class="tab" data-tab="loss" type="button">
+      <i data-lucide="flame"></i>
+      <span data-i18n="nav.loss">إدارة الخسس</span>
+    </button>
+
+    <button class="tab" data-tab="repair" type="button">
+      <i data-lucide="wrench"></i>
+      <span data-i18n="nav.repair">الصيانة والورشة</span>
+    </button>
+
+    <button class="tab" data-tab="audit" type="button">
+      <i data-lucide="scroll-text"></i>
+      <span data-i18n="nav.audit">سجل الحركات</span>
+    </button>
+
+    <button class="tab" data-tab="queue" type="button">
+      <i data-lucide="package-open"></i>
+      <span data-i18n="nav.queue">المزامنة</span>
+      <span class="tab-badge" id="tab-queue-badge" style="display:none">0</span>
+    </button>
+
+    <button class="tab" data-tab="settings" type="button">
+      <i data-lucide="settings"></i>
+      <span data-i18n="nav.settings">الإعدادات</span>
+    </button>
+  </nav>
+
+  <!-- ─── PAGE CONTAINER ─── -->
+  <main class="page" id="page"></main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     OVERLAYS & UTILITY CONTAINERS
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="toasts"></div>
+<div id="modal-root"></div>
+<div id="print-root"></div>
+
+<!-- Hidden file input for Excel import -->
+<input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none">
+
+<!-- Hidden QR host for offscreen generation -->
+<div id="qr-host" aria-hidden="true"
+     style="position:absolute;left:-99999px;top:0;width:320px;height:320px;overflow:hidden;pointer-events:none"></div>
+
+</body>
+</html>
