@@ -12,33 +12,14 @@
      §1 · DOM HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * querySelector بسيط
-   * @param {string} selector
-   * @param {Element|Document} [root=document]
-   * @returns {Element|null}
-   */
   function $(selector, root) {
     return (root || document).querySelector(selector);
   }
 
-  /**
-   * querySelectorAll يعيد Array
-   * @param {string} selector
-   * @param {Element|Document} [root=document]
-   * @returns {Array<Element>}
-   */
   function $$(selector, root) {
     return Array.from((root || document).querySelectorAll(selector));
   }
 
-  /**
-   * إنشاء عنصر HTML
-   * @param {string} tag
-   * @param {Object} [attrs={}]
-   * @param {string|Array} [children='']
-   * @returns {Element}
-   */
   function createEl(tag, attrs, children) {
     const el = document.createElement(tag);
 
@@ -80,18 +61,10 @@
     return el;
   }
 
-  /**
-   * حذف عنصر بأمان
-   * @param {Element} el
-   */
   function removeEl(el) {
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
-  /**
-   * تفريغ عنصر
-   * @param {Element|string} el
-   */
   function clearEl(el) {
     const target = typeof el === 'string' ? $(el) : el;
     if (target) target.innerHTML = '';
@@ -101,64 +74,31 @@
      §2 · ESCAPE & SANITIZE (XSS / SQL Injection)
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تحويل الأحرف الخاصة إلى HTML entities
-   * @param {*} value
-   * @returns {string}
-   */
   function escapeHTML(value) {
     if (value === null || value === undefined) return '';
     return String(value).replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
   }
 
-  /**
-   * إزالة كل وسوم HTML
-   * @param {*} value
-   * @returns {string}
-   */
   function stripTags(value) {
     return String(value ?? '').replace(/<[^>]*>/g, '');
   }
 
-  /**
-   * إزالة الأحرف غير القابلة للطباعة
-   * @param {*} value
-   * @returns {string}
-   */
   function stripControl(value) {
     return String(value ?? '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
   }
 
-  /**
-   * كشف محاولات الهجوم الشائعة
-   * @param {*} value
-   * @returns {{xss:boolean, sqlInjection:boolean, pathTraversal:boolean, nullByte:boolean}}
-   */
   function detectAttack(value) {
     const s = String(value ?? '');
     return {
-      xss: /<script|javascript:|onerror\s*=|onload\s*=|onclick\s*=|onfocus\s*=|<iframe|<object|<embed|data:text\/html|vbscript:/i.test(s),
-      sqlInjection: /('\s*(or|and)\s*'?\d)|(\bunion\b\s+\bselect\b)|(\bdrop\b\s+\btable\b)|(--\s)|(;--)|xp_cmdshell|information_schema|sys\.tables/i.test(s),
+      xss: /<script|javascript:|onerror\s*=|onload\s*=|onclick\s*=|onfocus\s*=|onblur\s*=|onchange\s*=|onsubmit\s*=|onkeydown\s*=|onkeyup\s*=|onmouseover\s*=|onmouseout\s*=|onmousedown\s*=|onmouseup\s*=|onmousemove\s*=|onmouseenter\s*=|onmouseleave\s*=|ondblclick\s*=|oninput\s*=|onscroll\s*=|onwheel\s*=|ondrag\s*=|ondrop\s*=|onpaste\s*=|oncopy\s*=|oncut\s*=|oncontextmenu\s*=|onplay\s*=|onpause\s*=|onended\s*=|onabort\s*=|oncanplay\s*=|oncanplaythrough\s*=|ondurationchange\s*=|onemptied\s*=|onerror\s*=|onloadeddata\s*=|onloadedmetadata\s*=|onloadstart\s*=|onpause\s*=|onplay\s*=|onplaying\s*=|onprogress\s*=|onratechange\s*=|onseeked\s*=|onseeking\s*=|onstalled\s*=|onsuspend\s*=|ontimeupdate\s*=|onvolumechange\s*=|onwaiting\s*=|onloadstart\s*=|onanimationstart\s*=|onanimationend\s*=|onanimationiteration\s*=|ontransitionend\s*=|onbeforeunload\s*=|onunload\s*=|onhashchange\s*=|onpopstate\s*=|onstorage\s*=|onmessage\s*=|ononline\s*=|onoffline\s*=|onresize\s*=|ondeviceorientation\s*=|ondevicemotion\s*=|onbeforeinstallprompt\s*=|onappinstalled\s*=|onpointerdown\s*=|onpointerup\s*=|onpointermove\s*=|onpointerover\s*=|onpointerout\s*=|onpointerenter\s*=|onpointerleave\s*=|onpointercancel\s*=|onpointerlockchange\s*=|onpointerlockerror\s*=|onselectionchange\s*=|onselectstart\s*=|ontouchstart\s*=|ontouchend\s*=|ontouchmove\s*=|ontouchcancel\s*=|onfocusin\s*=|onfocusout\s*=|onauxclick\s*=|ongotpointercapture\s*=|onlostpointercapture\s*=|onbeforematch\s*=|onformdata\s*=|oninvalid\s*=|onreset\s*=|onsearch\s*=|onslotchange\s*=|ontoggle\s*=|onbeforeinput\s*=|oncompositionstart\s*=|oncompositionupdate\s*=|oncompositionend\s*=|onload\s*=|onerror\s*=|onmessage\s*=|onmessageerror\s*=|onreadystatechange\s*=|onrejectionhandled\s*=|onunhandledrejection\s*=|ontouchstart\s*=|ontouchend\s*=|ontouchmove\s*=|ontouchcancel\s*=|onwheel\s*=|onmousewheel\s*=|onunload\s*=|onerror\s*=|onselect\s*=|onselectstart\s*=|onstart\s*=|onbounce\s*=|onfinish\s*=|onrepeat\s*=|onshow\s*=|onbeforeprint\s*=|onafterprint\s*=|onbeforecopy\s*=|onbeforecut\s*=|onbeforepaste\s*=|oncopy\s*=|oncut\s*=|onpaste\s*=|javascript:|data:text\/html|data:application\/xhtml|vbscript:|livescript:|mocha:|vbs:|jar:|<iframe|<object|<embed|<applet|<meta|<link|<style|<base|<form|<frame|<frameset|<script|<svg|<math|<template|<noscript|<base64/i.test(s),
+      sqlInjection: /('\s*(or|and)\s*'?\d)|(\bunion\b\s+\bselect\b)|(\bdrop\b\s+\btable\b)|(--\s)|(;--)|xp_cmdshell|information_schema|sys\.tables|sp_executesql|execute\s*\(|bulk\s+insert|waitfor\s+delay|benchmark\s*\(|sleep\s*\(|load_file\s*\(|into\s+outfile|into\s+dumpfile/i.test(s),
       pathTraversal: /\.\.\/|\.\.\\/i.test(s),
       nullByte: /\x00/.test(s),
     };
   }
 
-  /**
-   * تنظيف نص من XSS والأحرف الضارة
-   * @param {*} input
-   * @param {Object} [opts={}]
-   * @param {number} [opts.maxLength=1000]
-   * @param {boolean} [opts.allowNewlines=false]
-   * @param {boolean} [opts.trim=true]
-   * @returns {string}
-   */
   function sanitizeText(input, opts = {}) {
     const {
       maxLength = 1000,
@@ -168,45 +108,27 @@
 
     let s = String(input ?? '');
 
-    // 1 · إزالة null bytes وأحرف التحكم
     s = stripControl(s);
 
-    // 2 · معالجة الأسطر
     if (!allowNewlines) {
       s = s.replace(/[\r\n]+/g, ' ');
     }
     s = s.replace(/[ \t]+/g, ' ');
 
-    // 3 · تحويل HTML
     s = escapeHTML(s);
 
-    // 4 · trim وحد أقصى
     if (trim) s = s.trim();
     if (s.length > maxLength) s = s.slice(0, maxLength);
 
     return s;
   }
 
-  /**
-   * تنظيف كائن كامل بشكل متكرر قبل إرساله للخادم
-   * @param {*} obj
-   * @param {Object} [opts={}]
-   * @returns {*}
-   */
   function sanitizePayload(obj, opts = {}) {
     if (obj === null || obj === undefined) return obj;
 
-    if (typeof obj === 'string') {
-      return sanitizeText(obj, opts);
-    }
-
-    if (typeof obj === 'number' || typeof obj === 'boolean') {
-      return obj;
-    }
-
-    if (obj instanceof Date) {
-      return obj.toISOString();
-    }
+    if (typeof obj === 'string') return sanitizeText(obj, opts);
+    if (typeof obj === 'number' || typeof obj === 'boolean') return obj;
+    if (obj instanceof Date) return obj.toISOString();
 
     if (Array.isArray(obj)) {
       return obj.map((v) => sanitizePayload(v, opts));
@@ -215,7 +137,6 @@
     if (typeof obj === 'object') {
       const out = {};
       for (const [k, v] of Object.entries(obj)) {
-        // مفتاح آمن
         const safeKey = String(k).replace(/[^\w.]/g, '_').slice(0, 64);
         out[safeKey] = sanitizePayload(v, opts);
       }
@@ -229,12 +150,6 @@
      §3 · NUMBER FORMATTING
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تنسيق عام للأرقام
-   * @param {*} value
-   * @param {number} [decimals=2]
-   * @returns {string}
-   */
   function numFmt(value, decimals = 2) {
     const n = Number(value);
     if (!isFinite(n)) return '0.' + '0'.repeat(decimals);
@@ -244,50 +159,23 @@
     });
   }
 
-  /**
-   * تنسيق مبلغ مالي
-   * @param {*} value
-   * @param {number} [decimals=2]
-   * @returns {string}
-   */
   function moneyFmt(value, decimals = 2) {
     return numFmt(value, decimals);
   }
 
-  /**
-   * تنسيق وزن بالجرام (3 منازل)
-   * @param {*} value
-   * @returns {string}
-   */
   function gramFmt(value) {
     return numFmt(value, 3);
   }
 
-  /**
-   * تنسيق عدد صحيح
-   * @param {*} value
-   * @returns {string}
-   */
   function intFmt(value) {
     const n = Math.round(Number(value) || 0);
     return n.toLocaleString('en-EG', { maximumFractionDigits: 0 });
   }
 
-  /**
-   * تنسيق نسبة مئوية
-   * @param {*} value
-   * @param {number} [decimals=3]
-   * @returns {string}
-   */
   function pctFmt(value, decimals = 3) {
     return numFmt(value, decimals) + '%';
   }
 
-  /**
-   * تنسيق مختصر للمبالغ الكبيرة (K / M)
-   * @param {*} value
-   * @returns {string}
-   */
   function shortMoney(value) {
     const n = Math.abs(Number(value) || 0);
     if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
@@ -296,57 +184,26 @@
     return n.toFixed(0);
   }
 
-  /**
-   * تنسيق رقم بإشارة (+/−)
-   * @param {*} value
-   * @param {number} [decimals=2]
-   * @returns {string}
-   */
   function signedFmt(value, decimals = 2) {
     const n = Number(value) || 0;
     if (Math.abs(n) < 1e-9) return '0.' + '0'.repeat(decimals);
     return (n > 0 ? '+' : '−') + numFmt(Math.abs(n), decimals);
   }
 
-  /**
-   * تقريب رقم لعدد محدد من المنازل
-   * @param {*} value
-   * @param {number} [decimals=2]
-   * @returns {number}
-   */
   function round(value, decimals = 2) {
     const p = Math.pow(10, decimals);
     return Math.round((Number(value) + Number.EPSILON) * p) / p;
   }
 
-  /**
-   * حدود رقم بين قيمتين
-   * @param {number} value
-   * @param {number} min
-   * @param {number} max
-   * @returns {number}
-   */
   function clamp(value, min, max) {
     return Math.min(Math.max(Number(value), min), max);
   }
 
-  /**
-   * تحويل إلى رقم بأمان
-   * @param {*} value
-   * @param {number} [fallback=0]
-   * @returns {number}
-   */
   function toNumber(value, fallback = 0) {
     const n = Number(value);
     return isFinite(n) ? n : fallback;
   }
 
-  /**
-   * تحويل إلى عدد صحيح بأمان
-   * @param {*} value
-   * @param {number} [fallback=0]
-   * @returns {number}
-   */
   function toInt(value, fallback = 0) {
     const n = parseInt(value, 10);
     return isFinite(n) ? n : fallback;
@@ -356,61 +213,34 @@
      §4 · DATE & TIME FORMATTING
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تنسيق تاريخ قصير
-   * @param {*} date
-   * @returns {string}
-   */
   function dateAr(date) {
     if (!date) return '—';
     const d = date instanceof Date ? date : new Date(date);
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleDateString('ar-EG', {
-      year: '2-digit',
-      month: '2-digit',
-      day: '2-digit',
+      year: '2-digit', month: '2-digit', day: '2-digit',
     });
   }
 
-  /**
-   * تنسيق تاريخ ووقت
-   * @param {*} date
-   * @returns {string}
-   */
   function dateTimeAr(date) {
     if (!date) return '—';
     const d = date instanceof Date ? date : new Date(date);
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleString('ar-EG', {
-      year: '2-digit',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
+      year: '2-digit', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
     });
   }
 
-  /**
-   * تنسيق وقت فقط
-   * @param {*} date
-   * @returns {string}
-   */
   function clockTime(date) {
     if (!date) return '—';
     const d = date instanceof Date ? date : new Date(date);
     if (isNaN(d.getTime())) return '—';
     return d.toLocaleTimeString('ar-EG', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
   }
 
-  /**
-   * وقت نسبي (منذ 5 دقائق، منذ ساعتين...)
-   * @param {*} date
-   * @returns {string}
-   */
   function timeAgo(date) {
     if (!date) return '—';
     const d = date instanceof Date ? date : new Date(date);
@@ -437,60 +267,32 @@
     return `${Math.floor(mon / 12)} سنة`;
   }
 
-  /**
-   * حساب عدد الأيام بين تاريخين
-   * @param {*} a
-   * @param {*} b
-   * @returns {number}
-   */
   function daysBetween(a, b) {
     const d1 = a instanceof Date ? a : new Date(a);
     const d2 = b instanceof Date ? b : new Date(b);
     return Math.floor((d2.getTime() - d1.getTime()) / 86400000);
   }
 
-  /**
-   * تاريخ اليوم ISO (YYYY-MM-DD)
-   * @returns {string}
-   */
   function todayISO() {
     return new Date().toISOString().slice(0, 10);
   }
 
-  /**
-   * تاريخ N يوم مضى ISO
-   * @param {number} n
-   * @returns {string}
-   */
   function daysAgoISO(n) {
     const d = new Date();
     d.setDate(d.getDate() - n);
     return d.toISOString().slice(0, 10);
   }
 
-  /**
-   * بداية الشهر الحالي ISO
-   * @returns {string}
-   */
   function monthStartISO() {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
   }
 
-  /**
-   * نهاية الشهر الحالي ISO
-   * @returns {string}
-   */
   function monthEndISO() {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
   }
 
-  /**
-   * تحويل ثواني إلى نص مقروء
-   * @param {number} seconds
-   * @returns {string}
-   */
   function formatDuration(seconds) {
     const s = Math.floor(seconds);
     const h = Math.floor(s / 3600);
@@ -506,11 +308,6 @@
      §5 · BYTES & SIZE FORMATTING
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تنسيق حجم بالبايت
-   * @param {number} bytes
-   * @returns {string}
-   */
   function bytesFmt(bytes) {
     const b = Number(bytes) || 0;
     if (b < 1024) return b + ' B';
@@ -525,73 +322,32 @@
 
   const Gold = {
 
-    /**
-     * الوزن الصافي = القائم - الأحجار
-     * @param {number} gross
-     * @param {number} [stones=0]
-     * @returns {number}
-     */
     netWeight(gross, stones = 0) {
       return Math.max(0, round(toNumber(gross) - toNumber(stones), 3));
     },
 
-    /**
-     * الوزن الصافي معادل 24K (البندق)
-     * @param {number} netWeight
-     * @param {number} purityRatio
-     * @returns {number}
-     */
     pureWeight(netWeight, purityRatio) {
       return round(toNumber(netWeight) * toNumber(purityRatio), 4);
     },
 
-    /**
-     * قيمة الذهب = البندق × سعر 24K
-     * @param {number} pureWeight
-     * @param {number} price24
-     * @returns {number}
-     */
     goldValue(pureWeight, price24) {
       return round(toNumber(pureWeight) * toNumber(price24), 2);
     },
 
-    /**
-     * قيمة المصنعية = الوزن الصافي × سعر الجرام
-     * @param {number} netWeight
-     * @param {number} perGram
-     * @returns {number}
-     */
     workmanship(netWeight, perGram) {
       return round(toNumber(netWeight) * toNumber(perGram), 2);
     },
 
-    /**
-     * سعر الجرام لعيار معين
-     * @param {number} price24
-     * @param {number} karat
-     * @returns {number}
-     */
     priceForKarat(price24, karat) {
       return round(toNumber(price24) * GMS.karatRatio(karat), 2);
     },
 
-    /**
-     * نسبة الخسس
-     * @param {number} lossGrams
-     * @param {number} baseWeight
-     * @returns {number}
-     */
     lossPct(lossGrams, baseWeight) {
       const base = toNumber(baseWeight);
       if (base <= 0) return 0;
       return round(toNumber(lossGrams) / base * 100, 4);
     },
 
-    /**
-     * تحليل شامل لسطر صنف
-     * @param {Object} params
-     * @returns {Object}
-     */
     line(params) {
       const {
         gross = 0,
@@ -623,12 +379,6 @@
       };
     },
 
-    /**
-     * إجماليات مجموعة أصناف
-     * @param {Array} items
-     * @param {number} price24
-     * @returns {Object}
-     */
     totals(items, price24) {
       let count = 0;
       let gross = 0;
@@ -673,65 +423,30 @@
 
   const Validate = {
 
-    /**
-     * التحقق من بريد إلكتروني
-     * @param {string} email
-     * @returns {boolean}
-     */
     email(email) {
       return GMS.PATTERNS.EMAIL.test(String(email || '').trim());
     },
 
-    /**
-     * التحقق من رقم هاتف مصري
-     * @param {string} phone
-     * @returns {boolean}
-     */
     phoneEG(phone) {
       return GMS.PATTERNS.PHONE_EG.test(String(phone || '').replace(/\s|-/g, ''));
     },
 
-    /**
-     * التحقق من كود SKU
-     * @param {string} sku
-     * @returns {boolean}
-     */
     sku(sku) {
       return GMS.PATTERNS.SKU.test(String(sku || '').trim());
     },
 
-    /**
-     * التحقق من رقم فاتورة
-     * @param {string} invoiceNo
-     * @returns {boolean}
-     */
     invoiceNo(invoiceNo) {
       return GMS.PATTERNS.INVOICE_NO.test(String(invoiceNo || '').trim());
     },
 
-    /**
-     * التحقق من رقم دفعة
-     * @param {string} batchNo
-     * @returns {boolean}
-     */
     batchNo(batchNo) {
       return GMS.PATTERNS.BATCH_NO.test(String(batchNo || '').trim());
     },
 
-    /**
-     * التحقق من UUID
-     * @param {string} uuid
-     * @returns {boolean}
-     */
     uuid(uuid) {
       return GMS.PATTERNS.UUID.test(String(uuid || '').trim());
     },
 
-    /**
-     * التحقق من قوة كلمة المرور
-     * @param {string} password
-     * @returns {{length:boolean,upper:boolean,lower:boolean,digit:boolean,symbol:boolean,valid:boolean}}
-     */
     password(password) {
       const s = String(password || '');
       const result = {
@@ -745,31 +460,16 @@
       return result;
     },
 
-    /**
-     * التحقق من وزن
-     * @param {number} weight
-     * @returns {boolean}
-     */
     weight(weight) {
       const w = Number(weight);
       return isFinite(w) && w > 0 && w <= GMS.LIMITS.MAX_WEIGHT_GRAMS;
     },
 
-    /**
-     * التحقق من نسبة نقاء
-     * @param {number} purity
-     * @returns {boolean}
-     */
     purity(purity) {
       const p = Number(purity);
       return isFinite(p) && p >= GMS.LIMITS.MIN_PURITY_RATIO && p <= GMS.LIMITS.MAX_PURITY_RATIO;
     },
 
-    /**
-     * التحقق من سعر 24K
-     * @param {number} price
-     * @returns {boolean}
-     */
     price24(price) {
       const p = Number(price);
       return isFinite(p) && p >= GMS.LIMITS.MIN_PRICE_24 && p <= GMS.LIMITS.MAX_PRICE_24;
@@ -780,12 +480,6 @@
      §8 · TIMING HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * debounce — تأجيل التنفيذ حتى توقف الاستدعاءات
-   * @param {Function} fn
-   * @param {number} [ms=300]
-   * @returns {Function}
-   */
   function debounce(fn, ms = 300) {
     let timer;
     return function (...args) {
@@ -794,12 +488,6 @@
     };
   }
 
-  /**
-   * throttle — تنفيذ مرة واحدة كل فترة
-   * @param {Function} fn
-   * @param {number} [ms=300]
-   * @returns {Function}
-   */
   function throttle(fn, ms = 300) {
     let last = 0;
     let timer;
@@ -820,20 +508,10 @@
     };
   }
 
-  /**
-   * sleep — انتظار
-   * @param {number} ms
-   * @returns {Promise<void>}
-   */
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /**
-   * requestAnimationFrame wrapper
-   * @param {Function} fn
-   * @returns {Promise<void>}
-   */
   function nextFrame(fn) {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
@@ -843,10 +521,6 @@
     });
   }
 
-  /**
-   * تأجيل تنفيذ إلى microtask
-   * @returns {Promise<void>}
-   */
   function yieldToUI() {
     return new Promise((resolve) => setTimeout(resolve, 0));
   }
@@ -855,18 +529,10 @@
      §9 · ID GENERATION
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * توليد معرف فريد قصير
-   * @returns {string}
-   */
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
 
-  /**
-   * توليد UUID v4
-   * @returns {string}
-   */
   function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
       const r = (Math.random() * 16) | 0;
@@ -875,11 +541,6 @@
     });
   }
 
-  /**
-   * توليد رقم فاتورة
-   * @param {string} [prefix='INV']
-   * @returns {string}
-   */
   function invoiceNo(prefix = 'INV') {
     const d = new Date();
     const stamp = String(d.getFullYear()).slice(2) +
@@ -892,11 +553,6 @@
     return `${prefix}-${stamp}-${rand}`;
   }
 
-  /**
-   * توليد رقم دفعة
-   * @param {string} [prefix='MB']
-   * @returns {string}
-   */
   function batchNo(prefix = 'MB') {
     const d = new Date();
     const stamp = String(d.getFullYear()).slice(2) +
@@ -908,11 +564,6 @@
     return `${prefix}-${stamp}-${rand}`;
   }
 
-  /**
-   * توليد كود SKU
-   * @param {Object} params
-   * @returns {string}
-   */
   function generateSKU(params = {}) {
     const {
       manufacturerCode = 'X',
@@ -935,11 +586,6 @@
      §10 · OBJECT & ARRAY HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * نسخ عميق بسيط
-   * @param {*} obj
-   * @returns {*}
-   */
   function deepClone(obj) {
     if (obj === null || typeof obj !== 'object') return obj;
     if (obj instanceof Date) return new Date(obj.getTime());
@@ -951,12 +597,6 @@
     return out;
   }
 
-  /**
-   * دمج عميق
-   * @param {Object} target
-   * @param {Object} source
-   * @returns {Object}
-   */
   function deepMerge(target, source) {
     const out = deepClone(target);
     Object.keys(source || {}).forEach((k) => {
@@ -975,12 +615,6 @@
     return out;
   }
 
-  /**
-   * تجميع مصفوفة حسب مفتاح
-   * @param {Array} arr
-   * @param {Function|string} keyFn
-   * @returns {Object}
-   */
   function groupBy(arr, keyFn) {
     const fn = typeof keyFn === 'function' ? keyFn : (x) => x[keyFn];
     return (arr || []).reduce((acc, item) => {
@@ -991,23 +625,11 @@
     }, {});
   }
 
-  /**
-   * مجموع مصفوفة حسب حقل
-   * @param {Array} arr
-   * @param {Function|string} keyFn
-   * @returns {number}
-   */
   function sumBy(arr, keyFn) {
     const fn = typeof keyFn === 'function' ? keyFn : (x) => x[keyFn];
     return (arr || []).reduce((sum, item) => sum + toNumber(fn(item)), 0);
   }
 
-  /**
-   * فريد حسب حقل
-   * @param {Array} arr
-   * @param {Function|string} keyFn
-   * @returns {Array}
-   */
   function uniqueBy(arr, keyFn) {
     const fn = typeof keyFn === 'function' ? keyFn : (x) => x[keyFn];
     const seen = new Set();
@@ -1019,13 +641,6 @@
     });
   }
 
-  /**
-   * ترتيب مصفوفة حسب حقل
-   * @param {Array} arr
-   * @param {Function|string} keyFn
-   * @param {string} [dir='asc']
-   * @returns {Array}
-   */
   function sortBy(arr, keyFn, dir = 'asc') {
     const fn = typeof keyFn === 'function' ? keyFn : (x) => x[keyFn];
     const mult = dir === 'desc' ? -1 : 1;
@@ -1042,12 +657,6 @@
     });
   }
 
-  /**
-   * تقسيم مصفوفة إلى دفعات
-   * @param {Array} arr
-   * @param {number} size
-   * @returns {Array<Array>}
-   */
   function chunk(arr, size) {
     const out = [];
     for (let i = 0; i < (arr || []).length; i += size) {
@@ -1056,12 +665,6 @@
     return out;
   }
 
-  /**
-   * اختيار حقول محددة من كائن
-   * @param {Object} obj
-   * @param {Array<string>} keys
-   * @returns {Object}
-   */
   function pick(obj, keys) {
     const out = {};
     (keys || []).forEach((k) => {
@@ -1072,24 +675,12 @@
     return out;
   }
 
-  /**
-   * حذف حقول محددة من كائن
-   * @param {Object} obj
-   * @param {Array<string>} keys
-   * @returns {Object}
-   */
   function omit(obj, keys) {
     const out = { ...(obj || {}) };
     (keys || []).forEach((k) => delete out[k]);
     return out;
   }
 
-  /**
-   * مقارنة كائنين (سطحية للقيم البسيطة)
-   * @param {*} a
-   * @param {*} b
-   * @returns {boolean}
-   */
   function isEqual(a, b) {
     if (a === b) return true;
     if (typeof a !== typeof b) return false;
@@ -1103,21 +694,11 @@
      §11 · STRING HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تحويل أول حرف إلى كبير
-   * @param {string} s
-   * @returns {string}
-   */
   function capitalize(s) {
     const str = String(s || '');
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
-  /**
-   * استخراج الأحرف الأولى من اسم
-   * @param {string} name
-   * @returns {string}
-   */
   function initials(name) {
     if (!name) return '?';
     const parts = String(name).trim().split(/\s+/);
@@ -1125,33 +706,16 @@
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
 
-  /**
-   * قطع نص طويل
-   * @param {string} s
-   * @param {number} max
-   * @param {string} [suffix='…']
-   * @returns {string}
-   */
   function truncate(s, max, suffix = '…') {
     const str = String(s || '');
     if (str.length <= max) return str;
     return str.slice(0, max - suffix.length) + suffix;
   }
 
-  /**
-   * إزالة المسافات الزائدة
-   * @param {string} s
-   * @returns {string}
-   */
   function normalizeSpaces(s) {
     return String(s || '').replace(/\s+/g, ' ').trim();
   }
 
-  /**
-   * تحويل slug
-   * @param {string} s
-   * @returns {string}
-   */
   function slugify(s) {
     return String(s || '')
       .trim()
@@ -1167,12 +731,6 @@
 
   const LS = {
 
-    /**
-     * قراءة قيمة من LocalStorage مع JSON parse
-     * @param {string} key
-     * @param {*} [fallback=null]
-     * @returns {*}
-     */
     get(key, fallback = null) {
       try {
         const raw = localStorage.getItem(key);
@@ -1183,12 +741,6 @@
       }
     },
 
-    /**
-     * حفظ قيمة في LocalStorage مع JSON stringify
-     * @param {string} key
-     * @param {*} value
-     * @returns {boolean}
-     */
     set(key, value) {
       try {
         localStorage.setItem(key, JSON.stringify(value));
@@ -1199,21 +751,12 @@
       }
     },
 
-    /**
-     * حذف مفتاح
-     * @param {string} key
-     */
     remove(key) {
       try {
         localStorage.removeItem(key);
       } catch (_) {}
     },
 
-    /**
-     * التحقق من وجود مفتاح
-     * @param {string} key
-     * @returns {boolean}
-     */
     has(key) {
       try {
         return localStorage.getItem(key) !== null;
@@ -1222,9 +765,6 @@
       }
     },
 
-    /**
-     * حذف كل مفاتيح GMS
-     */
     clearAll() {
       const keys = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -1238,10 +778,6 @@
       });
     },
 
-    /**
-     * حساب حجم GMS في LocalStorage
-     * @returns {number}
-     */
     size() {
       let total = 0;
       for (let i = 0; i < localStorage.length; i++) {
@@ -1258,18 +794,12 @@
      §13 · CLIPBOARD
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * نسخ نص إلى الحافظة
-   * @param {string} text
-   * @returns {Promise<boolean>}
-   */
   async function copyToClipboard(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(String(text));
         return true;
       }
-      // fallback قديم
       const ta = document.createElement('textarea');
       ta.value = String(text);
       ta.style.position = 'fixed';
@@ -1288,11 +818,6 @@
      §14 · DOWNLOAD & FILE HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تنزيل blob كملف
-   * @param {string} filename
-   * @param {Blob} blob
-   */
   function downloadBlob(filename, blob) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1304,23 +829,11 @@
     setTimeout(() => URL.revokeObjectURL(url), 1500);
   }
 
-  /**
-   * تنزيل نص كملف
-   * @param {string} filename
-   * @param {string} text
-   * @param {string} [mime='text/plain']
-   */
   function downloadText(filename, text, mime = 'text/plain;charset=utf-8') {
     const blob = new Blob(['\uFEFF' + text], { type: mime });
     downloadBlob(filename, blob);
   }
 
-  /**
-   * تنزيل CSV
-   * @param {string} filename
-   * @param {Array<Array>} rows
-   * @param {Array<string>} [headers]
-   */
   function downloadCSV(filename, rows, headers) {
     const escapeCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const lines = [];
@@ -1335,11 +848,6 @@
     downloadText(filename, lines.join('\n'), 'text/csv;charset=utf-8');
   }
 
-  /**
-   * قراءة ملف كنص
-   * @param {File} file
-   * @returns {Promise<string>}
-   */
   function readFileAsText(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1349,11 +857,6 @@
     });
   }
 
-  /**
-   * قراءة ملف كـ ArrayBuffer
-   * @param {File} file
-   * @returns {Promise<ArrayBuffer>}
-   */
   function readFileAsBuffer(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1367,22 +870,12 @@
      §15 · COLOR HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قراءة متغير CSS
-   * @param {string} name
-   * @returns {string}
-   */
   function cssVar(name) {
     return getComputedStyle(document.documentElement)
       .getPropertyValue(name)
       .trim();
   }
 
-  /**
-   * توليد لون من نص (hash)
-   * @param {string} str
-   * @returns {string}
-   */
   function colorFromString(str) {
     let hash = 0;
     const s = String(str || '');
@@ -1397,12 +890,6 @@
      §16 · PERFORMANCE HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قياس زمن تنفيذ دالة (sync)
-   * @param {Function} fn
-   * @param {string} [label]
-   * @returns {*}
-   */
   function measure(fn, label) {
     const t0 = performance.now();
     const result = fn();
@@ -1413,12 +900,6 @@
     return result;
   }
 
-  /**
-   * قياس زمن تنفيذ دالة (async)
-   * @param {Function} fn
-   * @param {string} [label]
-   * @returns {Promise<*>}
-   */
   async function measureAsync(fn, label) {
     const t0 = performance.now();
     const result = await fn();
@@ -1433,13 +914,6 @@
      §17 · EVENT HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * ربط حدث مع تفويض
-   * @param {Element|string} root
-   * @param {string} eventName
-   * @param {string} selector
-   * @param {Function} handler
-   */
   function delegate(root, eventName, selector, handler) {
     const target = typeof root === 'string' ? $(root) : root;
     if (!target) return;
@@ -1452,27 +926,12 @@
     });
   }
 
-  /**
-   * إضافة حدث مع تنظيف تلقائي
-   * @param {Element} el
-   * @param {string} event
-   * @param {Function} handler
-   * @param {Object} [opts]
-   * @returns {Function} دالة لإزالة الحدث
-   */
   function on(el, event, handler, opts) {
     if (!el) return () => {};
     el.addEventListener(event, handler, opts);
     return () => el.removeEventListener(event, handler, opts);
   }
 
-  /**
-   * انتظار حدث مرة واحدة
-   * @param {Element} el
-   * @param {string} event
-   * @param {number} [timeout]
-   * @returns {Promise<Event>}
-   */
   function once(el, event, timeout) {
     return new Promise((resolve, reject) => {
       let timer;
@@ -1494,28 +953,15 @@
      §18 · URL & QUERY HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قراءة query param من URL
-   * @param {string} key
-   * @returns {string|null}
-   */
   function getQueryParam(key) {
     const params = new URLSearchParams(location.search);
     return params.get(key);
   }
 
-  /**
-   * قراءة hash parameter
-   * @returns {string}
-   */
   function getHash() {
     return location.hash.replace(/^#\/?/, '');
   }
 
-  /**
-   * تحديث hash بدون إعادة تحميل
-   * @param {string} value
-   */
   function setHash(value) {
     if (location.hash !== '#/' + value) {
       history.replaceState(null, '', '#/' + value);
@@ -1567,6 +1013,14 @@
 
   GMS.Gold = Gold;
   GMS.Validate = Validate;
+
+  /* ✅ Aliases مباشرة لدوال حسابات الذهب (للتوافق مع كل الموديولات) */
+  GMS.lossPct = Gold.lossPct.bind(Gold);
+  GMS.netWeight = Gold.netWeight.bind(Gold);
+  GMS.pureWeight = Gold.pureWeight.bind(Gold);
+  GMS.goldValue = Gold.goldValue.bind(Gold);
+  GMS.workmanship = Gold.workmanship.bind(Gold);
+  GMS.priceForKarat = Gold.priceForKarat.bind(Gold);
 
   GMS.debounce = debounce;
   GMS.throttle = throttle;
@@ -1632,6 +1086,11 @@
   console.log(
     `%c⚙️  DOM · Format · Sanitize · Validate · Gold · Timers · Storage · Files · Events`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c✅ Gold aliases exposed: lossPct, netWeight, pureWeight, goldValue, workmanship, priceForKarat`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
