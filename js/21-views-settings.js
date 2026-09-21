@@ -677,8 +677,8 @@
                 الأسعار المشتقة
               </div>
 
-              <div style="display:grid;grid-template-columns:repeat(5,1fr);
-                          gap:10px">
+              <div id="set-derived-prices" style="display:grid;
+                          grid-template-columns:repeat(3,1fr);gap:10px">
                 ${GMS.KARAT_ORDER.map(k => {
                   const price = GMS.round(d.price24 * GMS.karatRatio(k), 2);
                   return `
@@ -1975,10 +1975,38 @@
       const price = readNumber('set-price24', 4500);
       const margin = readNumber('set-buy-margin', 8);
 
+      /* حساب سعر الشراء */
       const buy24 = GMS.round(price * (1 - margin / 100), 2);
 
       const buyDisplay = document.getElementById('set-buy24-display');
       if (buyDisplay) buyDisplay.value = GMS.moneyFmt(buy24) + ' ج.م';
+
+      /* ✅ تحديث شبكة الأسعار المشتقة */
+      const grid = document.getElementById('set-derived-prices');
+      if (grid) {
+        grid.innerHTML = GMS.KARAT_ORDER.map(k => {
+          const karatPrice = GMS.round(price * GMS.karatRatio(k), 2);
+          return `
+            <div style="padding:11px 13px;background:var(--surface);
+                        border-radius:10px;
+                        border:1px solid var(--border);
+                        text-align:center">
+              <div style="font-size:11.5px;font-weight:800;
+                          color:var(--muted);margin-bottom:5px">
+                ${k}K
+              </div>
+              <div class="mono" style="font-size:15px;font-weight:900;
+                          color:var(--primary);letter-spacing:-.3px">
+                ${GMS.moneyFmt(karatPrice)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                ${GMS.karatRatio(k).toFixed(4)}
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
     };
 
     if (priceInput) {
