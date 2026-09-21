@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/01-config.js
    الثوابت العامة، الأدوار، الصلاحيات، وإعدادات النظام
+   ✅ النسخة: 3 عيارات فقط (24K, 21K, 18K)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -15,31 +16,31 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · نظام العيارات (CARAT SYSTEM)
+     ─────────────────────────────────────────────────────────────────────
+     ✅ 3 عيارات فقط: 24K, 21K, 18K
+     24K = 1.0000 · 21K = 0.8750 · 18K = 0.7500
      ═════════════════════════════════════════════════════════════════════ */
   GMS.KARAT_RATIO = Object.freeze({
     24: 1.0000,
-    22: 0.9167,
     21: 0.8750,
     18: 0.7500,
-    14: 0.5850,
   });
 
-  GMS.KARAT_ORDER = Object.freeze([24, 22, 21, 18, 14]);
+  /* ترتيب تنازلي للعرض */
+  GMS.KARAT_ORDER = Object.freeze([24, 21, 18]);
 
+  /* ألوان العيارات للمخططات */
   GMS.KARAT_COLORS = Object.freeze({
     24: '#c8a24a',
-    22: '#e8c874',
     21: '#9c7726',
     18: '#6b7a95',
-    14: '#6b3fa0',
   });
 
+  /* أسماء العيارات بالعربي */
   GMS.KARAT_LABELS = Object.freeze({
     24: 'عيار 24',
-    22: 'عيار 22',
     21: 'عيار 21',
     18: 'عيار 18',
-    14: 'عيار 14',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -213,7 +214,6 @@
      §4 · تسميات الصلاحيات بالعربي (PERMISSION LABELS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PERM_LABELS = Object.freeze({
-    // النظام والأمان
     viewDashboard:      'عرض لوحة التحكم',
     viewEmployees:      'عرض الموظفين',
     manageEmployees:    'إدارة الموظفين (إضافة/تعديل/حذف)',
@@ -226,7 +226,6 @@
     manageManufacturers:'إدارة المصانع والماركات',
     manageBackups:      'إدارة النسخ الاحتياطي',
 
-    // المبيعات والفواتير
     viewAllBranches:    'عرض جميع الفروع',
     viewAllSales:       'عرض جميع الفواتير',
     viewOwnSales:       'عرض فواتيره فقط',
@@ -235,7 +234,6 @@
     editSale:           'تعديل الفواتير',
     deleteSale:         'حذف الفواتير',
 
-    // المخزون والخزنة
     viewInventory:      'عرض المخزون',
     viewOwnInventory:   'عرض مخزون فرعه فقط',
     editInventory:      'تعديل المخزون',
@@ -243,13 +241,11 @@
     viewInventoryCost:  'عرض تكلفة المخزون',
     viewVault:          'عرض الخزنة',
 
-    // الموردين والعملاء
     viewSuppliers:      'عرض الموردين',
     editSupplierLedger: 'تعديل دفتر الموردين',
     viewCustomers:      'عرض العملاء',
     editCustomers:      'تعديل العملاء',
 
-    // المحاسبة والتقارير
     viewProfitReport:   'عرض تقارير الأرباح',
     editPriceBoard:     'تعديل أسعار السوق',
     editGeneralLedger:  'تعديل دفتر الأستاذ',
@@ -258,85 +254,59 @@
     exportData:         'تصدير البيانات',
     viewReports:        'عرض التقارير',
 
-    // Realtime
     viewRealtime:       'عرض التحديثات المباشرة',
     manageRealtime:     'إدارة اشتراكات Realtime',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · مجموعات الصلاحيات (للعرض في مصفوفة الصلاحيات)
+     §5 · مجموعات الصلاحيات
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PERM_GROUPS = Object.freeze([
     {
       title: 'النظام والأمان',
       icon: 'shield',
       perms: [
-        'viewDashboard',
-        'viewRoles',
-        'viewAuditLog',
-        'deleteAuditLog',
-        'manageEmployees',
-        'manageBranches',
-        'manageSettings',
-        'manageManufacturers',
-        'impersonateUser',
-        'manageBackups',
+        'viewDashboard', 'viewRoles', 'viewAuditLog', 'deleteAuditLog',
+        'manageEmployees', 'manageBranches', 'manageSettings',
+        'manageManufacturers', 'impersonateUser', 'manageBackups',
       ],
     },
     {
       title: 'المبيعات والفواتير',
       icon: 'receipt',
       perms: [
-        'viewAllSales',
-        'viewOwnSales',
-        'createSale',
-        'approveSale',
-        'editSale',
-        'deleteSale',
+        'viewAllSales', 'viewOwnSales', 'createSale',
+        'approveSale', 'editSale', 'deleteSale',
       ],
     },
     {
       title: 'المخزون والخزنة',
       icon: 'gem',
       perms: [
-        'viewInventory',
-        'viewOwnInventory',
-        'editInventory',
-        'deleteInventory',
-        'viewInventoryCost',
-        'viewVault',
+        'viewInventory', 'viewOwnInventory', 'editInventory',
+        'deleteInventory', 'viewInventoryCost', 'viewVault',
       ],
     },
     {
       title: 'الموردين والعملاء',
       icon: 'users',
       perms: [
-        'viewSuppliers',
-        'editSupplierLedger',
-        'viewCustomers',
-        'editCustomers',
+        'viewSuppliers', 'editSupplierLedger',
+        'viewCustomers', 'editCustomers',
       ],
     },
     {
       title: 'المحاسبة والتقارير',
       icon: 'book-open',
       perms: [
-        'viewProfitReport',
-        'editPriceBoard',
-        'editGeneralLedger',
-        'closeShift',
-        'reopenShift',
-        'exportData',
-        'viewReports',
+        'viewProfitReport', 'editPriceBoard', 'editGeneralLedger',
+        'closeShift', 'reopenShift', 'exportData', 'viewReports',
       ],
     },
     {
       title: 'التحديثات المباشرة',
       icon: 'radio',
-      perms: [
-        'viewRealtime',
-        'manageRealtime',
-      ],
+      perms: ['viewRealtime', 'manageRealtime'],
     },
   ]);
 
@@ -345,53 +315,33 @@
      ═════════════════════════════════════════════════════════════════════ */
   GMS.ITEM_STATUS = Object.freeze({
     IN_STOCK: {
-      key: 'IN_STOCK',
-      label: 'متوفر',
-      labelEn: 'In Stock',
-      cls: 'pill-green',
-      icon: 'check-circle-2',
+      key: 'IN_STOCK', label: 'متوفر', labelEn: 'In Stock',
+      cls: 'pill-green', icon: 'check-circle-2',
     },
     RESERVED: {
-      key: 'RESERVED',
-      label: 'محجوز',
-      labelEn: 'Reserved',
-      cls: 'pill-amber',
-      icon: 'clock',
+      key: 'RESERVED', label: 'محجوز', labelEn: 'Reserved',
+      cls: 'pill-amber', icon: 'clock',
     },
     SOLD: {
-      key: 'SOLD',
-      label: 'مباع',
-      labelEn: 'Sold',
-      cls: 'pill-gray',
-      icon: 'badge-check',
+      key: 'SOLD', label: 'مباع', labelEn: 'Sold',
+      cls: 'pill-gray', icon: 'badge-check',
     },
     RETURNED: {
-      key: 'RETURNED',
-      label: 'مرتجع',
-      labelEn: 'Returned',
-      cls: 'pill-blue',
-      icon: 'undo-2',
+      key: 'RETURNED', label: 'مرتجع', labelEn: 'Returned',
+      cls: 'pill-blue', icon: 'undo-2',
     },
     MELTED: {
-      key: 'MELTED',
-      label: 'مصهور',
-      labelEn: 'Melted',
-      cls: 'pill-red',
-      icon: 'flame',
+      key: 'MELTED', label: 'مصهور', labelEn: 'Melted',
+      cls: 'pill-red', icon: 'flame',
     },
     RETURNED_TO_SUPPLIER: {
-      key: 'RETURNED_TO_SUPPLIER',
-      label: 'مرتجع للمورد',
+      key: 'RETURNED_TO_SUPPLIER', label: 'مرتجع للمورد',
       labelEn: 'Returned to Supplier',
-      cls: 'pill-blue',
-      icon: 'package-minus',
+      cls: 'pill-blue', icon: 'package-minus',
     },
     TRANSFERRED: {
-      key: 'TRANSFERRED',
-      label: 'محوَّل',
-      labelEn: 'Transferred',
-      cls: 'pill-violet',
-      icon: 'arrow-right-left',
+      key: 'TRANSFERRED', label: 'محوَّل', labelEn: 'Transferred',
+      cls: 'pill-violet', icon: 'arrow-right-left',
     },
   });
 
@@ -399,219 +349,64 @@
      §7 · تصنيفات الأصناف (ITEM CATEGORIES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.CATEGORIES = Object.freeze([
-    'خاتم',
-    'سلسلة',
-    'أسورة',
-    'حلق',
-    'توكة',
-    'دبلة',
-    'قلادة',
-    'تعليقة',
-    'غوايش',
-    'كوليه',
-    'سبيكة',
-    'ليرة',
-    'كسر مُشترى',
-    'أخرى',
+    'خاتم', 'سلسلة', 'أسورة', 'حلق', 'توكة', 'دبلة',
+    'قلادة', 'تعليقة', 'غوايش', 'كوليه', 'سبيكة', 'ليرة',
+    'كسر مُشترى', 'أخرى',
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
      §8 · طرق الدفع (PAYMENT METHODS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PAYMENT_METHODS = Object.freeze({
-    cash: {
-      key: 'cash',
-      label: 'نقدي',
-      labelEn: 'Cash',
-      icon: 'banknote',
-    },
-    card: {
-      key: 'card',
-      label: 'بطاقة',
-      labelEn: 'Card',
-      icon: 'credit-card',
-    },
-    instapay: {
-      key: 'instapay',
-      label: 'إنستاباي',
-      labelEn: 'Instapay',
-      icon: 'smartphone',
-    },
-    wallet: {
-      key: 'wallet',
-      label: 'محفظة إلكترونية',
-      labelEn: 'E-Wallet',
-      icon: 'smartphone',
-    },
-    credit: {
-      key: 'credit',
-      label: 'آجل',
-      labelEn: 'Credit',
-      icon: 'clock',
-    },
-    gold: {
-      key: 'gold',
-      label: 'مقايضة ذهب',
-      labelEn: 'Gold Exchange',
-      icon: 'scale',
-    },
+    cash:     { key: 'cash',     label: 'نقدي',            labelEn: 'Cash',         icon: 'banknote' },
+    card:     { key: 'card',     label: 'بطاقة',           labelEn: 'Card',         icon: 'credit-card' },
+    instapay: { key: 'instapay', label: 'إنستاباي',        labelEn: 'Instapay',     icon: 'smartphone' },
+    wallet:   { key: 'wallet',   label: 'محفظة إلكترونية', labelEn: 'E-Wallet',     icon: 'smartphone' },
+    credit:   { key: 'credit',   label: 'آجل',             labelEn: 'Credit',       icon: 'clock' },
+    gold:     { key: 'gold',     label: 'مقايضة ذهب',      labelEn: 'Gold Exchange',icon: 'scale' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §9 · أنواع الفواتير (INVOICE TYPES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.INVOICE_TYPES = Object.freeze({
-    sale: {
-      key: 'sale',
-      label: 'فاتورة بيع',
-      labelEn: 'Sale Invoice',
-      icon: 'receipt',
-      prefix: 'INV',
-    },
-    purchase: {
-      key: 'purchase',
-      label: 'فاتورة شراء',
-      labelEn: 'Purchase Invoice',
-      icon: 'truck',
-      prefix: 'PUR',
-    },
-    return_sale: {
-      key: 'return_sale',
-      label: 'مرتجع بيع',
-      labelEn: 'Sales Return',
-      icon: 'rotate-ccw',
-      prefix: 'RET',
-    },
-    return_purchase: {
-      key: 'return_purchase',
-      label: 'مرتجع شراء',
-      labelEn: 'Purchase Return',
-      icon: 'undo-2',
-      prefix: 'RTP',
-    },
-    exchange: {
-      key: 'exchange',
-      label: 'استبدال',
-      labelEn: 'Exchange',
-      icon: 'arrow-right-left',
-      prefix: 'EXC',
-    },
-    adjustment: {
-      key: 'adjustment',
-      label: 'تسوية مخزون',
-      labelEn: 'Stock Adjustment',
-      icon: 'sliders-horizontal',
-      prefix: 'ADJ',
-    },
+    sale:            { key: 'sale',            label: 'فاتورة بيع',     labelEn: 'Sale Invoice',     icon: 'receipt',             prefix: 'INV' },
+    purchase:        { key: 'purchase',        label: 'فاتورة شراء',    labelEn: 'Purchase Invoice', icon: 'truck',               prefix: 'PUR' },
+    return_sale:     { key: 'return_sale',     label: 'مرتجع بيع',      labelEn: 'Sales Return',     icon: 'rotate-ccw',          prefix: 'RET' },
+    return_purchase: { key: 'return_purchase', label: 'مرتجع شراء',     labelEn: 'Purchase Return',  icon: 'undo-2',              prefix: 'RTP' },
+    exchange:        { key: 'exchange',        label: 'استبدال',        labelEn: 'Exchange',         icon: 'arrow-right-left',    prefix: 'EXC' },
+    adjustment:      { key: 'adjustment',      label: 'تسوية مخزون',    labelEn: 'Stock Adjustment', icon: 'sliders-horizontal',   prefix: 'ADJ' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §10 · حالات الفواتير (INVOICE STATUSES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.INVOICE_STATUS = Object.freeze({
-    PENDING_APPROVAL: {
-      key: 'PENDING_APPROVAL',
-      label: 'قيد الموافقة',
-      labelEn: 'Pending Approval',
-      cls: 'pill-amber',
-      icon: 'clock',
-    },
-    APPROVED: {
-      key: 'APPROVED',
-      label: 'مُعتمد',
-      labelEn: 'Approved',
-      cls: 'pill-green',
-      icon: 'check-circle-2',
-    },
-    REJECTED: {
-      key: 'REJECTED',
-      label: 'مرفوض',
-      labelEn: 'Rejected',
-      cls: 'pill-red',
-      icon: 'x-circle',
-    },
-    COMPLETED: {
-      key: 'COMPLETED',
-      label: 'مكتمل',
-      labelEn: 'Completed',
-      cls: 'pill-blue',
-      icon: 'badge-check',
-    },
-    CANCELLED: {
-      key: 'CANCELLED',
-      label: 'ملغى',
-      labelEn: 'Cancelled',
-      cls: 'pill-gray',
-      icon: 'ban',
-    },
+    PENDING_APPROVAL: { key: 'PENDING_APPROVAL', label: 'قيد الموافقة', labelEn: 'Pending Approval', cls: 'pill-amber', icon: 'clock' },
+    APPROVED:         { key: 'APPROVED',         label: 'مُعتمد',        labelEn: 'Approved',         cls: 'pill-green', icon: 'check-circle-2' },
+    REJECTED:         { key: 'REJECTED',         label: 'مرفوض',         labelEn: 'Rejected',         cls: 'pill-red',   icon: 'x-circle' },
+    COMPLETED:        { key: 'COMPLETED',        label: 'مكتمل',         labelEn: 'Completed',        cls: 'pill-blue',  icon: 'badge-check' },
+    CANCELLED:        { key: 'CANCELLED',        label: 'ملغى',          labelEn: 'Cancelled',        cls: 'pill-gray',  icon: 'ban' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §11 · حدود الخسس الطبيعية (LOSS TOLERANCES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEFAULT_TOLERANCES = Object.freeze({
-    melting: {
-      naturalMin: 0.10,
-      naturalMax: 0.30,
-      warningMax: 0.50,
-      label: 'سبك الكسر',
-      unit: '%',
-    },
-    polishing: {
-      naturalMin: 0.05,
-      naturalMax: 0.15,
-      warningMax: 0.25,
-      label: 'التحميم والجلخ',
-      unit: '%',
-    },
-    assaying: {
-      naturalMin: -0.005,
-      naturalMax: 0.005,
-      warningMax: 0.015,
-      label: 'الششني',
-      unit: 'pt',
-    },
-    repair: {
-      naturalMin: 0.00,
-      naturalMax: 0.50,
-      warningMax: 1.00,
-      label: 'الصيانة',
-      unit: '%',
-    },
+    melting:   { naturalMin: 0.10, naturalMax: 0.30, warningMax: 0.50, label: 'سبك الكسر',      unit: '%' },
+    polishing: { naturalMin: 0.05, naturalMax: 0.15, warningMax: 0.25, label: 'التحميم والجلخ', unit: '%' },
+    assaying:  { naturalMin: -0.005, naturalMax: 0.005, warningMax: 0.015, label: 'الششني',       unit: 'pt' },
+    repair:    { naturalMin: 0.00, naturalMax: 0.50, warningMax: 1.00, label: 'الصيانة',          unit: '%' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · مستويات خطورة الخسس (LOSS SEVERITY LEVELS)
+     §12 · مستويات خطورة الخسس (LOSS SEVERITY)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.LOSS_SEVERITY = Object.freeze({
-    natural: {
-      key: 'natural',
-      label: 'طبيعي',
-      cls: 'pill-green',
-      icon: 'check-circle-2',
-      color: 'success',
-    },
-    low: {
-      key: 'low',
-      label: 'أقل من الطبيعي',
-      cls: 'pill-blue',
-      icon: 'alert-circle',
-      color: 'info',
-    },
-    warning: {
-      key: 'warning',
-      label: 'يستدعي المراقبة',
-      cls: 'pill-amber',
-      icon: 'alert-triangle',
-      color: 'warn',
-    },
-    suspicious: {
-      key: 'suspicious',
-      label: 'خسس غير طبيعي',
-      cls: 'pill-red',
-      icon: 'shield-alert',
-      color: 'danger',
-    },
+    natural:    { key: 'natural',    label: 'طبيعي',              cls: 'pill-green', icon: 'check-circle-2', color: 'success' },
+    low:        { key: 'low',        label: 'أقل من الطبيعي',     cls: 'pill-blue',  icon: 'alert-circle',   color: 'info' },
+    warning:    { key: 'warning',    label: 'يستدعي المراقبة',    cls: 'pill-amber', icon: 'alert-triangle', color: 'warn' },
+    suspicious: { key: 'suspicious', label: 'خسس غير طبيعي',     cls: 'pill-red',   icon: 'shield-alert',   color: 'danger' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -629,135 +424,43 @@
      §14 · طرق الاسترجاع (REFUND METHODS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.REFUND_METHODS = Object.freeze({
-    cash: {
-      key: 'cash',
-      label: 'نقدي من الصندوق',
-      labelEn: 'Cash Refund',
-      icon: 'banknote',
-      color: 'success',
-    },
-    card: {
-      key: 'card',
-      label: 'إرجاع على البطاقة',
-      labelEn: 'Card Refund',
-      icon: 'credit-card',
-      color: 'info',
-    },
-    instapay: {
-      key: 'instapay',
-      label: 'إنستاباي',
-      labelEn: 'Instapay Refund',
-      icon: 'smartphone',
-      color: 'violet',
-    },
-    credit: {
-      key: 'credit',
-      label: 'رصيد متجر للعميل',
-      labelEn: 'Store Credit',
-      icon: 'wallet',
-      color: 'teal',
-    },
+    cash:     { key: 'cash',     label: 'نقدي من الصندوق',     labelEn: 'Cash Refund',    icon: 'banknote',    color: 'success' },
+    card:     { key: 'card',     label: 'إرجاع على البطاقة',   labelEn: 'Card Refund',    icon: 'credit-card', color: 'info' },
+    instapay: { key: 'instapay', label: 'إنستاباي',            labelEn: 'Instapay Refund',icon: 'smartphone',  color: 'violet' },
+    credit:   { key: 'credit',   label: 'رصيد متجر للعميل',    labelEn: 'Store Credit',   icon: 'wallet',      color: 'teal' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §15 · طرق شراء الكسر (BUYBACK MODES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.BUYBACK_MODES = Object.freeze({
-    cash: {
-      key: 'cash',
-      label: 'دفع نقدي فوري',
-      labelEn: 'Immediate Cash',
-      icon: 'banknote',
-      color: 'success',
-    },
-    credit: {
-      key: 'credit',
-      label: 'رصيد متجر للعميل',
-      labelEn: 'Store Credit',
-      icon: 'wallet',
-      color: 'teal',
-    },
+    cash:   { key: 'cash',   label: 'دفع نقدي فوري',      labelEn: 'Immediate Cash', icon: 'banknote', color: 'success' },
+    credit: { key: 'credit', label: 'رصيد متجر للعميل',   labelEn: 'Store Credit',   icon: 'wallet',   color: 'teal' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · أنواع الصيانة (POLISHING SERVICE TYPES)
+     §16 · أنواع الصيانة (POLISHING SERVICES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.POLISHING_SERVICES = Object.freeze({
-    acid: {
-      key: 'acid',
-      label: 'تحميم حامض',
-      labelEn: 'Acid Dip',
-      icon: 'test-tube',
-    },
-    buffing: {
-      key: 'buffing',
-      label: 'جلخ وتلميع',
-      labelEn: 'Buffing & Polish',
-      icon: 'sparkles',
-    },
-    polish: {
-      key: 'polish',
-      label: 'تلميع فقط',
-      labelEn: 'Polish Only',
-      icon: 'sparkle',
-    },
-    combined: {
-      key: 'combined',
-      label: 'تحميم + جلخ + تلميع',
-      labelEn: 'Combined',
-      icon: 'wand-2',
-    },
+    acid:     { key: 'acid',     label: 'تحميم حامض',         labelEn: 'Acid Dip',          icon: 'test-tube' },
+    buffing:  { key: 'buffing',  label: 'جلخ وتلميع',         labelEn: 'Buffing & Polish',  icon: 'sparkles' },
+    polish:   { key: 'polish',   label: 'تلميع فقط',          labelEn: 'Polish Only',       icon: 'sparkle' },
+    combined: { key: 'combined', label: 'تحميم + جلخ + تلميع', labelEn: 'Combined',          icon: 'wand-2' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §17 · أنواع قيود دفتر الأستاذ (LEDGER ENTRY TYPES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.LEDGER_ENTRY_TYPES = Object.freeze({
-    gold_received: {
-      key: 'gold_received',
-      label: 'استلام ذهب',
-      color: 'et-gold-in',
-    },
-    gold_payment: {
-      key: 'gold_payment',
-      label: 'تسليم ذهب',
-      color: 'et-gold-out',
-    },
-    cash_payment: {
-      key: 'cash_payment',
-      label: 'سداد نقدي',
-      color: 'et-cash-out',
-    },
-    cash_received: {
-      key: 'cash_received',
-      label: 'استلام نقدي',
-      color: 'et-cash-out',
-    },
-    workmanship: {
-      key: 'workmanship',
-      label: 'مصنعية',
-      color: 'et-cash-in',
-    },
-    scrap_settlement: {
-      key: 'scrap_settlement',
-      label: 'تسوية كسر',
-      color: 'et-gold-in',
-    },
-    adjustment: {
-      key: 'adjustment',
-      label: 'تسوية يدوية',
-      color: 'et-adjust',
-    },
-    opening: {
-      key: 'opening',
-      label: 'رصيد افتتاحي',
-      color: 'et-neutral',
-    },
-    return_to_supplier: {
-      key: 'return_to_supplier',
-      label: 'مرتجع للمورد',
-      color: 'et-gold-out',
-    },
+    gold_received:      { key: 'gold_received',      label: 'استلام ذهب',     color: 'et-gold-in' },
+    gold_payment:       { key: 'gold_payment',       label: 'تسليم ذهب',      color: 'et-gold-out' },
+    cash_payment:       { key: 'cash_payment',       label: 'سداد نقدي',      color: 'et-cash-out' },
+    cash_received:      { key: 'cash_received',      label: 'استلام نقدي',    color: 'et-cash-out' },
+    workmanship:        { key: 'workmanship',        label: 'مصنعية',          color: 'et-cash-in' },
+    scrap_settlement:   { key: 'scrap_settlement',   label: 'تسوية كسر',      color: 'et-gold-in' },
+    adjustment:         { key: 'adjustment',         label: 'تسوية يدوية',    color: 'et-adjust' },
+    opening:            { key: 'opening',            label: 'رصيد افتتاحي',   color: 'et-neutral' },
+    return_to_supplier: { key: 'return_to_supplier', label: 'مرتجع للمورد',   color: 'et-gold-out' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -782,12 +485,12 @@
      §19 · دليل الحسابات (CHART OF ACCOUNTS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.ACCOUNT_TYPES = Object.freeze({
-    ASSET:     { key: 'ASSET',     label: 'أصول',       sign: 'dr', color: 'info' },
-    LIABILITY: { key: 'LIABILITY', label: 'خصوم',       sign: 'cr', color: 'danger' },
-    EQUITY:    { key: 'EQUITY',    label: 'حقوق ملكية', sign: 'cr', color: 'violet' },
-    REVENUE:   { key: 'REVENUE',   label: 'إيرادات',    sign: 'cr', color: 'success' },
+    ASSET:     { key: 'ASSET',     label: 'أصول',           sign: 'dr', color: 'info' },
+    LIABILITY: { key: 'LIABILITY', label: 'خصوم',           sign: 'cr', color: 'danger' },
+    EQUITY:    { key: 'EQUITY',    label: 'حقوق ملكية',     sign: 'cr', color: 'violet' },
+    REVENUE:   { key: 'REVENUE',   label: 'إيرادات',        sign: 'cr', color: 'success' },
     COGS:      { key: 'COGS',      label: 'تكلفة المبيعات', sign: 'dr', color: 'warn' },
-    EXPENSE:   { key: 'EXPENSE',   label: 'مصروفات',    sign: 'dr', color: 'danger' },
+    EXPENSE:   { key: 'EXPENSE',   label: 'مصروفات',        sign: 'dr', color: 'danger' },
   });
 
   GMS.CHART_OF_ACCOUNTS = Object.freeze([
@@ -818,23 +521,16 @@
      §20 · مفاتيح LocalStorage (STORAGE KEYS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.LS_KEYS = Object.freeze({
-    // Configuration
     CONFIG_URL:        'gms.supabase.config.url',
     CONFIG_KEY:        'gms.supabase.config.key',
-
-    // User preferences
     THEME:             'gms.theme',
     LANG:              'gms.lang',
     SOUND:             'gms.sound',
     SESSION:           'gms.session',
     COLUMNS:           'gms.inv.columns',
-
-    // Business config
     PRICE24:           'gms.acct.price24',
     BUY_MARGIN:        'gms.buyback.margin',
     TOLERANCES:        'gms.loss.tolerances',
-
-    // Cache layer keys
     CACHE_PREFIX:      'gms.cache.',
     CACHE_MANUFACTURERS:'manufacturers',
     CACHE_WORKMANSHIP: 'workmanship',
@@ -844,8 +540,6 @@
     CACHE_KARAT_BOARD: 'karatBoard',
     CACHE_BRANCHES:    'branches',
     CACHE_TTL_SUFFIX:  '.ttl',
-
-    // Record history
     MELTING_RECORDS:   'gms.loss.melting',
     ASSAY_RECORDS:     'gms.loss.assay',
     POLISH_RECORDS:    'gms.loss.polish',
@@ -853,8 +547,6 @@
     FEED:              'gms.rt.feed',
     AUDIT:             'gms.audit',
     SYNC_LOG:          'gms.sync.log',
-
-    // ✅ Manufacturers (custom, persistent)
     MANUFACTURERS:     'gms.manufacturers.v2',
   });
 
@@ -921,14 +613,8 @@
     MAX_TEXT_LENGTH: 1000,
     MAX_NOTES_LENGTH: 5000,
     MAX_FILENAME_LENGTH: 200,
-    FORBIDDEN_TAGS: [
-      'script', 'iframe', 'object', 'embed', 'link',
-      'style', 'meta', 'base', 'form',
-    ],
-    FORBIDDEN_ATTRS: [
-      'onerror', 'onload', 'onclick', 'onmouseover', 'onfocus',
-      'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup',
-    ],
+    FORBIDDEN_TAGS: ['script', 'iframe', 'object', 'embed', 'link', 'style', 'meta', 'base', 'form'],
+    FORBIDDEN_ATTRS: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup'],
     ALLOWED_PROTOCOLS: ['http:', 'https:', 'mailto:', 'tel:'],
     SESSION_TIMEOUT_MS: 8 * 60 * 60 * 1000,
   });
@@ -937,11 +623,7 @@
      §26 · إعدادات المخططات (CHARTS CONFIG)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.CHART_CONFIG = Object.freeze({
-    PALETTE: [
-      '#c8a24a', '#1c4fd8', '#b3261e', '#6b3fa0',
-      '#0f7a43', '#a55a00', '#0e7490', '#3d4a63',
-      '#e8c874', '#9c7726',
-    ],
+    PALETTE: ['#c8a24a', '#1c4fd8', '#b3261e', '#6b3fa0', '#0f7a43', '#a55a00', '#0e7490', '#3d4a63', '#e8c874', '#9c7726'],
     DEFAULT_FONT: 'Cairo',
     DEFAULT_HEIGHT: 300,
     DEFAULT_TENSION: 0.35,
@@ -958,7 +640,7 @@
     NAME: 'Gold MS Enterprise',
     NAME_AR: 'نظام إدارة الذهب',
     VERSION: '1.0.0',
-    BUILD: '20260918',
+    BUILD: '20260921',
     DEFAULT_LOCALE: 'ar-EG',
     DEFAULT_CURRENCY: 'EGP',
     DEFAULT_KARAT: 21,
@@ -1019,74 +701,40 @@
      §29 · بيانات الفروع الافتراضية (DEMO BRANCHES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEFAULT_BRANCHES = Object.freeze([
-    { id: 'br-1', code: 'CAI01', name: 'فرع القاهرة — الصاغة',   phone: '0223456789' },
-    { id: 'br-2', code: 'ALX01', name: 'فرع الإسكندرية',          phone: '0345678901' },
-    { id: 'br-3', code: 'TNT01', name: 'فرع طنطا',                phone: '0434567890' },
+    { id: 'br-1', code: 'CAI01', name: 'فرع القاهرة — الصاغة', phone: '0223456789' },
+    { id: 'br-2', code: 'ALX01', name: 'فرع الإسكندرية',        phone: '0345678901' },
+    { id: 'br-3', code: 'TNT01', name: 'فرع طنطا',              phone: '0434567890' },
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §30 · طرق تسعير المصانع (MANUFACTURER PRICING MODES) — ✅ جديد
-     ─────────────────────────────────────────────────────────────────────
-     4 أنماط:
-       • letters : حسب الأحرف (أ، ب، جـ، د...)
-       • colors  : حسب الألوان (أحمر، أزرق، ذهبي...)
-       • items   : حسب نوع القطعة (سلسلة، خاتم، أسورة...)
-       • fixed   : سعر ثابت لكل القطع
+     §30 · طرق تسعير المصانع (MANUFACTURER PRICING MODES)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PRICING_MODES = Object.freeze({
-    letters: {
-      key: 'letters',
-      label: 'حسب الأحرف',
-      labelEn: 'By Letters',
-      icon: 'letter-text',
-      description: 'مصنع بيحدد سعره بالحروف: أ، ب، جـ، د...',
-      color: 'primary',
-    },
-    colors: {
-      key: 'colors',
-      label: 'حسب الألوان',
-      labelEn: 'By Colors',
-      icon: 'palette',
-      description: 'مصنع بيحدد سعره بالألوان: أحمر، أزرق، ذهبي...',
-      color: 'violet',
-    },
-    items: {
-      key: 'items',
-      label: 'حسب نوع القطعة',
-      labelEn: 'By Item Type',
-      icon: 'shapes',
-      description: 'مصنع بيحدد سعره حسب نوع القطعة: سلسلة، خاتم...',
-      color: 'info',
-    },
-    fixed: {
-      key: 'fixed',
-      label: 'سعر ثابت',
-      labelEn: 'Fixed Rate',
-      icon: 'equal',
-      description: 'مصنع بيعطي سعر واحد ثابت لكل القطع',
-      color: 'success',
-    },
+    letters: { key: 'letters', label: 'حسب الأحرف',     labelEn: 'By Letters',  icon: 'letter-text', description: 'مصنع بيحدد سعره بالحروف: أ، ب، جـ، د...', color: 'primary' },
+    colors:  { key: 'colors',  label: 'حسب الألوان',    labelEn: 'By Colors',   icon: 'palette',     description: 'مصنع بيحدد سعره بالألوان: أحمر، أزرق، ذهبي...', color: 'violet' },
+    items:   { key: 'items',   label: 'حسب نوع القطعة', labelEn: 'By Item Type',icon: 'shapes',      description: 'مصنع بيحدد سعره حسب نوع القطعة: سلسلة، خاتم...', color: 'info' },
+    fixed:   { key: 'fixed',   label: 'سعر ثابت',       labelEn: 'Fixed Rate',  icon: 'equal',       description: 'مصنع بيعطي سعر واحد ثابت لكل القطع', color: 'success' },
   });
 
-  /* قائمة الألوان الجاهزة — يُستخدم مع pricingMode='colors' */
+  /* قائمة الألوان الجاهزة */
   GMS.PRICING_COLORS = Object.freeze([
-    { key: 'red',     label: 'أحمر',      hex: '#dc2626' },
-    { key: 'blue',    label: 'أزرق',      hex: '#2563eb' },
-    { key: 'green',   label: 'أخضر',      hex: '#16a34a' },
-    { key: 'yellow',  label: 'أصفر',      hex: '#facc15' },
-    { key: 'black',   label: 'أسود',      hex: '#0a0a0a' },
-    { key: 'white',   label: 'أبيض',      hex: '#f5f5f5' },
-    { key: 'gold',    label: 'ذهبي',      hex: '#c8a24a' },
-    { key: 'silver',  label: 'فضي',       hex: '#94a3b8' },
-    { key: 'rose',    label: 'وردي',      hex: '#f472b6' },
-    { key: 'violet',  label: 'بنفسجي',    hex: '#7c3aed' },
-    { key: 'orange',  label: 'برتقالي',   hex: '#ea580c' },
-    { key: 'brown',   label: 'بني',       hex: '#78350f' },
-    { key: 'teal',    label: 'تركوازي',   hex: '#14b8a6' },
-    { key: 'navy',    label: 'كحلي',      hex: '#1e3a8a' },
+    { key: 'red',     label: 'أحمر',    hex: '#dc2626' },
+    { key: 'blue',    label: 'أزرق',    hex: '#2563eb' },
+    { key: 'green',   label: 'أخضر',    hex: '#16a34a' },
+    { key: 'yellow',  label: 'أصفر',    hex: '#facc15' },
+    { key: 'black',   label: 'أسود',    hex: '#0a0a0a' },
+    { key: 'white',   label: 'أبيض',    hex: '#f5f5f5' },
+    { key: 'gold',    label: 'ذهبي',    hex: '#c8a24a' },
+    { key: 'silver',  label: 'فضي',     hex: '#94a3b8' },
+    { key: 'rose',    label: 'وردي',    hex: '#f472b6' },
+    { key: 'violet',  label: 'بنفسجي',  hex: '#7c3aed' },
+    { key: 'orange',  label: 'برتقالي', hex: '#ea580c' },
+    { key: 'brown',   label: 'بني',     hex: '#78350f' },
+    { key: 'teal',    label: 'تركوازي', hex: '#14b8a6' },
+    { key: 'navy',    label: 'كحلي',    hex: '#1e3a8a' },
   ]);
 
-  /* أحرف عربية جاهزة — يُستخدم مع pricingMode='letters' */
+  /* أحرف عربية جاهزة */
   GMS.PRICING_LETTERS = Object.freeze([
     'أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي',
     'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر',
@@ -1094,182 +742,96 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §31 · بيانات المصانع الافتراضية (DEMO MANUFACTURERS) — ✅ محدَّث
-     ─────────────────────────────────────────────────────────────────────
-     كل مصنع له:
-       • pricingMode: نوع التسعير (letters/colors/items/fixed)
-       • letterRates: [{ letter, rate }]  (لو letters)
-       • colorRates:  [{ color, rate }]   (لو colors)
-       • itemRates:   [{ category, rate }] (لو items)
-       • fixedRate:   رقم                  (لو fixed)
-       • purchaseRate: مصنعية الشراء الافتراضية (fallback)
-       • saleRate:     مصنعية البيع الافتراضية (fallback)
+     §31 · بيانات المصانع الافتراضية (DEMO MANUFACTURERS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEFAULT_MANUFACTURERS = Object.freeze([
     {
-      id: 'manu-1',
-      code: 'A',
-      letter: 'أ',
-      name: 'مصنع النيل للذهب',
-      phone: '',
+      id: 'manu-1', code: 'A', letter: 'أ', name: 'مصنع النيل للذهب', phone: '',
       pricingMode: 'letters',
       letterRates: [
-        { letter: 'أ', rate: 120 },
-        { letter: 'ب', rate: 145 },
-        { letter: 'ج', rate: 165 },
-        { letter: 'د', rate: 185 },
+        { letter: 'أ', rate: 120 }, { letter: 'ب', rate: 145 },
+        { letter: 'ج', rate: 165 }, { letter: 'د', rate: 185 },
       ],
-      colorRates: [],
-      itemRates: [],
-      fixedRate: null,
-      purchaseRate: 120,
-      saleRate: 150,
-      rate: 120,
-      isActive: true,
-      notes: '',
+      colorRates: [], itemRates: [], fixedRate: null,
+      purchaseRate: 120, saleRate: 150, rate: 120,
+      isActive: true, notes: '',
     },
     {
-      id: 'manu-2',
-      code: 'B',
-      letter: 'ب',
-      name: 'الشرق للمجوهرات',
-      phone: '',
+      id: 'manu-2', code: 'B', letter: 'ب', name: 'الشرق للمجوهرات', phone: '',
       pricingMode: 'colors',
       letterRates: [],
       colorRates: [
-        { color: 'red',   rate: 100 },
-        { color: 'blue',  rate: 130 },
-        { color: 'green', rate: 160 },
-        { color: 'gold',  rate: 200 },
+        { color: 'red',   rate: 100 }, { color: 'blue',  rate: 130 },
+        { color: 'green', rate: 160 }, { color: 'gold',  rate: 200 },
       ],
-      itemRates: [],
-      fixedRate: null,
-      purchaseRate: 130,
-      saleRate: 165,
-      rate: 145,
-      isActive: true,
-      notes: '',
+      itemRates: [], fixedRate: null,
+      purchaseRate: 130, saleRate: 165, rate: 145,
+      isActive: true, notes: '',
     },
     {
-      id: 'manu-3',
-      code: 'C',
-      letter: 'ج',
-      name: 'الماسة الذهبية',
-      phone: '',
+      id: 'manu-3', code: 'C', letter: 'ج', name: 'الماسة الذهبية', phone: '',
       pricingMode: 'items',
-      letterRates: [],
-      colorRates: [],
+      letterRates: [], colorRates: [],
       itemRates: [
-        { category: 'خاتم',   rate: 150 },
-        { category: 'دبلة',   rate: 180 },
-        { category: 'سلسلة',  rate: 100 },
-        { category: 'أسورة',  rate: 130 },
-        { category: 'حلق',    rate: 140 },
-        { category: 'توكة',   rate: 110 },
-        { category: 'قلادة',  rate: 160 },
-        { category: 'تعليقة', rate: 120 },
+        { category: 'خاتم',   rate: 150 }, { category: 'دبلة',   rate: 180 },
+        { category: 'سلسلة',  rate: 100 }, { category: 'أسورة',  rate: 130 },
+        { category: 'حلق',    rate: 140 }, { category: 'توكة',   rate: 110 },
+        { category: 'قلادة',  rate: 160 }, { category: 'تعليقة', rate: 120 },
       ],
       fixedRate: null,
-      purchaseRate: 100,
-      saleRate: 130,
-      rate: 100,
-      isActive: true,
-      notes: '',
+      purchaseRate: 100, saleRate: 130, rate: 100,
+      isActive: true, notes: '',
     },
     {
-      id: 'manu-4',
-      code: 'D',
-      letter: 'د',
-      name: 'الفتح جولد',
-      phone: '',
+      id: 'manu-4', code: 'D', letter: 'د', name: 'الفتح جولد', phone: '',
       pricingMode: 'fixed',
-      letterRates: [],
-      colorRates: [],
-      itemRates: [],
+      letterRates: [], colorRates: [], itemRates: [],
       fixedRate: 160,
-      purchaseRate: 160,
-      saleRate: 195,
-      rate: 160,
-      isActive: true,
-      notes: 'سعر ثابت لكل الأصناف',
+      purchaseRate: 160, saleRate: 195, rate: 160,
+      isActive: true, notes: 'سعر ثابت لكل الأصناف',
     },
     {
-      id: 'manu-5',
-      code: 'L',
-      letter: 'ل',
-      name: 'لازوردي',
-      phone: '',
+      id: 'manu-5', code: 'L', letter: 'ل', name: 'لازوردي', phone: '',
       pricingMode: 'letters',
       letterRates: [
-        { letter: 'ل', rate: 180 },
-        { letter: 'م', rate: 200 },
-        { letter: 'ن', rate: 220 },
-        { letter: 'ص', rate: 250 },
+        { letter: 'ل', rate: 180 }, { letter: 'م', rate: 200 },
+        { letter: 'ن', rate: 220 }, { letter: 'ص', rate: 250 },
       ],
-      colorRates: [],
-      itemRates: [],
-      fixedRate: null,
-      purchaseRate: 200,
-      saleRate: 240,
-      rate: 200,
-      isActive: true,
-      notes: '',
+      colorRates: [], itemRates: [], fixedRate: null,
+      purchaseRate: 200, saleRate: 240, rate: 200,
+      isActive: true, notes: '',
     },
     {
-      id: 'manu-6',
-      code: 'M',
-      letter: 'م',
-      name: 'مصر للذهب والمجوهرات',
-      phone: '',
+      id: 'manu-6', code: 'M', letter: 'م', name: 'مصر للذهب والمجوهرات', phone: '',
       pricingMode: 'items',
-      letterRates: [],
-      colorRates: [],
+      letterRates: [], colorRates: [],
       itemRates: [
-        { category: 'خاتم',   rate: 135 },
-        { category: 'دبلة',   rate: 155 },
-        { category: 'سلسلة',  rate: 110 },
-        { category: 'أسورة',  rate: 125 },
-        { category: 'حلق',    rate: 140 },
-        { category: 'قلادة',  rate: 145 },
+        { category: 'خاتم',   rate: 135 }, { category: 'دبلة',   rate: 155 },
+        { category: 'سلسلة',  rate: 110 }, { category: 'أسورة',  rate: 125 },
+        { category: 'حلق',    rate: 140 }, { category: 'قلادة',  rate: 145 },
       ],
       fixedRate: null,
-      purchaseRate: 135,
-      saleRate: 165,
-      rate: 135,
-      isActive: true,
-      notes: '',
+      purchaseRate: 135, saleRate: 165, rate: 135,
+      isActive: true, notes: '',
     },
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX)
-     ─────────────────────────────────────────────────────────────────────
-     ✅ محدَّث: يبقى للاستخدام كـ fallback فقط إذا لم يكن هناك مصنع
+     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX) — ✅ 3 عيارات
      ═════════════════════════════════════════════════════════════════════ */
   GMS.WORKMANSHIP_MATRIX = Object.freeze([
     { karat: 24, min: 40,  max: 80,  default: 55 },
-    { karat: 22, min: 80,  max: 150, default: 110 },
     { karat: 21, min: 90,  max: 250, default: 140 },
     { karat: 18, min: 100, max: 280, default: 165 },
-    { karat: 14, min: 80,  max: 200, default: 130 },
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
      §33 · أسماء الأشخاص الوهمية (DEMO SALESPEOPLE)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DEMO_SALESPEOPLE = Object.freeze([
-    'أحمد محمود',
-    'سارة عبد الله',
-    'محمد إبراهيم',
-    'مصطفى سامي',
-    'نور الهدى',
-    'خالد مصطفى',
-    'منى علي',
-    'هاني لطفي',
-    'ياسمين أحمد',
-    'كريم الرائد',
-    'عمرو الشامي',
-    'دينا عبد الرحمن',
+    'أحمد محمود', 'سارة عبد الله', 'محمد إبراهيم', 'مصطفى سامي',
+    'نور الهدى', 'خالد مصطفى', 'منى علي', 'هاني لطفي',
+    'ياسمين أحمد', 'كريم الرائد', 'عمرو الشامي', 'دينا عبد الرحمن',
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -1297,38 +859,33 @@
      §36 · الفئات المُحجوبة عن البائع (MASKED FIELDS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SALESPERSON_MASKED_FIELDS = Object.freeze([
-    'cost_price',
-    'total_cost',
-    'gold_value',
-    'workmanship_value',
-    'purchase_workmanship',
-    'profit_margin',
-    'purchase_price',
+    'cost_price', 'total_cost', 'gold_value', 'workmanship_value',
+    'purchase_workmanship', 'profit_margin', 'purchase_price',
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §37 · تعيينات أنواع الحركة (AUDIT ACTION TYPES)
+     §37 · تعيينات أنواع الحركة (AUDIT ACTIONS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.AUDIT_ACTIONS = Object.freeze({
-    CREATE:  { key: 'CREATE',  label: 'إنشاء',      icon: 'plus-circle',   cls: 'create' },
-    UPDATE:  { key: 'UPDATE',  label: 'تعديل',      icon: 'pencil',        cls: 'update' },
-    DELETE:  { key: 'DELETE',  label: 'حذف',        icon: 'trash-2',       cls: 'delete' },
-    LOGIN:   { key: 'LOGIN',   label: 'تسجيل دخول', icon: 'log-in',        cls: 'login' },
-    LOGOUT:  { key: 'LOGOUT',  label: 'خروج',       icon: 'log-out',       cls: 'login' },
-    APPROVE: { key: 'APPROVE', label: 'اعتماد',     icon: 'check-circle-2',cls: 'approve' },
-    REJECT:  { key: 'REJECT',  label: 'رفض',        icon: 'x-circle',      cls: 'reject' },
-    SHIFT_CLOSE: { key: 'SHIFT_CLOSE', label: 'إغلاق وردية', icon: 'lock', cls: 'shift' },
-    VIEW:    { key: 'VIEW',    label: 'عرض',        icon: 'eye',           cls: 'update' },
-    EXPORT:  { key: 'EXPORT',  label: 'تصدير',      icon: 'download',      cls: 'update' },
-    IMPORT:  { key: 'IMPORT',  label: 'استيراد',    icon: 'upload',        cls: 'update' },
-    RETURN:  { key: 'RETURN',  label: 'مرتجع',      icon: 'rotate-ccw',    cls: 'update' },
-    BUYBACK: { key: 'BUYBACK', label: 'شراء كسر',   icon: 'recycle',       cls: 'update' },
-    SCAN:    { key: 'SCAN',    label: 'مسح صنف',    icon: 'scan-line',     cls: 'update' },
-    SYNC:    { key: 'SYNC',    label: 'مزامنة',     icon: 'refresh-cw',    cls: 'update' },
+    CREATE:      { key: 'CREATE',      label: 'إنشاء',       icon: 'plus-circle',   cls: 'create' },
+    UPDATE:      { key: 'UPDATE',      label: 'تعديل',       icon: 'pencil',        cls: 'update' },
+    DELETE:      { key: 'DELETE',      label: 'حذف',         icon: 'trash-2',       cls: 'delete' },
+    LOGIN:       { key: 'LOGIN',       label: 'تسجيل دخول',  icon: 'log-in',        cls: 'login' },
+    LOGOUT:      { key: 'LOGOUT',      label: 'خروج',        icon: 'log-out',       cls: 'login' },
+    APPROVE:     { key: 'APPROVE',     label: 'اعتماد',      icon: 'check-circle-2',cls: 'approve' },
+    REJECT:      { key: 'REJECT',      label: 'رفض',         icon: 'x-circle',      cls: 'reject' },
+    SHIFT_CLOSE: { key: 'SHIFT_CLOSE', label: 'إغلاق وردية', icon: 'lock',          cls: 'shift' },
+    VIEW:        { key: 'VIEW',        label: 'عرض',         icon: 'eye',           cls: 'update' },
+    EXPORT:      { key: 'EXPORT',      label: 'تصدير',       icon: 'download',      cls: 'update' },
+    IMPORT:      { key: 'IMPORT',      label: 'استيراد',     icon: 'upload',        cls: 'update' },
+    RETURN:      { key: 'RETURN',      label: 'مرتجع',       icon: 'rotate-ccw',    cls: 'update' },
+    BUYBACK:     { key: 'BUYBACK',     label: 'شراء كسر',    icon: 'recycle',       cls: 'update' },
+    SCAN:        { key: 'SCAN',        label: 'مسح صنف',     icon: 'scan-line',     cls: 'update' },
+    SYNC:        { key: 'SYNC',        label: 'مزامنة',      icon: 'refresh-cw',    cls: 'update' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §38 · دوال مساعدة للتكوين (CONFIG HELPERS)
+     §38 · دوال مساعدة للتكوين
      ═════════════════════════════════════════════════════════════════════ */
 
   GMS.karatIndex = function (karat) {
@@ -1361,10 +918,7 @@
 
   GMS.getStatus = function (statusKey) {
     return GMS.ITEM_STATUS[statusKey] || {
-      key: statusKey,
-      label: statusKey,
-      cls: 'pill-gray',
-      icon: 'circle',
+      key: statusKey, label: statusKey, cls: 'pill-gray', icon: 'circle',
     };
   };
 
@@ -1374,9 +928,7 @@
 
   GMS.getPaymentMethod = function (methodKey) {
     return GMS.PAYMENT_METHODS[methodKey] || {
-      key: methodKey,
-      label: methodKey,
-      icon: 'wallet',
+      key: methodKey, label: methodKey, icon: 'wallet',
     };
   };
 
@@ -1396,35 +948,14 @@
     return Object.keys(GMS.ITEM_STATUS).includes(statusKey);
   };
 
-  /* ─── ✅ دوال مساعدة للمصانع ───────────────────────────────────── */
-
-  /**
-   * قراءة نمط التسعير
-   * @param {string} modeKey
-   * @returns {Object}
-   */
   GMS.getPricingMode = function (modeKey) {
     return GMS.PRICING_MODES[modeKey] || GMS.PRICING_MODES.fixed;
   };
 
-  /**
-   * قراءة لون من قائمة الألوان
-   * @param {string} colorKey
-   * @returns {Object|null}
-   */
   GMS.getPricingColor = function (colorKey) {
     return GMS.PRICING_COLORS.find(c => c.key === colorKey) || null;
   };
 
-  /**
-   * حساب المصنعية تلقائياً من مصنع + مدخلات
-   * @param {Object} manufacturer
-   * @param {Object} context
-   * @param {string} [context.letter]
-   * @param {string} [context.color]
-   * @param {string} [context.category]
-   * @returns {number} — 0 إذا لم يمكن الحساب
-   */
   GMS.resolveManufacturerRate = function (manufacturer, context = {}) {
     if (!manufacturer) return 0;
 
@@ -1432,27 +963,21 @@
       case 'letters': {
         const letter = context.letter || '';
         if (!letter) return Number(manufacturer.purchaseRate || 0);
-        const entry = (manufacturer.letterRates || [])
-          .find(l => l.letter === letter);
+        const entry = (manufacturer.letterRates || []).find(l => l.letter === letter);
         return entry ? Number(entry.rate || 0) : Number(manufacturer.purchaseRate || 0);
       }
-
       case 'colors': {
         const color = context.color || '';
         if (!color) return Number(manufacturer.purchaseRate || 0);
-        const entry = (manufacturer.colorRates || [])
-          .find(c => c.color === color);
+        const entry = (manufacturer.colorRates || []).find(c => c.color === color);
         return entry ? Number(entry.rate || 0) : Number(manufacturer.purchaseRate || 0);
       }
-
       case 'items': {
         const category = context.category || '';
         if (!category) return Number(manufacturer.purchaseRate || 0);
-        const entry = (manufacturer.itemRates || [])
-          .find(i => i.category === category);
+        const entry = (manufacturer.itemRates || []).find(i => i.category === category);
         return entry ? Number(entry.rate || 0) : Number(manufacturer.purchaseRate || 0);
       }
-
       case 'fixed':
       default:
         return Number(manufacturer.fixedRate || manufacturer.purchaseRate || 0);
@@ -1476,12 +1001,12 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §40 · أنماط التحقق (VALIDATION PATTERNS)
+     §40 · أنماط التحقق (VALIDATION PATTERNS) — ✅ 3 عيارات
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PATTERNS = Object.freeze({
     EMAIL: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
     PHONE_EG: /^01[0125]\d{8}$/,
-    SKU: /^[A-Z0-9]{1,4}(18|21|22|24|14)?-\d{6}-\d{3,5}$/i,
+    SKU: /^[A-Z0-9]{1,4}(18|21|24)?-\d{6}-\d{3,5}(-\d{3})?$/i,
     INVOICE_NO: /^[A-Z]{2,4}-\d{6,8}-\d{3,5}$/i,
     BATCH_NO: /^(MB|PL|BB|SR|RT)-[A-Z0-9-]+$/i,
     CURRENCY: /^\d+(\.\d{1,2})?$/,
@@ -1494,17 +1019,17 @@
      ═════════════════════════════════════════════════════════════════════ */
   GMS.VERSION_INFO = Object.freeze({
     APP_VERSION: '1.0.0',
-    BUILD_NUMBER: '20260918',
-    BUILD_DATE: '2026-09-18',
+    BUILD_NUMBER: '20260921',
+    BUILD_DATE: '2026-09-21',
     ENVIRONMENT: 'production',
     AUTHOR: 'Gold MS Team',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §42 · Supabase Credentials (افتراضي — يُستبدَل من الإعدادات)
+     §42 · Supabase Credentials
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SUPABASE_CREDENTIALS = Object.freeze({
-    URL:      '',
+    URL: '',
     ANON_KEY: '',
   });
 
@@ -1523,9 +1048,8 @@
   );
 
   console.log(
-    `%c🎯 ${GMS.KARAT_ORDER.length} carats · ${GMS.ROLE_KEYS.length} roles · ` +
-    `${Object.keys(GMS.PERM_LABELS).length} permissions · ` +
-    `${GMS.CATEGORIES.length} categories`,
+    `%c🎯 ${GMS.KARAT_ORDER.length} carats (24K/21K/18K) · ${GMS.ROLE_KEYS.length} roles · ` +
+    `${Object.keys(GMS.PERM_LABELS).length} permissions · ${GMS.CATEGORIES.length} categories`,
     'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
