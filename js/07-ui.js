@@ -600,10 +600,11 @@
       };
 
       /* زر الإغلاق */
-      const closeBtn = overlay.querySelector('[data-modal-close]');
-      if (closeBtn) {
-        closeBtn.onclick = () => close();
-      }
+       overlay.querySelectorAll('[data-close]').forEach(btn => {
+        if (!btn.onclick) {
+          btn.onclick = () => close();
+        }
+      });
 
       /* النقر على الخلفية */
       if (backdropClose) {
