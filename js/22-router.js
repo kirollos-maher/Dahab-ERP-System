@@ -11,6 +11,7 @@
      - Browser back/forward
      - Route guards
      - ✅ Form Interaction Tracker (يحمي النماذج والفلاتر أثناء التفاعل)
+     - ✅ NEW: Accounting route مضافة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -132,6 +133,18 @@
       hidden: false,
     },
 
+    /* ✅ NEW: Accounting — المحاسبة والمالية */
+    accounting: {
+      id: 'accounting',
+      label: 'المحاسبة والمالية',
+      subtitle: 'دفتر اليومية المزدوج — نقد + ذهب',
+      icon: 'book-open',
+      view: 'accounting',
+      permission: 'viewProfitReport',
+      roles: null,
+      hidden: false,
+    },
+
     queue: {
       id: 'queue',
       label: 'المزامنة',
@@ -155,7 +168,7 @@
     },
   };
 
-  /* ترتيب التبويبات في الواجهة */
+  /* ✅ NEW: ترتيب التبويبات في الواجهة — مع إضافة accounting */
   const TAB_ORDER = [
     'dashboard',
     'pos',
@@ -166,6 +179,7 @@
     'loss',
     'repair',
     'audit',
+    'accounting',   // ✅ NEW
     'queue',
     'settings',
   ];
@@ -1171,6 +1185,11 @@
 
   console.log(
     `%c🛡️  Form-aware: rerender يُؤجَّل عند الكتابة في حقول أو فتح Modal`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c💰 Accounting route added · view: "accounting" · tab position: 10`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
