@@ -8,31 +8,22 @@
 
   const GMS = window.GMS = window.GMS || {};
 
-  /* مدة القفل بعد آخر تفاعل */
-  const LOCK_MS = 5000;
+  /* ✅ مدة القفل — 15 ثانية عشان تغطي الـ dropdowns */
+  const LOCK_MS = 15000;
 
   window.GMS._lastInteraction = 0;
   window.GMS._lastFormInteraction = 0;
 
-  /**
-   * تسجيل تفاعل
-   */
   function markInteraction(isForm = false) {
     const now = Date.now();
     window.GMS._lastInteraction = now;
     if (isForm) window.GMS._lastFormInteraction = now;
   }
 
-  /**
-   * هل النظام في قفل تفاعل؟
-   */
   function isLocked() {
     return (Date.now() - window.GMS._lastInteraction) < LOCK_MS;
   }
 
-  /**
-   * هل المستخدم يكتب في حقل الآن؟
-   */
   function isTypingNow() {
     const el = document.activeElement;
     if (!el) return false;
@@ -43,6 +34,34 @@
       tag === 'TEXTAREA' ||
       el.isContentEditable === true
     );
+  }
+
+  /* ✅ فحص وجود dropdown مفتوح */
+  function hasOpenDropdown() {
+    try {
+      /* select في focus */
+      const active = document.activeElement;
+      if (active && active.tagName === 'SELECT') return true;
+
+      /* أي select أو input له list مفتوح */
+      if (active && active.tagName === 'INPUT' && active.getAttribute('list')) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /* ✅ فحص وجود modal مفتوح */
+  function hasOpenModal() {
+    try {
+      if (GMS.Modal && typeof GMS.Modal.count === 'function') {
+        return GMS.Modal.count() > 0;
+      }
+      /* fallback */
+      return document.querySelectorAll('.overlay').length > 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   /* ─── مراقبة كل التفاعلات على مستوى document (capture) ─── */
@@ -77,25 +96,46 @@
     );
   });
 
-  /* ─── API عامة ─── */
+  /* ✅ راقب فتح/إغلاق modals لتحديث القفل */
+  const observer = new MutationObserver(() => {
+    /* أي mutation في DOM تعني تفاعل */
+    markInteraction(false);
+  });
+
+  if (document.body) {
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: false,
+    });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    });
+  }
+
   GMS.InteractionGuard = {
     isLocked,
     isTypingNow,
+    hasOpenDropdown,
+    hasOpenModal,
     markInteraction,
     lockMs: LOCK_MS,
 
     /**
-     * فحص شامل — يُستخدم من Router
+     * فحص شامل
      */
     shouldBlock() {
+      if (hasOpenModal()) return true;
       if (isTypingNow()) return true;
+      if (hasOpenDropdown()) return true;
       if (isLocked()) return true;
       return false;
     },
 
-    /**
-     * فك القفل يدويًا (للاختبار)
-     */
     release() {
       window.GMS._lastInteraction = 0;
       window.GMS._lastFormInteraction = 0;
@@ -103,7 +143,7 @@
   };
 
   console.log(
-    '%c🛡️  Interaction Guard loaded · Rerender blocked for ' + LOCK_MS + 'ms after any interaction',
+    '%c🛡️  Interaction Guard loaded · Lock: ' + LOCK_MS + 'ms',
     'color:#b3261e;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#fdecea;border-radius:4px;'
   );
