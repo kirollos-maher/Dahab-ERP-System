@@ -53,6 +53,282 @@
 <link rel="stylesheet" href="style.css" />
 
 <!-- ═══════════════════════════════════════════════════════════════
+     ✅ INTERACTION GUARD (Inline) — يمنع سرقة الـ focus و Rerender
+     ─────────────────────────────────────────────────────────────────
+     ⚠️ مهم جداً: يُنفَّذ قبل أي موديول آخر
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+  (function(){
+    'use strict';
+
+    /* ─── الإعدادات ─── */
+    var LOCK_MS = 15000;               /* قفل بعد أي تفاعل */
+    var SELECT_LOCK_MS = 60000;        /* قفل أثناء فتح select */
+    var SELECT_GRACE_MS = 2000;        /* فترة سماح بعد اختيار */
+    var FOCUS_LOCK_MS = 800;           /* منع سرقة focus لمدة 800ms */
+
+    window.GMS = window.GMS || {};
+    window.GMS._lastInteraction = 0;
+    window.GMS._lastFormInteraction = 0;
+
+    /* ─── حالة داخلية ─── */
+    var _selectOpenUntil = 0;
+    var _focusLockUntil = 0;
+    var _lastClickedField = null;
+    var _lastClickedFieldAt = 0;
+
+    /* ═══════════════════════════════════════════════════════════
+       §1 · HELPERS
+       ═══════════════════════════════════════════════════════════ */
+
+    function markInteraction(isForm) {
+      var now = Date.now();
+      window.GMS._lastInteraction = now;
+      if (isForm) window.GMS._lastFormInteraction = now;
+    }
+
+    function isLocked() {
+      return (Date.now() - window.GMS._lastInteraction) < LOCK_MS;
+    }
+
+    function isTypingNow() {
+      var el = document.activeElement;
+      if (!el) return false;
+      var tag = el.tagName;
+      return (
+        tag === 'INPUT' ||
+        tag === 'SELECT' ||
+        tag === 'TEXTAREA' ||
+        el.isContentEditable === true
+      );
+    }
+
+    function hasOpenModal() {
+      try {
+        if (window.GMS.Modal && typeof window.GMS.Modal.count === 'function') {
+          return window.GMS.Modal.count() > 0;
+        }
+        return document.querySelectorAll('.overlay').length > 0;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function isSelectOpen() {
+      if (Date.now() < _selectOpenUntil) return true;
+      var active = document.activeElement;
+      if (active && active.tagName === 'SELECT') return true;
+      return false;
+    }
+
+    function isFocusLocked() {
+      return Date.now() < _focusLockUntil;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       §2 · SELECT GUARD — حماية القوائم المنسدلة
+       ═══════════════════════════════════════════════════════════ */
+
+    document.addEventListener('pointerdown', function(e) {
+      var t = e.target;
+      if (!t) return;
+      if (t.tagName === 'SELECT') {
+        _selectOpenUntil = Date.now() + SELECT_LOCK_MS;
+      }
+    }, true);
+
+    document.addEventListener('focusin', function(e) {
+      var t = e.target;
+      if (!t) return;
+      if (t.tagName === 'SELECT') {
+        _selectOpenUntil = Date.now() + SELECT_LOCK_MS;
+      }
+    }, true);
+
+    document.addEventListener('change', function(e) {
+      var t = e.target;
+      if (t && t.tagName === 'SELECT') {
+        _selectOpenUntil = Math.max(_selectOpenUntil, Date.now() + SELECT_GRACE_MS);
+      }
+    }, true);
+
+    document.addEventListener('blur', function(e) {
+      var t = e.target;
+      if (t && t.tagName === 'SELECT') {
+        _selectOpenUntil = Math.max(_selectOpenUntil, Date.now() + 500);
+      }
+    }, true);
+
+    /* ═══════════════════════════════════════════════════════════
+       §3 · FOCUS GUARD — منع سرقة الـ focus
+       ═══════════════════════════════════════════════════════════ */
+
+    document.addEventListener('pointerdown', function(e) {
+      var t = e.target;
+      if (!t) return;
+      var isField = (
+        t.tagName === 'INPUT' ||
+        t.tagName === 'TEXTAREA' ||
+        t.tagName === 'SELECT' ||
+        t.isContentEditable === true
+      );
+      if (isField) {
+        _lastClickedField = t;
+        _lastClickedFieldAt = Date.now();
+        _focusLockUntil = Date.now() + FOCUS_LOCK_MS;
+      }
+    }, true);
+
+    /* ✅ اعتراض على HTMLElement.prototype.focus */
+    if (typeof HTMLElement !== 'undefined' && HTMLElement.prototype) {
+      var originalFocus = HTMLElement.prototype.focus;
+
+      HTMLElement.prototype.focus = function(options) {
+        var now = Date.now();
+        var timeSinceClick = now - _lastClickedFieldAt;
+        var active = document.activeElement;
+
+        /* ✅ فحص 1: المستخدم لسه ضغط على حقل آخر */
+        if (timeSinceClick < FOCUS_LOCK_MS &&
+            _lastClickedField &&
+            _lastClickedField !== this &&
+            active &&
+            active !== this &&
+            active !== document.body &&
+            active !== document.documentElement &&
+            (active.tagName === 'INPUT' ||
+             active.tagName === 'TEXTAREA' ||
+             active.tagName === 'SELECT' ||
+             active.isContentEditable === true)) {
+          try {
+            console.log(
+              '%c🛡️ Focus BLOCKED on',
+              'color:#b3261e;font-weight:800;',
+              this.id || this.className || this.tagName,
+              '— user on',
+              active.id || active.className || active.tagName
+            );
+          } catch (_) {}
+          return;
+        }
+
+        /* ✅ فحص 2: فيه select مفتوح الآن */
+        if (isSelectOpen() && this.tagName !== 'SELECT') {
+          try {
+            console.log(
+              '%c🛡️ Focus BLOCKED (select open) on',
+              'color:#b3261e;font-weight:800;',
+              this.id || this.className || this.tagName
+            );
+          } catch (_) {}
+          return;
+        }
+
+        /* ✅ اسمح بالـ focus */
+        try {
+          return originalFocus.call(this, options);
+        } catch (err) {
+          return originalFocus.call(this);
+        }
+      };
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       §4 · INTERACTION TRACKING
+       ═══════════════════════════════════════════════════════════ */
+
+    var interactionEvents = [
+      'pointerdown',
+      'mousedown',
+      'touchstart',
+      'focusin',
+      'keydown',
+      'input',
+      'change',
+      'click',
+    ];
+
+    interactionEvents.forEach(function(evt) {
+      document.addEventListener(evt, function(e) {
+        var t = e.target;
+        if (!t) return markInteraction(false);
+
+        var tag = t.tagName;
+        var isForm = (
+          tag === 'INPUT' ||
+          tag === 'SELECT' ||
+          tag === 'TEXTAREA' ||
+          t.isContentEditable === true
+        );
+
+        markInteraction(isForm);
+      }, true);
+    });
+
+    /* ═══════════════════════════════════════════════════════════
+       §5 · PUBLIC API
+       ═══════════════════════════════════════════════════════════ */
+
+    window.GMS.InteractionGuard = {
+      isLocked: isLocked,
+      isTypingNow: isTypingNow,
+      hasOpenModal: hasOpenModal,
+      isSelectOpen: isSelectOpen,
+      isFocusLocked: isFocusLocked,
+      markInteraction: markInteraction,
+      lockMs: LOCK_MS,
+      selectLockMs: SELECT_LOCK_MS,
+      focusLockMs: FOCUS_LOCK_MS,
+
+      shouldBlock: function() {
+        if (hasOpenModal()) return true;
+        if (isSelectOpen()) return true;
+        if (isTypingNow()) return true;
+        if (isLocked()) return true;
+        return false;
+      },
+
+      release: function() {
+        window.GMS._lastInteraction = 0;
+        window.GMS._lastFormInteraction = 0;
+        _selectOpenUntil = 0;
+        _focusLockUntil = 0;
+        _lastClickedField = null;
+        _lastClickedFieldAt = 0;
+      },
+
+      getState: function() {
+        return {
+          locked: isLocked(),
+          typing: isTypingNow(),
+          selectOpen: isSelectOpen(),
+          focusLocked: isFocusLocked(),
+          modalOpen: hasOpenModal(),
+          lastClickedField: _lastClickedField
+            ? (_lastClickedField.id || _lastClickedField.className || _lastClickedField.tagName)
+            : null,
+          lockRemainingMs: Math.max(0, LOCK_MS - (Date.now() - window.GMS._lastInteraction)),
+          selectLockRemainingMs: Math.max(0, _selectOpenUntil - Date.now()),
+          focusLockRemainingMs: Math.max(0, _focusLockUntil - Date.now()),
+        };
+      },
+    };
+
+    console.log(
+      '%c🛡️  Interaction Guard loaded (inline)',
+      'color:#b3261e;font-weight:900;font-size:13px;padding:2px 6px;' +
+      'background:#fdecea;border-radius:4px;'
+    );
+
+    console.log(
+      '%c🔒 Lock: ' + LOCK_MS + 'ms · Select: ' + SELECT_LOCK_MS + 'ms · ' +
+      'Focus: ' + FOCUS_LOCK_MS + 'ms · Focus override: ACTIVE',
+      'color:#6b7a95;font-weight:700;font-size:11px;'
+    );
+  })();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
      CDN LIBRARIES
      ═══════════════════════════════════════════════════════════════ -->
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
