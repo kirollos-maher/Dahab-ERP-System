@@ -724,8 +724,15 @@
 
   /**
    * إعادة تحميل الصفحة الحالية
+   * ✅ بتحترم نفس حماية shouldSkipRerender — لو المستخدم فاتح select
+   * أو حقل، بتأجل التنفيذ بدل ما تمسح الصفحة تحت إيده
    */
   function reload() {
+    if (shouldSkipRerender()) {
+      console.log('[Router] ⛔ reload() blocked — user interacting, retrying shortly');
+      setTimeout(reload, 400);
+      return;
+    }
     return go(RState.current, { force: true });
   }
 
