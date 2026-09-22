@@ -713,6 +713,7 @@
      §8 · SCANNER INPUT
      ─────────────────────────────────────────────────────────────────────
      مستمع keydown عام لاستقبال مدخلات قارئ الباركود
+     ✅ مُصلَح: bind/unbind يربطان this بشكل صحيح
      ═════════════════════════════════════════════════════════════════════ */
   const Scanner = {
 
@@ -722,6 +723,7 @@
     _resetTimer: null,
     _bound: false,
     _handler: null,
+    _boundHandler: null,   /* ✅ مرجع للدالة المربوطة */
 
     /* إعدادات */
     TIMEOUT_MS: 180,
@@ -738,7 +740,10 @@
       this._handler = onScan;
       this._bound = true;
 
-      document.addEventListener('keydown', this._onKey, true);
+      /* ✅ اربط الـ this يدويًا */
+      this._boundHandler = this._onKey.bind(this);
+
+      document.addEventListener('keydown', this._boundHandler, true);
 
       console.log('[Scanner] Global listener bound');
     },
@@ -747,8 +752,9 @@
      * إلغاء التفعيل
      */
     unbind() {
-      if (this._handler) {
-        document.removeEventListener('keydown', this._onKey, true);
+      if (this._boundHandler) {
+        document.removeEventListener('keydown', this._boundHandler, true);
+        this._boundHandler = null;
       }
       this._bound = false;
       this._handler = null;
