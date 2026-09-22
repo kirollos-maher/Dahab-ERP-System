@@ -53,16 +53,6 @@
 <link rel="stylesheet" href="style.css" />
 
 <!-- ═══════════════════════════════════════════════════════════════
-     ✅ INTERACTION GUARD — تمت إزالتها (كانت مكررة/متصادمة)
-     ─────────────────────────────────────────────────────────────────
-     كانت هنا نسخة تعمل override لـ HTMLElement.prototype.focus بالكامل،
-     بتتصادم مع نفس المنطق الموجود في js/22-router.js (shouldSkipRerender)
-     وده اللي كان بيقفل القوائم فجأة ويعلّق التركيز على حقل واحد.
-     الحماية الوحيدة المطلوبة أصلاً موجودة ومضبوطة في الراوتر
-     (بيأجل أي rerender طول ما فيه تفاعل — من غير ما يلمس focus() نهائي).
-     ═══════════════════════════════════════════════════════════════ -->
-
-<!-- ═══════════════════════════════════════════════════════════════
      CDN LIBRARIES
      ═══════════════════════════════════════════════════════════════ -->
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -109,6 +99,9 @@
 <script defer src="js/20-views-queue.js"></script>
 <script defer src="js/21-views-settings.js"></script>
 <script defer src="js/24-views-repair.js"></script>
+
+<!-- ✅ NEW: Accounting View — المحاسبة والمالية -->
+<script defer src="js/26-views-accounting.js"></script>
 
 <!-- Router & Boot -->
 <script defer src="js/22-router.js"></script>
@@ -276,6 +269,12 @@
     <button class="tab" data-tab="audit" type="button">
       <i data-lucide="scroll-text"></i>
       <span data-i18n="nav.audit">سجل الحركات</span>
+    </button>
+
+    <!-- ✅ NEW: Accounting Tab — المحاسبة والمالية -->
+    <button class="tab" data-tab="accounting" type="button">
+      <i data-lucide="book-open"></i>
+      <span data-i18n="nav.accounting">المحاسبة</span>
     </button>
 
     <button class="tab" data-tab="queue" type="button">
