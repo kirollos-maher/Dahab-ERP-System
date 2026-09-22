@@ -149,6 +149,33 @@ html[lang="en"]{
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   §3.5 · ✅ MOBILE OVERFLOW FIX — منع تمدد الصفحة أفقيّاً
+   ─────────────────────────────────────────────────────────────────────
+   ⚠️ ضروري جداً على الموبايل — يمنع الصفحة من الخروج بره الشاشة
+   ═══════════════════════════════════════════════════════════════════════ */
+html,
+body{
+  overflow-x:hidden;
+  max-width:100%;
+  width:100%;
+}
+
+#app{
+  max-width:100vw;
+  width:100%;
+  overflow-x:hidden;
+}
+
+/* ✅ Flex items لازم يكون عندها min-width:0
+   عشان overflow-x:auto يشتغل صح داخل flex column */
+#app > .topbar,
+#app > .tabs-bar,
+#app > .page{
+  min-width:0;
+  max-width:100%;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    §4 · BASE RESET
    ═══════════════════════════════════════════════════════════════════════ */
 *,
@@ -4184,6 +4211,137 @@ html[dir="ltr"] .field select{
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   §48.5 · ✅ MOBILE COMPACT MODE — Topbar مختصر على الموبايل
+   ─────────────────────────────────────────────────────────────────────
+   يحل مشكلة العرض الأفقي على الهاتف — يخفي العناصر الثانوية
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (max-width: 640px){
+  /* ─── TOPBAR: تبسيط على الموبايل ─── */
+  .topbar{
+    gap:6px;
+    padding-inline:10px;
+    justify-content:flex-start;
+  }
+
+  /* اخفِ اسم التطبيق — logo بس */
+  .brand-txt{
+    display:none;
+  }
+
+  /* اخفِ كلمة "متصل" — نقطة الحالة بس */
+  .net-pill span:last-child{
+    display:none;
+  }
+
+  .net-pill{
+    padding:6px 9px;
+    gap:0;
+  }
+
+  /* اخفِ الدور (موجود في صفحة الإعدادات) */
+  .role-badge{
+    display:none;
+  }
+
+  /* اخفِ أزرار sync و cache — موجودة في الصفحات */
+  #cache-btn,
+  #sync-btn{
+    display:none;
+  }
+
+  /* اخفِ نص زر اللغة — علم بس */
+  .lang-btn span{
+    display:none;
+  }
+
+  .lang-btn{
+    padding:6px 9px;
+  }
+
+  /* أحجام أيقونات أصغر */
+  .icon-btn{
+    width:34px;
+    height:34px;
+  }
+
+  .icon-btn svg{
+    width:14px;
+    height:14px;
+  }
+
+  .brand-logo{
+    width:34px;
+    height:34px;
+    font-size:15px;
+  }
+
+  /* ─── PAGE: padding أصغر ─── */
+  .page{
+    padding:12px;
+  }
+
+  /* ─── KPIs: عمود واحد لراحة القراءة ─── */
+  .kpi-row,
+  .kpi-row.cols-3,
+  .kpi-row.cols-4,
+  .kpi-row.cols-5{
+    grid-template-columns:1fr !important;
+    gap:10px;
+  }
+
+  /* ─── Charts: ارتفاع مناسب ─── */
+  .chart-wrap,
+  .chart-wrap.chart-tall{
+    height:240px;
+  }
+
+  .chart-wrap.chart-short{
+    height:180px;
+  }
+
+  /* ─── Workspace: عمود واحد ─── */
+  .workspace{
+    grid-template-columns:1fr;
+  }
+
+  /* ─── Charts row: عمود واحد ─── */
+  .charts-row{
+    grid-template-columns:1fr;
+  }
+
+  /* ─── Statement summary ─── */
+  .stmt-summary{
+    grid-template-columns:repeat(2,1fr);
+  }
+
+  /* ─── Grid forms ─── */
+  .grid-form,
+  .grid-form.three,
+  .grid-form.four{
+    grid-template-columns:1fr;
+  }
+
+  /* ─── Modal: full width من الموبايل ─── */
+  .modal{
+    max-width:100%;
+    border-radius:14px;
+  }
+
+  /* ─── Tabs: تصغير ─── */
+  .tab{
+    padding:11px 13px;
+    font-size:11px;
+  }
+
+  .tab span:not(.tab-badge){
+    max-width:120px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    §49 · MOTION PREFERENCES
    ═══════════════════════════════════════════════════════════════════════ */
 @media(prefers-reduced-motion:reduce){
@@ -5072,7 +5230,6 @@ kbd{
 }
 .net-pill.online .net-dot { animation: pulseDot 2s infinite; }
 
-
 /* ═══════════════════════════════════════════════════════════════════════
    §75 · Filter Select & Inputs (توضيح الرؤية)
    ═══════════════════════════════════════════════════════════════════════ */
@@ -5191,4 +5348,147 @@ input[type="date"]:focus {
 [data-theme="dark"] .toolbar input:not([type="checkbox"]):not([type="radio"]) {
   color: var(--text);
   background-color: var(--surface-2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §76 · Filter Select Dropdown Safety
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ✅ حماية قوائم select المنسدلة من أي clip */
+.filter-select,
+.toolbar-row select {
+  position: relative;
+  z-index: 1;
+}
+
+/* ✅ الحاوية الرئيسية للفلاتر — نمنع clip غير المقصود */
+.card:has(.filter-select),
+.card:has(.toolbar-row) {
+  overflow: visible;
+}
+
+/* ✅ استثناء لمن يحتاج clip (مثل الجداول) */
+.card:has(.table-wrap) {
+  overflow: hidden;
+}
+
+/* ✅ الوضع الداكن — ألوان واضحة للفلاتر */
+[data-theme="dark"] .filter-select {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+
+[data-theme="dark"] .filter-select option {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §77 · Dark Mode — Selects, Options, Inputs, Dates
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* كل الـ selects */
+select {
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+select:focus {
+  background-color: var(--surface) !important;
+  border-color: var(--primary) !important;
+}
+
+/* خيارات القائمة المنسدلة */
+select option,
+select optgroup {
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+  font-weight: 600;
+}
+
+/* الوضع الداكن — تأكيد قوي */
+[data-theme="dark"] select,
+[data-theme="dark"] .filter-select,
+[data-theme="dark"] .pg-size {
+  background-color: #131e34 !important;
+  color: #e8eefb !important;
+  border-color: #1f2c47 !important;
+}
+
+[data-theme="dark"] select:focus {
+  background-color: #131e34 !important;
+  border-color: #d9b153 !important;
+}
+
+[data-theme="dark"] select option,
+[data-theme="dark"] select optgroup {
+  background-color: #131e34 !important;
+  color: #e8eefb !important;
+}
+
+/* Input fields في الوضع الداكن */
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+[data-theme="dark"] textarea {
+  background-color: #131e34 !important;
+  color: #e8eefb !important;
+  border-color: #1f2c47 !important;
+}
+
+[data-theme="dark"] input:focus:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+[data-theme="dark"] textarea:focus {
+  background-color: #131e34 !important;
+  border-color: #d9b153 !important;
+}
+
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: #7f8fae !important;
+  opacity: 0.7;
+}
+
+/* حقول readonly */
+[data-theme="dark"] input[readonly],
+[data-theme="dark"] input:disabled {
+  background-color: #1a2740 !important;
+  color: #8f9dba !important;
+}
+
+/* حقول التاريخ */
+[data-theme="dark"] input[type="date"] {
+  background-color: #131e34 !important;
+  color: #e8eefb !important;
+  color-scheme: dark;
+}
+
+[data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+  cursor: pointer;
+}
+
+/* Textareas */
+[data-theme="dark"] textarea {
+  background-color: #131e34 !important;
+  color: #e8eefb !important;
+}
+
+/* Toolbars & Filters */
+[data-theme="dark"] .toolbar,
+[data-theme="dark"] .toolbar-row {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+
+/* الحماية العامة — لا خلفيات بيضاء في الوضع الداكن */
+[data-theme="dark"] .card,
+[data-theme="dark"] .kpi,
+[data-theme="dark"] .modal,
+[data-theme="dark"] .overlay > * {
+  background-color: var(--surface) !important;
+}
+
+[data-theme="dark"] .card-head,
+[data-theme="dark"] .modal-head,
+[data-theme="dark"] .modal-foot {
+  background-color: var(--surface-2) !important;
 }
