@@ -186,7 +186,7 @@
 
       if (errEl) errEl.classList.add('hidden');
 
-            try {
+      try {
         const profile = await GMS.Auth.signIn(email, password);
 
         /* ✅ إخفاء شاشة تسجيل الدخول وإظهار التطبيق */
@@ -733,29 +733,37 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §10 · VISIBILITY HANDLER
+     ─────────────────────────────────────────────────────────────────────
+     ✅ مُصلَح: لا نعمل rerender على visibilitychange
+     ده كان سبب مشكلة "الريفريش" المستمر على الموبايل
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindVisibilityHandler() {
     const handler = () => {
       if (document.hidden) {
         console.log('[Boot] Tab hidden');
-      } else {
-        console.log('[Boot] Tab visible');
+        return;
+      }
 
-        if (GMS.Sync?.state?.online) {
-          setTimeout(() => {
+      console.log('[Boot] Tab visible');
+
+      /* ✅ لا نعمل rerender على visibilitychange
+         — ده كان سبب المشكلة الرئيسي على الموبايل */
+
+      /* مزامنة تفاضلية فقط (بدون rerender) */
+      if (GMS.Sync?.state?.online) {
+        setTimeout(() => {
+          if (!document.hidden && GMS.Sync?.state?.online) {
             GMS.Sync.deltaSync().catch(() => {});
-          }, 1000);
-        }
+          }
+        }, 1500);
+      }
 
-        if (GMS.Router) {
-          GMS.Router.scheduleRerender(800);
-        }
-
-        /* ✅ PWA — حدّث الـ Badge */
-        if (GMS.PWA?.updateBadge) {
-          GMS.PWA.updateBadge();
-        }
+      /* تحديث الـ Badge بس — بدون rerender */
+      if (GMS.PWA?.updateBadge) {
+        setTimeout(() => {
+          if (!document.hidden) GMS.PWA.updateBadge();
+        }, 500);
       }
     };
 
