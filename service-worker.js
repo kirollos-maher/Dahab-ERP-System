@@ -10,7 +10,7 @@
      • POST/PUT/DELETE → تُمرَّر مباشرة للسيرفر (لا تُخزَّن)
      • Background Sync → للمزامنة التلقائية عند عودة الشبكة
 
-   Version: 1.0.0
+   Version: 1.0.9
    ═══════════════════════════════════════════════════════════════════════ */
 
 'use strict';
@@ -23,8 +23,8 @@
      - الكاش القديم يُحذَف تلقائياً في activate
      - يُشعر المستخدم بوجود تحديث جديد
    ───────────────────────────────────────────────────────────────────── */
-const SW_VERSION = 'v1.0.8';
-const BUILD_DATE = '2026-09-22';
+const SW_VERSION = 'v1.0.9';        // ✅ NEW: مُحدَّث لدعم Accounting View
+const BUILD_DATE = '2026-09-23';    // ✅ NEW: تاريخ البناء
 
 const CACHE_STATIC = `gold-erp-static-${SW_VERSION}`;
 const CACHE_CDN    = `gold-erp-cdn-${SW_VERSION}`;
@@ -75,6 +75,9 @@ const PRECACHE_URLS = [
   './js/23-boot.js',
   './js/24-views-repair.js',
   './js/25-pwa.js',
+
+  /* ✅ NEW: Accounting View */
+  './js/26-views-accounting.js',
 
   /* Manifest */
   './manifest.json',
