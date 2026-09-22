@@ -1,12 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   GOLD MS ENTERPRISE — js/09-qr.js
-   نظام رموز QR وطباعة التاجات:
-     - توليد رمز QR لأي صنف
-     - معاينة حية للتاج
-     - طباعة حرارية (58mm / 80mm)
-     - طباعة جماعية (Queue + Batch)
-     - مسح ضوئي (Scanner Input)
-     - توليد payload بأشكال متعددة (compact / json / url)
+   GOLD MS ENTERPRISE — js/13-views-pos.js
+   نقطة البيع (Point of Sale):
+     - مسح باركود سريع (Hardware Scanner)
+     - بحث محلي فوري من IndexedDB
+     - سلة تسوق ديناميكية
+     - حساب لحظي للأوزان والقيم
+     - Modal إتمام البيعة (الدفع)
+     - حفظ فوري (online) أو Queue (offline)
+     - طباعة إيصال حرارية
+     - Offline-First بالكامل
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -15,1029 +17,1986 @@
   const GMS = window.GMS = window.GMS || {};
 
   /* ═════════════════════════════════════════════════════════════════════
-     §1 · QR STATE
+     §1 · POS STATE
      ═════════════════════════════════════════════════════════════════════ */
-  const QRState = {
-    /* آخر رمز تم توليده */
-    lastPayload: '',
-    lastDataURL: '',
+  const POSState = {
+    /* السلة */
+    cart: [],
 
-    /* طابور الطباعة */
-    printQueue: [],
+    /* نتائج المسح الأخيرة */
+    lastScan: null,
 
-    /* الحجم الحالي */
-    labelWidth: 58,
+    /* إعدادات */
+    config: {
+      maxCartItems: 500,
+      scanTimeout: 180,
+      beepEnabled: true,
+      autoFocusScan: true,
+      autoAddScanned: true,
+    },
 
-    /* وضع Payload */
-    payloadMode: 'compact',
+    /* إحصائيات الجلسة */
+    stats: {
+      scans: 0,
+      hits: 0,
+      misses: 0,
+      errors: 0,
+      salesCompleted: 0,
+      totalRevenue: 0,
+      totalPureWeight: 0,
+      sessionStartedAt: null,
+    },
 
-    /* العناصر المرئية في التاج */
-    showFields: {
-      price: true,
-      workmanship: true,
-      manufacturer: true,
-      date: false,
-      weight: true,
-      pureWeight: true,
-      category: true,
+    /* حالة الواجهة */
+    ui: {
+      scanFocused: false,
+      processingScan: false,
+      checkoutOpen: false,
+      _initialFocusDone: false,
     },
 
     /* مستمعو الأحداث */
-    listeners: {
-      qrGenerated: new Set(),
-      queueUpdated: new Set(),
-      tagPrinted: new Set(),
+    unsubscribers: [],
+
+    /* مؤقتات */
+    timers: {
+      scanClear: null,
+      searchDebounce: null,
     },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2 · EVENT EMITTER
+     §2 · HELPERS
      ═════════════════════════════════════════════════════════════════════ */
-  function emit(event, data) {
-    const set = QRState.listeners[event];
-    if (!set) return;
-    set.forEach(fn => {
-      try { fn(data); } catch (e) { console.error(`[QR.emit:${event}]`, e); }
+
+  /**
+   * قراءة لون CSS
+   * @param {string} name
+   * @returns {string}
+   */
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement)
+      .getPropertyValue(name).trim();
+  }
+
+  /**
+   * تحديث عنصر نصي بأمان
+   * @param {string} selector
+   * @param {string} value
+   */
+  function setText(selector, value) {
+    const el = document.querySelector(selector);
+    if (el && el.textContent !== String(value)) {
+      el.textContent = String(value);
+    }
+  }
+
+  /**
+   * حساب إجماليات السلة
+   * @returns {Object}
+   */
+  function computeCartTotals() {
+    const items = POSState.cart;
+
+    let count = 0;
+    let gross = 0;
+    let net = 0;
+    let pure = 0;
+    let gold = 0;
+    let making = 0;
+    let stone = 0;
+    let total = 0;
+
+    const price24 = getPrice24();
+
+    items.forEach(item => {
+      const qty = Number(item.qty || 1);
+
+      count += qty;
+      gross += Number(item.weight_grams || 0) * qty;
+      net += Number(item.net_weight || 0) * qty;
+      pure += Number(item.pure_weight || 0) * qty;
+      making += Number(item.workmanship_value || 0) * qty;
+      stone += Number(item.stone_value || 0) * qty;
+
+      /* قيمة الذهب محسوبة على السعر الحالي */
+      const itemGoldValue = Number(item.pure_weight || 0) * price24;
+      gold += itemGoldValue * qty;
     });
+
+    total = gold + making + stone;
+
+    return {
+      count,
+      gross: GMS.round(gross, 3),
+      net: GMS.round(net, 3),
+      pure: GMS.round(pure, 4),
+      gold: GMS.round(gold, 2),
+      making: GMS.round(making, 2),
+      stone: GMS.round(stone, 2),
+      total: GMS.round(total, 2),
+    };
   }
 
-  function on(event, fn) {
-    const set = QRState.listeners[event];
-    if (!set || typeof fn !== 'function') return () => {};
-    set.add(fn);
-    return () => set.delete(fn);
+  /**
+   * سعر 24K الحالي
+   * @returns {number}
+   */
+  function getPrice24() {
+    if (GMS.Cache) {
+      const price = GMS.Cache.getPrice();
+      if (price && price.price_24) return Number(price.price_24);
+    }
+    return GMS.APP_CONFIG.DEFAULT_PRICE_24;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · PAYLOAD BUILDER
+     §3 · SEARCH ENGINE
      ─────────────────────────────────────────────────────────────────────
-     يبني نص QR من بيانات الصنف بحسب الوضع المطلوب
+     بحث محلي فوري في IndexedDB (مع fallback على Demo)
      ═════════════════════════════════════════════════════════════════════ */
-  const Payload = {
 
-    /**
-     * بناء payload للرمز
-     * @param {Object} item
-     * @param {'compact'|'json'|'url'} [mode]
-     * @returns {string}
-     */
-    build(item, mode) {
-      if (!item) return '';
+  /**
+   * البحث عن صنف بواسطة SKU (فوري — IndexedDB)
+   * @param {string} sku
+   * @returns {Promise<Object|null>}
+   */
+  async function findBySku(sku) {
+    const key = String(sku || '').trim().toUpperCase();
+    if (!key) return null;
 
-      mode = mode || QRState.payloadMode;
+    const t0 = performance.now();
 
-      const sku = String(item.sku || '').trim();
-      const karat = Number(item.karat) || 21;
-      const net = Number(item.net_weight || 0);
-      const pure = Number(item.pure_weight || 0);
-
-      switch (mode) {
-        case 'json':
-          return this.json(item);
-
-        case 'url':
-          return this.url(item);
-
-        case 'compact':
-        default:
-          /* نص مختصر بمحددات "/" — يحافظ على Alphanumeric Mode في QRCode.js */
-          return [
-            sku || 'NA',
-            karat,
-            GMS.round(net, 3).toFixed(3),
-            GMS.round(pure, 3).toFixed(3),
-          ].join('/');
-      }
-    },
-
-    /**
-     * JSON كامل
-     * @param {Object} item
-     * @returns {string}
-     */
-    json(item) {
-      return JSON.stringify({
-        v: 1,
-        s: item.sku,
-        k: item.karat,
-        w: GMS.round(item.net_weight, 3),
-        p: GMS.round(item.pure_weight, 3),
-        c: item.category || null,
-        m: item.manufacturer_code || null,
-        d: new Date().toISOString().slice(0, 10),
-      });
-    },
-
-    /**
-     * رابط عميق للتطبيق
-     * @param {Object} item
-     * @returns {string}
-     */
-    url(item) {
-      const base = location.origin + location.pathname;
-      return `${base}#/item/${encodeURIComponent(item.sku || 'NA')}`;
-    },
-
-    /**
-     * تحليل payload وإرجاع البيانات
-     * @param {string} payload
-     * @returns {Object|null}
-     */
-    parse(payload) {
-      if (!payload) return null;
-
+    /* 1 · IndexedDB (سريع) */
+    if (GMS.IDB && GMS.IDB.isOpen) {
       try {
-        /* JSON */
-        if (payload.trim().startsWith('{')) {
-          const data = JSON.parse(payload);
+        const item = await GMS.IDB.getBySku(key);
+        if (item) {
           return {
-            sku: data.s,
-            karat: data.k,
-            net: data.w,
-            pure: data.p,
-            category: data.c,
-            manufacturer: data.m,
-            date: data.d,
-            format: 'json',
+            item,
+            source: 'idb',
+            latency: GMS.round(performance.now() - t0, 2),
           };
         }
+      } catch (e) {
+        console.warn('[POS] IDB search failed:', e);
+      }
+    }
 
-        /* URL */
-        if (payload.startsWith('http')) {
-          const match = payload.match(/#\/item\/(.+)$/);
-          return match ? { sku: decodeURIComponent(match[1]), format: 'url' } : null;
-        }
-
-        /* Compact: SKU/KARAT/NET/PURE */
-        const parts = String(payload).split('/');
-        if (parts.length >= 4) {
+    /* 2 · Demo data */
+    if (GMS.Demo) {
+      try {
+        const items = GMS.Demo.getInventory();
+        const item = items.find(
+          i => i.sku.toUpperCase() === key
+        );
+        if (item) {
           return {
-            sku: parts[0],
-            karat: Number(parts[1]),
-            net: Number(parts[2]),
-            pure: Number(parts[3]),
-            format: 'compact',
+            item,
+            source: 'demo',
+            latency: GMS.round(performance.now() - t0, 2),
           };
         }
-      } catch (_) {}
-
-      return null;
-    },
-  };
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §4 · QR RENDERER
-     ─────────────────────────────────────────────────────────────────────
-     يُستخدم QRCode.js CDN — الموجود في index.html
-     ═════════════════════════════════════════════════════════════════════ */
-  const QR = {
-
-    /**
-     * توليد رمز QR في عنصر
-     * @param {Element|string} host
-     * @param {string} payload
-     * @param {Object} [opts]
-     * @param {number} [opts.size=320]
-     * @param {'L'|'M'|'Q'|'H'} [opts.correction='M']
-     * @param {string} [opts.color='#000']
-     * @param {string} [opts.background='#fff']
-     * @returns {Promise<string>} data URL
-     */
-    async generate(host, payload, opts = {}) {
-      const target = typeof host === 'string' ? GMS.$(host) : host;
-      if (!target) {
-        console.warn('[QR] Host element not found');
-        return '';
+      } catch (e) {
+        console.warn('[POS] Demo search failed:', e);
       }
+    }
 
-      if (typeof window.QRCode === 'undefined') {
-        console.warn('[QR] QRCode.js not loaded');
-        return '';
-      }
+    return {
+      item: null,
+      source: 'miss',
+      latency: GMS.round(performance.now() - t0, 2),
+    };
+  }
 
-      const {
-        size = 320,
-        correction = 'M',
-        color = '#000000',
-        background = '#ffffff',
-      } = opts;
+  /**
+   * بحث نصي شامل (للبحث اليدوي)
+   * @param {string} query
+   * @param {number} [limit=20]
+   * @returns {Promise<Array>}
+   */
+  async function searchItems(query, limit = 20) {
+    if (!query || query.trim().length < 2) return [];
 
-      /* مسح المحتوى القديم */
-      target.innerHTML = '';
-
-      return new Promise((resolve) => {
-        try {
-          const qr = new window.QRCode(target, {
-            text: payload || 'EMPTY',
-            width: size,
-            height: size,
-            colorDark: color,
-            colorLight: background,
-            correctLevel: (window.QRCode.CorrectLevel && window.QRCode.CorrectLevel[correction])
-              || window.QRCode.CorrectLevel.M,
-          });
-
-          /* QRCode.js يرسم canvas ثم يحوّله إلى <img> */
-          setTimeout(() => {
-            /* محاولة من canvas */
-            const canvas = target.querySelector('canvas');
-            if (canvas) {
-              try {
-                const url = canvas.toDataURL('image/png');
-                QRState.lastDataURL = url;
-                QRState.lastPayload = payload;
-                emit('qrGenerated', { payload, dataURL: url });
-                return resolve(url);
-              } catch (_) {}
-            }
-
-            /* fallback: من img */
-            const img = target.querySelector('img');
-            if (img && img.src) {
-              QRState.lastDataURL = img.src;
-              QRState.lastPayload = payload;
-              emit('qrGenerated', { payload, dataURL: img.src });
-              return resolve(img.src);
-            }
-
-            resolve('');
-          }, 60);
-
-          void qr; /* استخدم المتغير */
-
-        } catch (e) {
-          console.error('[QR.generate]', e);
-          resolve('');
-        }
-      });
-    },
-
-    /**
-     * توليد رمز بصمت (بدون عرض مرئي)
-     * @param {string} payload
-     * @param {number} [size=320]
-     * @returns {Promise<string>}
-     */
-    async generateSilent(payload, size = 320) {
-      /* استخدام host مخفي */
-      let host = document.getElementById('qr-host');
-
-      if (!host) {
-        host = document.createElement('div');
-        host.id = 'qr-host';
-        host.style.cssText =
-          'position:absolute;left:-99999px;top:0;width:320px;height:320px;overflow:hidden;pointer-events:none';
-        document.body.appendChild(host);
-      }
-
-      return this.generate(host, payload, { size });
-    },
-  };
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §5 · TAG BUILDER
-     ─────────────────────────────────────────────────────────────────────
-     بناء HTML للتاج (يُستخدم في المعاينة والطباعة)
-     ═════════════════════════════════════════════════════════════════════ */
-  const Tag = {
-
-    /**
-     * بناء HTML لتاج واحد
-     * @param {Object} item
-     * @param {Object} [opts]
-     * @param {string} [opts.qrDataURL]
-     * @param {number} [opts.labelWidth=58]
-     * @param {Object} [opts.fields]
-     * @returns {string}
-     */
-    html(item, opts = {}) {
-      if (!item) return '';
-
-      const {
-        qrDataURL = QRState.lastDataURL,
-        labelWidth = QRState.labelWidth,
-        fields = QRState.showFields,
-      } = opts;
-
-      const price = Number(item.total_cost || 0);
-      const netWeight = Number(item.net_weight || 0);
-      const pureWeight = Number(item.pure_weight || 0);
-      const making = Number(item.workmanship_value || 0);
-      const karat = Number(item.karat) || 21;
-
-      return `
-        <div class="tag" data-size="${labelWidth}">
-          <div class="tag-qr">
-            ${qrDataURL ? `<img src="${qrDataURL}" alt="QR" loading="eager">` : ''}
-          </div>
-          <div class="tag-body">
-            <div class="tag-sku">${GMS.esc(item.sku || '—')}</div>
-
-            ${fields.weight !== false ? `
-              <div class="tag-line">
-                <b>${karat}K</b> · ${GMS.gramFmt(netWeight)} جم صافي
-              </div>
-            ` : ''}
-
-            ${fields.pureWeight !== false ? `
-              <div class="tag-line">
-                بندق: <b>${GMS.gramFmt(pureWeight)}</b> جم
-              </div>
-            ` : ''}
-
-            ${fields.workmanship && making > 0 ? `
-              <div class="tag-line">
-                مصنعية: <b>${GMS.moneyFmt(making)}</b> ج.م
-              </div>
-            ` : ''}
-
-            ${fields.manufacturer !== false && (item.manufacturer_name || item.manufacturer_code) ? `
-              <div class="tag-line" style="opacity:.75;font-size:10px">
-                ${GMS.esc(item.manufacturer_code || '')} — ${GMS.esc(item.manufacturer_name || '')}
-              </div>
-            ` : ''}
-
-            ${fields.date ? `
-              <div class="tag-line" style="opacity:.7;font-size:10px">
-                ${GMS.dateAr(new Date())}
-              </div>
-            ` : ''}
-
-            ${fields.price !== false && price > 0 ? `
-              <div class="tag-price">${GMS.moneyFmt(price)} ج.م</div>
-            ` : ''}
-          </div>
-        </div>
-      `;
-    },
-
-    /**
-     * بناء تاجات متعددة
-     * @param {Array<Object>} items
-     * @param {Object} [opts]
-     * @returns {string}
-     */
-    htmlBatch(items, opts = {}) {
-      if (!Array.isArray(items)) return '';
-
-      return items.map(item => this.html(item, {
-        ...opts,
-        qrDataURL: item.qrDataURL || opts.qrDataURL || QRState.lastDataURL,
-      })).join('');
-    },
-  };
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §6 · PRINTING ENGINE
-     ─────────────────────────────────────────────────────────────────────
-     طباعة حرارية 58mm / 80mm مع @page ديناميكي
-     ═════════════════════════════════════════════════════════════════════ */
-  const Printer = {
-
-    /* عنصر <style> ديناميكي لحجم الصفحة */
-    _pageStyleEl: null,
-
-    /**
-     * تهيئة عنصر @page
-     * @private
-     */
-    _ensurePageStyle() {
-      if (this._pageStyleEl) return;
-
-      let el = document.getElementById('gms-page-size-style');
-      if (!el) {
-        el = document.createElement('style');
-        el.id = 'gms-page-size-style';
-        document.head.appendChild(el);
-      }
-      this._pageStyleEl = el;
-    },
-
-    /**
-     * تطبيق عرض التاج
-     * @param {58|80} width
-     */
-    setLabelWidth(width) {
-      const w = Number(width) === 80 ? 80 : 58;
-      QRState.labelWidth = w;
-
+    /* 1 · IndexedDB */
+    if (GMS.IDB && GMS.IDB.isOpen) {
       try {
-        localStorage.setItem('gms.qr.labelWidth', String(w));
-      } catch (_) {}
+        const items = await GMS.IDB.search(query, {
+          status: 'IN_STOCK',
+          limit,
+        });
+        if (items.length) return items;
+      } catch (e) {
+        console.warn('[POS] IDB text search failed:', e);
+      }
+    }
 
-      /* تحديث CSS variable */
-      document.documentElement.style.setProperty('--label-w', w + 'mm');
-
-      /* تحديث @page ديناميكي */
-      this._ensurePageStyle();
-      this._pageStyleEl.textContent = `
-        @media print {
-          @page {
-            size: ${w}mm auto;
-            margin: 0;
-          }
-        }
-      `;
-
-      return w;
-    },
-
-    /**
-     * قراءة عرض التاج من التخزين
-     * @returns {number}
-     */
-    loadLabelWidth() {
+    /* 2 · Demo fallback */
+    if (GMS.Demo) {
       try {
-        const saved = Number(localStorage.getItem('gms.qr.labelWidth'));
-        if (saved === 58 || saved === 80) {
-          QRState.labelWidth = saved;
-          return saved;
-        }
-      } catch (_) {}
-      return 58;
-    },
-
-    /**
-     * انتظار تحميل كل الصور
-     * @param {Element} root
-     * @returns {Promise<void>}
-     * @private
-     */
-    async _waitForImages(root) {
-      const imgs = Array.from(root.querySelectorAll('img'));
-      if (!imgs.length) return;
-
-      await Promise.all(imgs.map(img => {
-        if (img.complete && img.naturalWidth) return Promise.resolve();
-
-        return new Promise(resolve => {
-          img.onload = resolve;
-          img.onerror = resolve;
-          setTimeout(resolve, 900); /* حماية قصوى */
+        return GMS.Demo.searchInventory(query, {
+          status: 'IN_STOCK',
+          limit,
         });
-      }));
-    },
-
-    /**
-     * طباعة تاجات (نواة الطباعة)
-     * @param {Array<Object>} items
-     * @param {Object} [opts]
-     * @param {number} [opts.labelWidth]
-     * @returns {Promise<boolean>}
-     */
-    async print(items, opts = {}) {
-      if (!items || !items.length) {
-        GMS.Toast.warn('لا توجد ملصقات للطباعة');
-        return false;
+      } catch (e) {
+        console.warn('[POS] Demo text search failed:', e);
       }
+    }
 
-      const { labelWidth = QRState.labelWidth } = opts;
-
-      /* 1 · جهّز كل تاج مع QR */
-      const enriched = [];
-
-      for (const item of items) {
-        let qrDataURL = item.qrDataURL || '';
-
-        if (!qrDataURL) {
-          try {
-            const payload = Payload.build(item);
-            qrDataURL = await QR.generateSilent(payload);
-          } catch (e) {
-            console.warn('[Printer] QR generation failed for', item.sku, e);
-          }
-        }
-
-        enriched.push({ ...item, qrDataURL });
-      }
-
-      /* 2 · بناء HTML */
-      const root = document.getElementById('print-root');
-      if (!root) {
-        GMS.Toast.err('خطأ في الطباعة', 'لا يوجد #print-root');
-        return false;
-      }
-
-      root.innerHTML = Tag.htmlBatch(enriched, { labelWidth });
-
-      /* 3 · انتظار الصور */
-      await this._waitForImages(root);
-
-      /* 4 · تأكد من حجم الصفحة */
-      this.setLabelWidth(labelWidth);
-
-      /* 5 · اطلب الطباعة */
-      return new Promise(resolve => {
-        requestAnimationFrame(() => {
-          setTimeout(() => {
-            try {
-              window.print();
-              emit('tagPrinted', { count: items.length });
-              resolve(true);
-            } catch (e) {
-              console.error('[Printer.print]', e);
-              resolve(false);
-            }
-          }, 80);
-        });
-      });
-    },
-
-    /**
-     * طباعة تاج واحد
-     * @param {Object} item
-     * @returns {Promise<boolean>}
-     */
-    printOne(item) {
-      return this.print([item]);
-    },
-
-    /**
-     * طباعة طابور كامل
-     * @returns {Promise<boolean>}
-     */
-    printQueue() {
-      if (!QRState.printQueue.length) {
-        GMS.Toast.warn('الطابور فارغ');
-        return Promise.resolve(false);
-      }
-      return this.print(QRState.printQueue.slice());
-    },
-
-    /**
-     * معاينة تاج في modal
-     * @param {Object} item
-     * @param {Object} [opts]
-     */
-    async preview(item, opts = {}) {
-      if (!item) return;
-
-      /* ولّد QR أولاً */
-      const payload = Payload.build(item);
-      const qrDataURL = await QR.generateSilent(payload);
-
-      const html = Tag.html(item, { ...opts, qrDataURL });
-
-      GMS.Modal.open({
-        title: `معاينة التاج — ${item.sku}`,
-        icon: 'tag',
-        size: 'sm',
-        body: `
-          <div style="display:flex;justify-content:center;padding:12px 0">
-            <div style="background:#fff;border-radius:10px;overflow:hidden;
-                        box-shadow:0 8px 24px -8px rgba(0,0,0,.3);
-                        border:1px solid var(--border);width:100%;max-width:340px">
-              ${html}
-            </div>
-          </div>
-          <div class="field" style="margin-top:14px">
-            <label>نص رمز QR</label>
-            <input readonly value="${GMS.esc(payload)}"
-                   class="mono" dir="ltr"
-                   style="font-size:11px;padding:8px 11px">
-          </div>
-        `,
-        footer: `
-          <button class="btn" data-close>إغلاق</button>
-          <button class="btn btn-ghost" data-copy-qr>
-            <i data-lucide="copy"></i> نسخ النص
-          </button>
-          <button class="btn btn-primary" data-print-one>
-            <i data-lucide="printer"></i> طباعة
-          </button>
-        `,
-        onMount(el, close) {
-          el.querySelector('[data-copy-qr]').onclick = () => {
-            GMS.copyToClipboard(payload).then(ok => {
-              if (ok) GMS.Toast.ok('تم النسخ');
-            });
-          };
-
-          el.querySelector('[data-print-one]').onclick = () => {
-            close();
-            Printer.printOne(item);
-          };
-        },
-      });
-    },
-  };
+    return [];
+  }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · PRINT QUEUE
+     §4 · CART OPERATIONS
      ═════════════════════════════════════════════════════════════════════ */
-  const Queue = {
+
+  const Cart = {
 
     /**
-     * إضافة تاج إلى الطابور
+     * إضافة صنف للسلة
      * @param {Object} item
+     * @param {number} [qty=1]
      * @returns {Object}
      */
-    add(item) {
+    add(item, qty = 1) {
       if (!item || !item.sku) {
-        GMS.Toast.warn('لا يمكن إضافة الصنف');
-        return null;
+        return { success: false, reason: 'INVALID_ITEM' };
       }
 
-      /* تجاهل التكرار */
-      if (QRState.printQueue.find(q => q.sku === item.sku)) {
-        GMS.Toast.warn('الصنف موجود في الطابور');
-        return null;
+      /* فحص حد أقصى */
+      if (POSState.cart.length >= POSState.config.maxCartItems) {
+        return { success: false, reason: 'CART_FULL' };
       }
 
+      /* فحص التكرار */
+      const existing = POSState.cart.find(i => i.sku === item.sku);
+
+      if (existing) {
+        existing.qty += qty;
+        return {
+          success: false,
+          reason: 'DUPLICATE',
+          existing,
+        };
+      }
+
+      /* فحص الحالة */
+      if (item.status && item.status !== 'IN_STOCK') {
+        return {
+          success: false,
+          reason: 'NOT_IN_STOCK',
+          status: item.status,
+        };
+      }
+
+      /* إضافة */
       const entry = {
         ...item,
-        _queueId: GMS.uid(),
-        _addedAt: Date.now(),
+        qty,
+        addedAt: Date.now(),
+        cartId: GMS.uid(),
       };
 
-      QRState.printQueue.push(entry);
-      emit('queueUpdated', { count: QRState.printQueue.length });
-      return entry;
+      POSState.cart.push(entry);
+
+      return {
+        success: true,
+        entry,
+      };
     },
 
     /**
-     * إضافة مجموعة
-     * @param {Array<Object>} items
-     * @returns {number}
-     */
-    addBatch(items) {
-      if (!Array.isArray(items)) return 0;
-
-      let added = 0;
-      items.forEach(item => {
-        if (this.add(item)) added++;
-      });
-      return added;
-    },
-
-    /**
-     * إزالة تاج
+     * إزالة صنف من السلة
      * @param {string} sku
      * @returns {boolean}
      */
     remove(sku) {
-      const idx = QRState.printQueue.findIndex(q => q.sku === sku);
+      const idx = POSState.cart.findIndex(i => i.sku === sku);
       if (idx < 0) return false;
 
-      QRState.printQueue.splice(idx, 1);
-      emit('queueUpdated', { count: QRState.printQueue.length });
+      POSState.cart.splice(idx, 1);
       return true;
     },
 
     /**
-     * تفريغ الطابور
+     * زيادة الكمية
+     * @param {string} sku
+     * @returns {boolean}
      */
-    clear() {
-      QRState.printQueue = [];
-      emit('queueUpdated', { count: 0 });
+    increment(sku) {
+      const item = POSState.cart.find(i => i.sku === sku);
+      if (!item) return false;
+
+      item.qty++;
+      return true;
     },
 
     /**
-     * قراءة الطابور
+     * تقليل الكمية (أو حذف إذا وصلت 1)
+     * @param {string} sku
+     * @returns {boolean}
+     */
+    decrement(sku) {
+      const item = POSState.cart.find(i => i.sku === sku);
+      if (!item) return false;
+
+      if (item.qty <= 1) {
+        return this.remove(sku);
+      }
+
+      item.qty--;
+      return true;
+    },
+
+    /**
+     * تفريغ السلة
+     */
+    clear() {
+      POSState.cart = [];
+    },
+
+    /**
+     * هل السلة تحتوي الصنف؟
+     * @param {string} sku
+     * @returns {boolean}
+     */
+    has(sku) {
+      return POSState.cart.some(i => i.sku === sku);
+    },
+
+    /**
+     * قراءة السلة
      * @returns {Array}
      */
     getAll() {
-      return QRState.printQueue.slice();
+      return POSState.cart.slice();
     },
 
     /**
-     * عدد العناصر
+     * عدد الأصناف
      * @returns {number}
      */
     count() {
-      return QRState.printQueue.length;
+      return POSState.cart.length;
     },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · SCANNER INPUT
-     ─────────────────────────────────────────────────────────────────────
-     مستمع keydown عام لاستقبال مدخلات قارئ الباركود
-     ✅ مُصلَح: 
-       - يتخطى أي keydown جاي من حقل إدخال
-       - يتخطى لو في Modal مفتوح
-       - يتخطى لو مش في صفحة POS
-       - لا يعمل preventDefault إلا على scan input الفعلي
-     ═════════════════════════════════════════════════════════════════════ */
-  const Scanner = {
-
-    _buffer: '',
-    _gaps: [],
-    _lastKeyAt: 0,
-    _resetTimer: null,
-    _bound: false,
-    _handler: null,
-    _boundHandler: null,
-
-    /* إعدادات */
-    TIMEOUT_MS: 180,
-    MAX_GAP_MS: 70,
-    MIN_LENGTH: 3,
-
-    /**
-     * تفعيل المستمع العام
-     * @param {Function} onScan — (code, meta) => {}
-     */
-    bind(onScan) {
-      if (this._bound) this.unbind();
-
-      this._handler = onScan;
-      this._bound = true;
-
-      this._boundHandler = this._onKey.bind(this);
-      document.addEventListener('keydown', this._boundHandler, true);
-
-      console.log('[Scanner] Global listener bound');
-    },
-
-    unbind() {
-      if (this._boundHandler) {
-        document.removeEventListener('keydown', this._boundHandler, true);
-        this._boundHandler = null;
-      }
-      this._bound = false;
-      this._handler = null;
-      this._reset();
-    },
-
-    _scannerSpeed() {
-      if (this._gaps.length < 3) return false;
-      const avg = this._gaps.reduce((a, b) => a + b, 0) / this._gaps.length;
-      return avg < this.MAX_GAP_MS;
-    },
-
-    _reset() {
-      this._buffer = '';
-      this._gaps = [];
-      clearTimeout(this._resetTimer);
-    },
-
-    _scheduleReset() {
-      clearTimeout(this._resetTimer);
-      this._resetTimer = setTimeout(() => this._reset(), this.TIMEOUT_MS);
-    },
-
-    /**
-     * ✅ معالج المفتاح — مُصلَح بالكامل
-     */
-    _onKey(e) {
-      /* ─── تجاهل المفاتيح المعدِّلة ─── */
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-
-      const t = e.target;
-
-      /* ✅ فحص 1: تجاهل تمامًا لو داخل أي حقل إدخال
-         (input / select / textarea / contentEditable)
-         هذا مهم جدًا — كان بيعمل preventDefault على Enter في الـ dropdowns */
-      if (t && (
-        t.tagName === 'INPUT' ||
-        t.tagName === 'TEXTAREA' ||
-        t.tagName === 'SELECT' ||
-        t.isContentEditable === true
-      )) {
-        /* اصفّر الـ buffer عشان مانخلطش */
-        this._reset();
-        return;
-      }
-
-      /* ✅ فحص 2: تجاهل لو في Modal مفتوح */
-      if (GMS.Modal && typeof GMS.Modal.count === 'function') {
-        if (GMS.Modal.count() > 0) return;
-      }
-
-      /* ✅ فحص 3: تجاهل لو مش في صفحة POS
-         (الـ Scanner مسؤول عن POS فقط الآن) */
-      if (GMS.Router && typeof GMS.Router.currentId === 'function') {
-        const currentRoute = GMS.Router.currentId();
-        if (currentRoute && currentRoute !== 'pos') {
-          return;
-        }
-      }
-
-      /* ✅ فحص 4: تجاهل لو في dropdown مفتوح
-         (بعض المتصفحات مش بتظهر select في activeElement) */
-      const active = document.activeElement;
-      if (active && active.tagName === 'SELECT') {
-        return;
-      }
-
-      /* ─── معالجة المفاتيح ─── */
-      const now = performance.now();
-      const gap = now - this._lastKeyAt;
-      this._lastKeyAt = now;
-
-      /* Enter / Tab = إتمام المسح */
-      if (e.key === 'Enter' || e.key === 'Tab') {
-        const code = this._buffer.trim();
-        const wasScanner = this._scannerSpeed();
-        this._reset();
-
-        if (code.length >= this.MIN_LENGTH && typeof this._handler === 'function') {
-          e.preventDefault();
-          e.stopPropagation();
-          this._handler(code, { wasScanner });
-        }
-        return;
-      }
-
-      /* Backspace */
-      if (e.key === 'Backspace') {
-        this._buffer = this._buffer.slice(0, -1);
-        this._scheduleReset();
-        return;
-      }
-
-      /* حرف قابل للطباعة */
-      if (e.key.length === 1) {
-        this._gaps.push(gap);
-        if (this._gaps.length > 25) this._gaps.shift();
-
-        this._buffer += e.key;
-
-        /* ✅ preventDefault فقط للمفاتيح القادمة من scanner حقيقي
-           (سرعات عالية) — مانأثرش على المستخدم العادي */
-        const isScannerSpeed = this._scannerSpeed();
-        if (isScannerSpeed) {
-          e.preventDefault();
-        }
-
-        this._scheduleReset();
-      }
-    },
-
-    /**
-     * محاكاة مسح (للاختبار)
-     */
-    simulate(code) {
-      if (typeof this._handler === 'function') {
-        this._handler(code, { wasScanner: true });
-      }
-    },
-  };
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §9 · FIND ITEM BY SKU
-     ─────────────────────────────────────────────────────────────────────
-     يبحث في IndexedDB عن الصنف ويعيده
-     ═════════════════════════════════════════════════════════════════════ */
-  async function findItemBySku(sku) {
-    const key = String(sku || '').trim().toUpperCase();
-    if (!key) return null;
-
-    /* 1 · IndexedDB */
-    try {
-      if (GMS.IDB) {
-        const item = await GMS.IDB.getBySku(key);
-        if (item) return item;
-      }
-    } catch (e) {
-      console.warn('[findItemBySku] IDB failed:', e);
-    }
-
-    /* 2 · Demo data */
-    try {
-      if (GMS.Demo) {
-        const found = GMS.Demo.getInventory().find(
-          i => i.sku.toUpperCase() === key
-        );
-        if (found) return found;
-      }
-    } catch (e) {
-      console.warn('[findItemBySku] Demo failed:', e);
-    }
-
-    return null;
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §10 · BATCH TAG PRINTING
-     ─────────────────────────────────────────────────────────────────────
-     توليد تاجات لعدد من الأصناف دفعة واحدة
+     §5 · HTML RENDERERS
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * طباعة تاجات لعدة أصناف
-   * @param {Object} opts
-   * @param {number} [opts.count=24]
-   * @param {string} [opts.branchId]
-   * @param {string} [opts.status='IN_STOCK']
-   * @param {number} [opts.labelWidth]
-   * @returns {Promise<number>}
+   * HTML لبطاقة نتيجة المسح
+   * @param {Object} scan
+   * @returns {string}
    */
-  async function printBatch(opts = {}) {
-    const {
-      count = 24,
-      branchId = null,
-      status = 'IN_STOCK',
-      labelWidth = QRState.labelWidth,
-    } = opts;
+  function renderScanResult(scan) {
+    if (!scan) return '';
+
+    if (!scan.item) {
+      return `
+        <div class="scan-result show err">
+          <div class="sr-head">
+            <i data-lucide="x-circle"
+               style="width:22px;height:22px;color:var(--danger)"></i>
+            <div style="flex:1;min-width:0">
+              <div class="sr-title">${GMS.t('pos.itemNotFound')}</div>
+              <div class="sr-sub">${GMS.esc(scan.sku || '')}</div>
+            </div>
+            <span class="sr-latency">${scan.latency} ms</span>
+          </div>
+        </div>
+      `;
+    }
+
+    const item = scan.item;
+
+    return `
+      <div class="scan-result show ok">
+        <div class="sr-head">
+          <i data-lucide="check-circle-2"
+             style="width:22px;height:22px;color:var(--success)"></i>
+          <div style="flex:1;min-width:0">
+            <div class="sr-title">${GMS.t('pos.itemFound')}</div>
+            <div class="sr-sub">
+              ${GMS.esc(item.category || '—')} · ${GMS.esc(item.manufacturer_name || '—')}
+            </div>
+          </div>
+          <span class="sr-latency">${scan.latency} ms</span>
+        </div>
+
+        <div class="sr-meta">
+          <span>SKU: <b class="mono">${GMS.esc(item.sku)}</b></span>
+          <span>العيار: <b>${item.karat}K</b></span>
+          <span>صافي: <b class="mono">${GMS.gramFmt(item.net_weight)} جم</b></span>
+          <span>بندق: <b class="mono">${GMS.gramFmt(item.pure_weight)} جم</b></span>
+          <span>الإجمالي: <b class="mono">${GMS.moneyFmt(item.total_cost)} ج.م</b></span>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * HTML لسطر في السلة
+   * @param {Object} item
+   * @param {number} idx
+   * @returns {string}
+   */
+  function renderCartRow(item, idx) {
+    const price24 = getPrice24();
+    const itemGoldValue = Number(item.pure_weight || 0) * price24;
+    const lineTotal = (itemGoldValue + Number(item.workmanship_value || 0) + Number(item.stone_value || 0)) * item.qty;
+
+    return `
+      <div class="queue-item" data-cart-sku="${GMS.esc(item.sku)}">
+        <div class="qi-icon" style="background:var(--gold-soft);color:var(--warn)">
+          <i data-lucide="gem"></i>
+        </div>
+
+        <div class="qi-body">
+          <div class="qi-title mono">${GMS.esc(item.sku)}</div>
+          <div class="qi-meta">
+            <span>${item.karat}K</span>
+            <span>صافي ${GMS.gramFmt(item.net_weight)} جم</span>
+            <span>بندق ${GMS.gramFmt(item.pure_weight)} جم</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <button class="row-act" data-cart-dec="${idx}" title="تقليل"
+                    style="width:24px;height:24px;border:1px solid var(--border);
+                           border-radius:6px">
+              <i data-lucide="minus" style="width:11px;height:11px"></i>
+            </button>
+            <span class="mono" style="min-width:24px;text-align:center;
+                        font-weight:800;font-size:12.5px">
+              ${item.qty}
+            </span>
+            <button class="row-act" data-cart-inc="${idx}" title="زيادة"
+                    style="width:24px;height:24px;border:1px solid var(--border);
+                           border-radius:6px">
+              <i data-lucide="plus" style="width:11px;height:11px"></i>
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <div class="qi-amount">${GMS.moneyFmt(lineTotal)}</div>
+          <button class="qi-del" data-cart-del="${idx}" title="حذف">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * HTML لسلة فاضية
+   * @returns {string}
+   */
+  function renderEmptyCart() {
+    return `
+      <div class="empty" style="padding:60px 20px">
+        <i data-lucide="shopping-bag"></i>
+        <p>${GMS.t('pos.cartEmpty')}</p>
+        <span>${GMS.t('pos.cartEmptyHint')}</span>
+      </div>
+    `;
+  }
+
+  /**
+   * HTML لقائمة نتائج البحث النصي
+   * @param {Array} items
+   * @returns {string}
+   */
+  function renderSearchResults(items) {
+    if (!items.length) {
+      return `
+        <div class="empty" style="padding:20px">
+          <i data-lucide="search-x"></i>
+          <p>لا توجد نتائج</p>
+        </div>
+      `;
+    }
+
+    return `
+      <div style="padding:8px 0;max-height:340px;overflow-y:auto">
+        ${items.map(item => `
+          <div class="queue-item" data-search-add="${GMS.esc(item.sku)}"
+               style="cursor:pointer">
+            <div class="qi-icon" style="background:var(--gold-soft);color:var(--warn)">
+              <i data-lucide="gem"></i>
+            </div>
+            <div class="qi-body">
+              <div class="qi-title mono">${GMS.esc(item.sku)}</div>
+              <div class="qi-meta">
+                <span>${item.karat}K</span>
+                <span>${GMS.esc(item.category || '—')}</span>
+                <span>${GMS.gramFmt(item.net_weight)} جم</span>
+              </div>
+            </div>
+            <div class="qi-amount">${GMS.moneyFmt(item.total_cost)}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §6 · SCAN HANDLER
+     ─────────────────────────────────────────────────────────────────────
+     معالجة مسح واحد
+     ═════════════════════════════════════════════════════════════════════ */
+
+  async function handleScan(rawSku, meta = {}) {
+    if (POSState.ui.processingScan) return;
+
+    const sku = String(rawSku || '').trim().toUpperCase();
+    if (!sku) return;
+
+    POSState.ui.processingScan = true;
+    POSState.stats.scans++;
 
     try {
-      let items = [];
-
-      /* جرّب IndexedDB */
-      if (GMS.IDB && GMS.IDB.isOpen) {
-        const filters = {};
-        if (branchId) filters.branch_id = branchId;
-        if (status) filters.status = status;
-
-        items = await GMS.IDB.search('', { ...filters, limit: count });
+      /* تشغيل صوت */
+      if (POSState.config.beepEnabled) {
+        GMS.Beep?.info();
       }
 
-      /* fallback على Demo */
-      if (!items.length && GMS.Demo) {
-        items = GMS.Demo.getInventory().filter(i => {
-          if (branchId && i.branch_id !== branchId) return false;
-          if (status && i.status !== status) return false;
-          return true;
-        }).slice(0, count);
+      /* البحث */
+      const result = await findBySku(sku);
+
+      /* تحديث آخر مسح */
+      POSState.lastScan = {
+        sku,
+        item: result.item,
+        source: result.source,
+        latency: result.latency,
+        at: new Date().toISOString(),
+        wasScanner: meta.wasScanner || false,
+      };
+
+      /* عرض النتيجة */
+      const resultHost = document.getElementById('pos-scan-result');
+      if (resultHost) {
+        resultHost.innerHTML = renderScanResult(POSState.lastScan);
+        window.lucide?.createIcons();
       }
 
-      if (!items.length) {
-        GMS.Toast.warn('لا توجد أصناف للطباعة');
-        return 0;
+      /* لم يُعثر عليه */
+      if (!result.item) {
+        POSState.stats.misses++;
+        if (POSState.config.beepEnabled) {
+          GMS.Beep?.error();
+        }
+        return;
       }
 
-      await Printer.print(items, { labelWidth });
-      GMS.Toast.ok(`تمت طباعة ${items.length} تاج`);
-      return items.length;
+      /* موجود */
+      POSState.stats.hits++;
+
+      /* فحص الحالة */
+      if (result.item.status && result.item.status !== 'IN_STOCK') {
+        if (POSState.config.beepEnabled) {
+          GMS.Beep?.error();
+        }
+        GMS.Toast.warn(
+          GMS.t('pos.itemOutOfStock'),
+          `${sku} · الحالة: ${GMS.getStatus(result.item.status)?.label || result.item.status}`
+        );
+        return;
+      }
+
+      /* فحص التكرار */
+      if (Cart.has(sku)) {
+        if (POSState.config.beepEnabled) {
+          GMS.Beep?.warning();
+        }
+        GMS.Toast.warn(
+          GMS.t('pos.itemAlreadyAdded'),
+          sku
+        );
+        return;
+      }
+
+      /* أضف للسلة */
+      if (POSState.config.autoAddScanned) {
+        const added = Cart.add(result.item);
+
+        if (added.success) {
+          if (POSState.config.beepEnabled) {
+            GMS.Beep?.success();
+          }
+
+          /* تحديث السلة */
+          refreshCart();
+
+          /* تأثير بصري */
+          const scanHero = document.getElementById('pos-scan-hero');
+          if (scanHero) {
+            scanHero.classList.add('scanning');
+            setTimeout(() => scanHero.classList.remove('scanning'), 600);
+          }
+        }
+      }
 
     } catch (e) {
-      console.error('[printBatch]', e);
-      GMS.Toast.err('فشل الطباعة', e.message);
-      return 0;
+      POSState.stats.errors++;
+      console.error('[POS.handleScan]', e);
+      GMS.Toast.err('خطأ في المسح', e.message);
+    } finally {
+      POSState.ui.processingScan = false;
+
+      /* جدولة مسح النتيجة بعد فترة */
+      clearTimeout(POSState.timers.scanClear);
+      POSState.timers.scanClear = setTimeout(() => {
+        const resultHost = document.getElementById('pos-scan-result');
+        if (resultHost) {
+          resultHost.innerHTML = '';
+        }
+      }, 4000);
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · INITIALIZATION
-     ═════════════════════════════════════════════════════════════════════ */
-  function init() {
-    /* قراءة عرض التاج */
-    const savedWidth = Printer.loadLabelWidth();
-    Printer.setLabelWidth(savedWidth);
+     §7 · CART UI REFRESH
+     ───────────────────────────────────────────────────────────────────── */
 
-    /* انتظر حتى ينتهي تحميل QRCode.js */
-    if (typeof window.QRCode === 'undefined') {
-      console.warn('[QR] QRCode.js not yet loaded');
+  function refreshCart() {
+    const cartHost = document.getElementById('pos-cart-list');
+    if (!cartHost) return;
+
+    /* السلة فاضية */
+    if (POSState.cart.length === 0) {
+      cartHost.innerHTML = renderEmptyCart();
+    } else {
+      cartHost.innerHTML = POSState.cart.map(renderCartRow).join('');
     }
 
-    console.log('[QR] Initialized', {
-      labelWidth: savedWidth,
-      mode: QRState.payloadMode,
+    window.lucide?.createIcons();
+
+    /* ربط الأحداث */
+    bindCartControls(cartHost);
+
+    /* تحديث الإجماليات */
+    refreshTotals();
+  }
+
+  function bindCartControls(host) {
+    /* حذف */
+    host.querySelectorAll('[data-cart-del]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.dataset.cartDel);
+        const item = POSState.cart[idx];
+        if (!item) return;
+
+        Cart.remove(item.sku);
+        refreshCart();
+
+        if (POSState.config.beepEnabled) {
+          GMS.Beep?.delete();
+        }
+      };
+    });
+
+    /* زيادة */
+    host.querySelectorAll('[data-cart-inc]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.dataset.cartInc);
+        const item = POSState.cart[idx];
+        if (!item) return;
+
+        Cart.increment(item.sku);
+        refreshCart();
+      };
+    });
+
+    /* تقليل */
+    host.querySelectorAll('[data-cart-dec]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.dataset.cartDec);
+        const item = POSState.cart[idx];
+        if (!item) return;
+
+        Cart.decrement(item.sku);
+        refreshCart();
+      };
     });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · EXPORT
-     ═════════════════════════════════════════════════════════════════════ */
-  GMS.QR = {
-    /* State */
-    state: QRState,
+     §8 · TOTALS REFRESH
+     ───────────────────────────────────────────────────────────────────── */
 
-    /* Core */
-    Payload,
-    QR,
-    Tag,
-    Printer,
-    Queue,
-    Scanner,
+  function refreshTotals() {
+    const t = computeCartTotals();
 
-    /* Helpers */
-    findItemBySku,
-    printBatch,
+    /* الهيدر */
+    setText('#pos-cart-count', `${t.count} ${GMS.t('unit.piece')}`);
 
-    /* Events */
-    on,
+    /* الإجماليات */
+    setText('#pos-total-count', GMS.intFmt(t.count));
+    setText('#pos-total-net', GMS.gramFmt(t.net));
+    setText('#pos-total-pure', GMS.gramFmt(t.pure));
+    setText('#pos-total-gold', GMS.moneyFmt(t.gold));
+    setText('#pos-total-making', GMS.moneyFmt(t.making));
+    setText('#pos-total-stone', GMS.moneyFmt(t.stone));
+    setText('#pos-total-grand', GMS.moneyFmt(t.total));
 
-    /* Init */
-    init,
-  };
-
-  /* ─── Convenience aliases ─────────────────────────────────────── */
-  GMS.QRPayload = Payload;
-  GMS.QRCodeGen = QR;
-  GMS.QRTag = Tag;
-  GMS.QRPrinter = Printer;
-  GMS.QRQueue = Queue;
-  GMS.QRScanner = Scanner;
+    /* زر الدفع */
+    const checkoutBtn = document.getElementById('pos-checkout-btn');
+    if (checkoutBtn) {
+      checkoutBtn.disabled = POSState.cart.length === 0;
+      checkoutBtn.innerHTML = POSState.cart.length
+        ? `<i data-lucide="credit-card"></i>
+           ${GMS.t('pos.checkout')} · ${GMS.moneyFmt(t.total)} ج.م`
+        : `<i data-lucide="credit-card"></i> ${GMS.t('pos.checkout')}`;
+      window.lucide?.createIcons();
+    }
+  }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · LOADED CONFIRMATION
+     §9 · MAIN RENDER
+     ───────────────────────────────────────────────────────────────────── */
+
+  /**
+   * تصيير الصفحة الرئيسية
+   * @param {Element} root
+   */
+  function render(root) {
+    const online = GMS.Sync?.state?.online !== false;
+    const price24 = getPrice24();
+
+    root.innerHTML = `
+      <div class="page-header">
+        <h2>
+          <i data-lucide="scan-line"></i>
+          ${GMS.t('pos.title')}
+        </h2>
+        <p>${GMS.t('pos.subtitle')}</p>
+      </div>
+
+      <div class="workspace">
+        <!-- LEFT: scan + cart -->
+        <div>
+          <!-- Scan Hero -->
+          <div class="scan-hero" id="pos-scan-hero">
+            <div class="sh-icon">
+              <i data-lucide="scan-line"></i>
+            </div>
+            <h2>${GMS.t('pos.scanTitle')}</h2>
+            <p>${GMS.t('pos.scanHint')}</p>
+
+            <input id="pos-scan-input"
+                   placeholder="${GMS.t('pos.scanPlaceholder')}"
+                   autocomplete="off"
+                   spellcheck="false"
+                   autocapitalize="off"
+                   autocorrect="off">
+
+            <div class="scan-hint">
+              <span><kbd>Enter</kbd> بحث</span>
+              <span><kbd>Esc</kbd> مسح</span>
+              <span>
+                <span style="display:inline-block;width:6px;height:6px;
+                             border-radius:50%;margin-inline-end:5px;
+                             background:${online ? 'var(--success)' : 'var(--warn)'}"></span>
+                ${online ? 'متصل' : 'غير متصل — يعمل محلياً'}
+              </span>
+            </div>
+          </div>
+
+          <!-- Scan Result -->
+          <div id="pos-scan-result"></div>
+
+          <!-- Cart -->
+          <div class="card" style="margin-top:16px">
+            <div class="card-head">
+              <h3>
+                <i data-lucide="shopping-cart"></i>
+                ${GMS.t('pos.cart')}
+              </h3>
+              <div class="spacer" style="flex:1"></div>
+              <span class="chip ${online ? 'ok' : 'warn'}">
+                <i data-lucide="${online ? 'cloud-check' : 'cloud-off'}"
+                   style="width:12px;height:12px"></i>
+                ${online ? 'دفع فوري' : 'يُحفظ محلياً'}
+              </span>
+              <span class="card-sub" id="pos-cart-count">0 ${GMS.t('unit.piece')}</span>
+            </div>
+
+            <div class="card-body" style="padding:0" id="pos-cart-list">
+              ${renderEmptyCart()}
+            </div>
+
+            <div class="modal-foot" style="justify-content:space-between;
+                        background:var(--surface-2)">
+              <button class="btn btn-ghost" id="pos-clear-btn">
+                <i data-lucide="trash-2"></i> ${GMS.t('action.clear')}
+              </button>
+              <button class="btn btn-primary btn-lg" id="pos-checkout-btn" disabled>
+                <i data-lucide="credit-card"></i> ${GMS.t('pos.checkout')}
+              </button>
+            </div>
+          </div>
+
+          <!-- Search Fallback -->
+          <div class="card" style="margin-top:16px">
+            <div class="card-head">
+              <h3>
+                <i data-lucide="search"></i>
+                بحث يدوي
+              </h3>
+              <div class="spacer" style="flex:1"></div>
+              <span class="card-sub">بديل للباركود</span>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <input id="pos-search-input"
+                       placeholder="اكتب SKU، الماركة، أو التصنيف…"
+                       autocomplete="off">
+              </div>
+              <div id="pos-search-results" style="margin-top:12px"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: totals -->
+        <div style="position:sticky;top:calc(calc(var(--topbar-h) + var(--tabs-h)) + 22px)">
+          <div class="card">
+            <div class="card-head">
+              <h3>
+                <i data-lucide="calculator"></i>
+                الملخص اللحظي
+              </h3>
+            </div>
+            <div class="card-body">
+              <div class="calc-list">
+                <div class="cl-row">
+                  <span class="k"><i data-lucide="package"></i> عدد القطع</span>
+                  <span class="v" id="pos-total-count">0</span>
+                </div>
+                <div class="cl-row">
+                  <span class="k"><i data-lucide="scale"></i> الوزن الصافي</span>
+                  <span class="v" id="pos-total-net">0.000 جم</span>
+                </div>
+                <div class="cl-row hi">
+                  <span class="k"><i data-lucide="sparkles"></i> البندق 24K</span>
+                  <span class="v" id="pos-total-pure">0.000 جم</span>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="calc-list">
+                <div class="cl-row">
+                  <span class="k"><i data-lucide="coins"></i> قيمة الذهب</span>
+                  <span class="v" id="pos-total-gold">0.00</span>
+                </div>
+                <div class="cl-row">
+                  <span class="k"><i data-lucide="hammer"></i> المصنعية</span>
+                  <span class="v" id="pos-total-making">0.00</span>
+                </div>
+                <div class="cl-row">
+                  <span class="k"><i data-lucide="gem"></i> قيمة الأحجار</span>
+                  <span class="v" id="pos-total-stone">0.00</span>
+                </div>
+              </div>
+
+              <div style="margin-top:16px;padding:16px;border-radius:12px;
+                          background:linear-gradient(135deg,
+                            color-mix(in srgb,var(--primary) 15%,var(--surface)) 0%,
+                            color-mix(in srgb,var(--primary) 4%,var(--surface)) 100%);
+                          border:1.5px solid color-mix(in srgb,var(--primary) 45%,var(--border));
+                          position:relative;overflow:hidden">
+                <div style="position:absolute;inset-block:0;inset-inline-start:0;
+                            width:4px;background:var(--gold-grad)"></div>
+                <div style="font-size:11px;font-weight:800;color:var(--muted);
+                            text-transform:uppercase;letter-spacing:.5px">
+                  ${GMS.t('pos.totalAmount')}
+                </div>
+                <div style="font-family:var(--font-mono);font-size:28px;
+                            font-weight:900;color:var(--primary);
+                            letter-spacing:-1px;margin-top:6px;
+                            display:flex;align-items:baseline;gap:6px">
+                  <span id="pos-total-grand">0.00</span>
+                  <small style="font-size:14px;color:var(--muted)">ج.م</small>
+                </div>
+              </div>
+
+              <div style="margin-top:12px;padding:10px 14px;border-radius:9px;
+                          background:var(--surface-2);font-size:11px;
+                          font-weight:700;color:var(--muted);text-align:center">
+                <i data-lucide="info"
+                   style="width:12px;height:12px;display:inline;vertical-align:-2px"></i>
+                سعر الجرام 24K الحالي:
+                <b class="mono" style="color:var(--primary)">
+                  ${GMS.moneyFmt(price24)} ج.م
+                </b>
+              </div>
+            </div>
+          </div>
+
+          <!-- Session Stats -->
+          <div class="card">
+            <div class="card-head">
+              <h3>
+                <i data-lucide="activity"></i>
+                إحصائيات الجلسة
+              </h3>
+            </div>
+            <div class="card-body">
+              <div class="calc-list">
+                <div class="cl-row">
+                  <span class="k">عمليات المسح</span>
+                  <span class="v" id="pos-stat-scans">0</span>
+                </div>
+                <div class="cl-row">
+                  <span class="k" style="color:var(--success)">نجح</span>
+                  <span class="v" id="pos-stat-hits"
+                        style="color:var(--success)">0</span>
+                </div>
+                <div class="cl-row">
+                  <span class="k" style="color:var(--danger)">فشل</span>
+                  <span class="v" id="pos-stat-misses"
+                        style="color:var(--danger)">0</span>
+                </div>
+                <div class="cl-row">
+                  <span class="k">فواتير مكتملة</span>
+                  <span class="v" id="pos-stat-sales">0</span>
+                </div>
+                <div class="cl-row hi">
+                  <span class="k">إجمالي المبيعات</span>
+                  <span class="v" id="pos-stat-revenue">0.00 ج.م</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    window.lucide?.createIcons();
+    refreshCart();
+    refreshStats();
+    bindControls();
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10 · STATS REFRESH
+     ───────────────────────────────────────────────────────────────────── */
+
+  function refreshStats() {
+    setText('#pos-stat-scans', GMS.intFmt(POSState.stats.scans));
+    setText('#pos-stat-hits', GMS.intFmt(POSState.stats.hits));
+    setText('#pos-stat-misses', GMS.intFmt(POSState.stats.misses));
+    setText('#pos-stat-sales', GMS.intFmt(POSState.stats.salesCompleted));
+    setText('#pos-stat-revenue', GMS.moneyFmt(POSState.stats.totalRevenue) + ' ج.م');
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §11 · CONTROLS BINDING
+     ─────────────────────────────────────────────────────────────────────
+     ✅ مُصلَح:
+       - تركيز أولي لحقل المسح مرة واحدة فقط
+       - عدم إعادة focus تلقائيًا بعد أي عملية
+       - Scanner unbind (حقل onkeydown كافي)
+       - عدم preventDefault على أي keydown خارج الـ scan input
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function bindControls() {
+    /* ─── Scan input ─────────────────────────────────────────── */
+    const scanInput = document.getElementById('pos-scan-input');
+    const scanHero = document.getElementById('pos-scan-hero');
+
+    if (scanInput) {
+      /* ✅ تركيز أولي — مرة واحدة فقط عند فتح الصفحة
+         لا نكرره في أي rerender */
+      if (POSState.config.autoFocusScan && !POSState.ui._initialFocusDone) {
+        setTimeout(() => {
+          /* ✅ نتأكد إن مافيش حاجة تانية في focus */
+          const active = document.activeElement;
+          if (!active || active === document.body) {
+            try {
+              scanInput.focus({ preventScroll: true });
+            } catch (_) {
+              scanInput.focus();
+            }
+          }
+          POSState.ui._initialFocusDone = true;
+        }, 250);
+      }
+
+      /* تركيز بصري */
+      scanInput.onfocus = () => scanHero?.classList.add('focused');
+      scanInput.onblur = () => scanHero?.classList.remove('focused');
+
+      /* ✅ معالج Enter — لا نعيد focus بشكل غير مشروط */
+      scanInput.onkeydown = async (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const sku = scanInput.value.trim();
+          if (!sku) return;
+
+          await handleScan(sku, { wasScanner: true });
+          scanInput.value = '';
+
+          /* ✅ نعيد focus فقط لو المستخدم مش على حقل آخر
+             (مثلاً مفتحش search input) */
+          const active = document.activeElement;
+          if (!active || active === scanInput || active === document.body) {
+            try {
+              scanInput.focus({ preventScroll: true });
+            } catch (_) {
+              scanInput.focus();
+            }
+          }
+        } else if (e.key === 'Escape') {
+          scanInput.value = '';
+          const resultHost = document.getElementById('pos-scan-result');
+          if (resultHost) resultHost.innerHTML = '';
+        }
+      };
+    }
+
+    /* ─── ✅ Global Scanner — ألغيه تمامًا في POS
+       الـ onkeydown الخاص بالحقل كافي ─── */
+    if (GMS.QRScanner) {
+      try {
+        GMS.QRScanner.unbind();
+      } catch (_) {}
+    }
+
+    /* ─── Clear cart ────────────────────────────────────────── */
+    const clearBtn = document.getElementById('pos-clear-btn');
+    if (clearBtn) {
+      clearBtn.onclick = async () => {
+        if (!POSState.cart.length) return;
+
+        const ok = await GMS.Confirm.ask(
+          `سيتم حذف ${POSState.cart.length} صنف من السلة.`,
+          {
+            title: 'تفريغ السلة',
+            okText: 'تفريغ',
+            danger: true,
+          }
+        );
+
+        if (!ok) return;
+
+        Cart.clear();
+        refreshCart();
+
+        if (POSState.config.beepEnabled) {
+          GMS.Beep?.delete?.();
+        }
+
+        /* ✅ رجع التركيز لحقل المسح فقط لو مافيش حقل آخر نشط */
+        setTimeout(() => {
+          const si = document.getElementById('pos-scan-input');
+          const active = document.activeElement;
+          if (si && (!active || active === document.body)) {
+            try {
+              si.focus({ preventScroll: true });
+            } catch (_) {
+              si.focus();
+            }
+          }
+        }, 100);
+      };
+    }
+
+    /* ─── Checkout ──────────────────────────────────────────── */
+    const checkoutBtn = document.getElementById('pos-checkout-btn');
+    if (checkoutBtn) {
+      checkoutBtn.onclick = () => openCheckoutModal();
+    }
+
+    /* ─── Manual Search ─────────────────────────────────────── */
+    const searchInput = document.getElementById('pos-search-input');
+    if (searchInput) {
+      searchInput.oninput = GMS.debounce(async (e) => {
+        const q = e.target.value.trim();
+        const host = document.getElementById('pos-search-results');
+
+        if (!host) return;
+
+        if (q.length < 2) {
+          host.innerHTML = '';
+          return;
+        }
+
+        const results = await searchItems(q, 15);
+        host.innerHTML = renderSearchResults(results);
+        window.lucide?.createIcons();
+
+        /* Bind click */
+        host.querySelectorAll('[data-search-add]').forEach(el => {
+          el.onclick = () => {
+            const sku = el.dataset.searchAdd;
+            const item = results.find(i => i.sku === sku);
+            if (item) {
+              const added = Cart.add(item);
+              if (added.success) {
+                refreshCart();
+                GMS.Toast.ok('تمت الإضافة', sku);
+                searchInput.value = '';
+                host.innerHTML = '';
+                if (POSState.config.beepEnabled) {
+                  GMS.Beep?.success?.();
+                }
+              } else if (added.reason === 'DUPLICATE') {
+                GMS.Toast.warn('موجود مسبقاً', sku);
+              }
+            }
+          };
+        });
+      }, 250);
+    }
+
+    /* ─── Keyboard shortcuts ────────────────────────────────── */
+    const keyHandler = (e) => {
+      if (GMS.Router?.current() !== 'pos') return;
+
+      /* ✅ تجاهل لو في input نشط */
+      const active = document.activeElement;
+      const inField = active && (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.tagName === 'SELECT'
+      );
+
+      /* F2 — تركيز الماسح */
+      if (e.key === 'F2') {
+        e.preventDefault();
+        scanInput?.focus();
+        scanInput?.select();
+        return;
+      }
+
+      /* Ctrl+Enter — إتمام البيعة */
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        if (POSState.cart.length) {
+          openCheckoutModal();
+        }
+        return;
+      }
+
+      /* Ctrl+Backspace — تفريغ السلة */
+      if (e.ctrlKey && e.key === 'Backspace') {
+        e.preventDefault();
+        if (POSState.cart.length) {
+          document.getElementById('pos-clear-btn')?.click();
+        }
+        return;
+      }
+
+      /* Escape — تفريغ حقل البحث (لو مش في input) */
+      if (e.key === 'Escape' && !inField) {
+        const resultHost = document.getElementById('pos-scan-result');
+        if (resultHost) resultHost.innerHTML = '';
+      }
+    };
+
+    document.addEventListener('keydown', keyHandler);
+
+    /* حفظ مرجع للتنظيف */
+    POSState.unsubscribers.push(() => {
+      document.removeEventListener('keydown', keyHandler);
+    });
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §12 · CHECKOUT MODAL
+     ───────────────────────────────────────────────────────────────────── */
+
+  function openCheckoutModal() {
+    if (!POSState.cart.length) return;
+
+    POSState.ui.checkoutOpen = true;
+
+    const totals = computeCartTotals();
+    const price24 = getPrice24();
+
+    /* بناء HTML */
+    const linesHTML = POSState.cart.map((item, i) => `
+      <div class="l" style="display:flex;justify-content:space-between;
+                  padding:8px 0;border-bottom:1px dashed var(--border);
+                  font-size:12.5px">
+        <span style="color:var(--muted);font-weight:700">
+          ${i + 1}. <span class="mono">${GMS.esc(item.sku)}</span>
+          · ${item.karat}K · ${GMS.gramFmt(item.net_weight)} جم
+        </span>
+        <span class="mono" style="font-weight:900">
+          ${GMS.moneyFmt((Number(item.pure_weight) * price24 + Number(item.workmanship_value)) * item.qty)}
+        </span>
+      </div>
+    `).join('');
+
+    const modal = GMS.Modal.open({
+      title: GMS.t('pos.checkout'),
+      icon: 'credit-card',
+      size: 'lg',
+      body: `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <!-- LEFT: Summary -->
+          <div>
+            <div style="font-size:11px;font-weight:800;color:var(--muted);
+                        text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px">
+              ملخص القطع (${POSState.cart.length})
+            </div>
+
+            <div style="max-height:240px;overflow-y:auto;
+                        background:var(--surface-2);border-radius:11px;
+                        padding:12px 14px;
+                        border:1px solid var(--border)">
+              ${linesHTML}
+
+              <div style="display:flex;justify-content:space-between;
+                          padding-top:12px;margin-top:8px;
+                          border-top:2px solid var(--border-strong);
+                          font-size:14px">
+                <span style="color:var(--muted);font-weight:800">الإجمالي</span>
+                <span class="mono" style="color:var(--primary);
+                            font-weight:900;font-size:16px">
+                  ${GMS.moneyFmt(totals.total)} ج.م
+                </span>
+              </div>
+            </div>
+
+            <div style="margin-top:14px">
+              <div style="display:flex;justify-content:space-between;
+                          padding:6px 0;font-size:12.5px">
+                <span style="color:var(--muted);font-weight:700">عدد القطع</span>
+                <span class="mono" style="font-weight:800">${totals.count}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          padding:6px 0;font-size:12.5px">
+                <span style="color:var(--muted);font-weight:700">إجمالي الوزن الصافي</span>
+                <span class="mono" style="font-weight:800">${GMS.gramFmt(totals.net)} جم</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          padding:6px 0;font-size:12.5px">
+                <span style="color:var(--muted);font-weight:700">إجمالي البندق 24K</span>
+                <span class="mono" style="color:var(--primary);font-weight:800">
+                  ${GMS.gramFmt(totals.pure)} جم
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          padding:6px 0;font-size:12.5px">
+                <span style="color:var(--muted);font-weight:700">قيمة الذهب</span>
+                <span class="mono" style="font-weight:800">${GMS.moneyFmt(totals.gold)} ج.م</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          padding:6px 0;font-size:12.5px">
+                <span style="color:var(--muted);font-weight:700">المصنعية</span>
+                <span class="mono" style="font-weight:800">${GMS.moneyFmt(totals.making)} ج.م</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: Payment -->
+          <div>
+            <div style="font-size:11px;font-weight:800;color:var(--muted);
+                        text-transform:uppercase;letter-spacing:.5px;margin-bottom:9px">
+              طريقة الدفع
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px"
+                 id="pay-methods">
+              ${Object.entries(GMS.PAYMENT_METHODS).slice(0, 3).map(([key, m]) => `
+                <button type="button" class="pay-btn ${key === 'cash' ? 'active' : ''}"
+                        data-pay="${key}"
+                        style="display:flex;flex-direction:column;align-items:center;
+                               gap:6px;padding:12px 8px;border-radius:11px;
+                               border:1.5px solid ${key === 'cash' ? 'var(--primary)' : 'var(--border)'};
+                               background:${key === 'cash' ? 'color-mix(in srgb,var(--primary) 12%,var(--surface))' : 'var(--surface-2)'};
+                               cursor:pointer;font-weight:700;font-size:11.5px;
+                               transition:all .2s">
+                  <i data-lucide="${m.icon}" style="width:18px;height:18px;
+                             color:${key === 'cash' ? 'var(--primary)' : 'var(--text-2)'}"></i>
+                  <span style="color:${key === 'cash' ? 'var(--primary)' : 'var(--text-2)'}">
+                    ${m.label}
+                  </span>
+                </button>
+              `).join('')}
+            </div>
+
+            <div style="margin-top:14px">
+              <div class="field" style="margin-bottom:11px">
+                <label>المبلغ المستلم (ج.م)</label>
+                <input type="number" id="pay-amount" step="0.01" min="0"
+                       value="${totals.total.toFixed(2)}"
+                       class="mono"
+                       style="font-size:17px;font-weight:800;text-align:center">
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="field">
+                  <label>الباقي للعميل</label>
+                  <input type="text" id="pay-change" readonly
+                         class="mono"
+                         style="font-weight:800;text-align:center;
+                                background:var(--surface-3)">
+                </div>
+                <div class="field">
+                  <label>الحالة</label>
+                  <input type="text"
+                         value="${GMS.Sync?.state?.online !== false ? 'APPROVED' : 'PENDING'}"
+                         readonly
+                         style="font-weight:700;font-size:11px;text-align:center;
+                                background:var(--surface-3)">
+                </div>
+              </div>
+
+              <div class="field" style="margin-top:11px">
+                <label>العميل (اختياري)</label>
+                <select id="pay-customer">
+                  <option value="">عميل نقدي</option>
+                  ${(GMS.Demo?.getCustomers() || []).map(c => `
+                    <option value="${c.id}">${GMS.esc(c.name)} — ${GMS.esc(c.phone || '')}</option>
+                  `).join('')}
+                </select>
+              </div>
+
+              <div class="field" style="margin-top:11px">
+                <label>ملاحظات</label>
+                <input id="pay-notes" placeholder="ملاحظات على الفاتورة…">
+              </div>
+            </div>
+          </div>
+        </div>
+      `,
+      footer: `
+        <button class="btn" data-close>${GMS.t('action.cancel')}</button>
+        <button class="btn btn-primary btn-lg" id="confirm-checkout">
+          <i data-lucide="check-circle-2"></i>
+          تأكيد البيع
+        </button>
+      `,
+      onMount: (el, close) => {
+        /* Payment method switching */
+        el.querySelectorAll('[data-pay]').forEach(btn => {
+          btn.onclick = () => {
+            el.querySelectorAll('[data-pay]').forEach(b => {
+              const active = b === btn;
+              b.style.borderColor = active ? 'var(--primary)' : 'var(--border)';
+              b.style.background = active
+                ? 'color-mix(in srgb,var(--primary) 12%,var(--surface))'
+                : 'var(--surface-2)';
+              b.classList.toggle('active', active);
+              const icon = b.querySelector('svg');
+              const span = b.querySelector('span');
+              if (icon) icon.style.color = active ? 'var(--primary)' : 'var(--text-2)';
+              if (span) span.style.color = active ? 'var(--primary)' : 'var(--text-2)';
+            });
+          };
+        });
+
+        /* Amount input */
+        const amountInput = el.querySelector('#pay-amount');
+        const changeInput = el.querySelector('#pay-change');
+
+        const updateChange = () => {
+          const paid = parseFloat(amountInput.value) || 0;
+          const change = Math.max(0, paid - totals.total);
+          changeInput.value = GMS.moneyFmt(change) + ' ج.م';
+
+          /* لون حسب الحالة */
+          if (paid < totals.total) {
+            changeInput.style.color = 'var(--danger)';
+          } else if (paid > totals.total) {
+            changeInput.style.color = 'var(--success)';
+          } else {
+            changeInput.style.color = 'var(--text)';
+          }
+        };
+
+        amountInput.oninput = updateChange;
+        updateChange();
+
+        /* Confirm */
+        el.querySelector('#confirm-checkout').onclick = async () => {
+          const paid = parseFloat(amountInput.value) || 0;
+          const method = el.querySelector('[data-pay].active')?.dataset.pay || 'cash';
+          const customerId = el.querySelector('#pay-customer').value;
+          const notes = el.querySelector('#pay-notes').value.trim();
+
+          if (paid < totals.total) {
+            GMS.Toast.err('المبلغ المستلم أقل من الإجمالي');
+            amountInput.focus();
+            return;
+          }
+
+          close();
+          await completeSale({
+            paid,
+            method,
+            customerId,
+            notes,
+          });
+        };
+      },
+      onClose: () => {
+        POSState.ui.checkoutOpen = false;
+      },
+    });
+
+    return modal;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §13 · COMPLETE SALE
+     ─────────────────────────────────────────────────────────────────────
+     حفظ الفاتورة (فوراً عبر Supabase أو في Queue)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  async function completeSale(paymentData) {
+    const totals = computeCartTotals();
+    const online = GMS.Sync?.state?.online !== false;
+    const now = new Date().toISOString();
+
+    /* بناء رقم فاتورة */
+    const saleNo = GMS.invoiceNo('INV');
+
+    /* بناء بنود الفاتورة */
+    const lines = POSState.cart.map(item => {
+      const price24 = getPrice24();
+      const goldValue = GMS.round(Number(item.pure_weight || 0) * price24, 2);
+      const makeValue = Number(item.workmanship_value || 0);
+      const stoneValue = Number(item.stone_value || 0);
+      const lineTotal = GMS.round((goldValue + makeValue + stoneValue) * item.qty, 2);
+
+      return {
+        inventory_id: item.id,
+        sku: item.sku,
+        karat: item.karat,
+        weight_grams: item.weight_grams,
+        net_weight: item.net_weight,
+        pure_weight: item.pure_weight,
+        workmanship_per_gram: item.workmanship_per_gram,
+        workmanship_value: makeValue,
+        gold_value: goldValue,
+        line_total: lineTotal,
+      };
+    });
+
+    /* بناء الفاتورة */
+    const sale = {
+      id: GMS.uid(),
+      sale_no: saleNo,
+      invoice_no: saleNo,
+      type: 'sale',
+      item_count: totals.count,
+      total_gross_weight: totals.gross,
+      total_net_weight: totals.net,
+      total_pure_weight: totals.pure,
+      gold_value: totals.gold,
+      total_workmanship: totals.making,
+      grand_total: totals.total,
+      paid: GMS.round(paymentData.paid, 2),
+      remaining: GMS.round(Math.max(0, totals.total - paymentData.paid), 2),
+      change_due: GMS.round(Math.max(0, paymentData.paid - totals.total), 2),
+      payment_method: paymentData.method,
+      customer_id: paymentData.customerId || null,
+      customer_name: paymentData.customerId
+        ? (GMS.Demo?.getCustomers().find(c => c.id === paymentData.customerId)?.name || 'عميل')
+        : 'عميل نقدي',
+      cashier_name: GMS.Auth?.profile?.full_name || 'كاشير',
+      cashier_id: GMS.Auth?.user?.id || null,
+      branch_id: GMS.Auth?.profile?.branch_id || GMS.APP_CONFIG.DEFAULT_BRANCH_ID,
+      status: online ? 'APPROVED' : 'PENDING_APPROVAL',
+      notes: paymentData.notes || null,
+      created_at: now,
+      lines,
+    };
+
+    try {
+      GMS.Loading.show('جارٍ حفظ الفاتورة…');
+
+      /* ─── حفظ في Supabase أو Queue ──────────────────────────── */
+      if (online && GMS.Supabase?.isReady()) {
+        /* حفظ فوري */
+        const client = GMS.Supabase.get();
+
+        const { data: saleRow, error: saleError } = await client
+          .from(GMS.SUPABASE_CONFIG.TABLES.SALES)
+          .insert({
+            sale_no: sale.sale_no,
+            type: sale.type,
+            item_count: sale.item_count,
+            total_gross_weight: sale.total_gross_weight,
+            total_net_weight: sale.total_net_weight,
+            total_pure_weight: sale.total_pure_weight,
+            gold_value: sale.gold_value,
+            total_workmanship: sale.total_workmanship,
+            grand_total: sale.grand_total,
+            paid: sale.paid,
+            remaining: sale.remaining,
+            payment_method: sale.payment_method,
+            customer_id: sale.customer_id,
+            cashier_id: sale.cashier_id,
+            branch_id: sale.branch_id,
+            status: sale.status,
+            notes: sale.notes,
+          })
+          .select('id')
+          .single();
+
+        if (saleError) throw saleError;
+
+        /* إدراج البنود */
+        const linePayload = lines.map(l => ({
+          sale_id: saleRow.id,
+          ...l,
+        }));
+
+        const { error: linesError } = await client
+          .from(GMS.SUPABASE_CONFIG.TABLES.SALE_ITEMS)
+          .insert(linePayload);
+
+        if (linesError) throw linesError;
+
+        /* تحديث المخزون */
+        const inventoryIds = lines.map(l => l.inventory_id).filter(Boolean);
+
+        if (inventoryIds.length) {
+          await client
+            .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
+            .update({
+              status: 'SOLD',
+              updated_at: now,
+            })
+            .in('id', inventoryIds);
+        }
+
+      } else {
+        /* حفظ في Queue */
+        await GMS.IDB.queueAdd({
+          id: sale.id,
+          sale_no: sale.sale_no,
+          item_count: sale.item_count,
+          total_pure_weight: sale.total_pure_weight,
+          grand_total: sale.grand_total,
+          payment_method: sale.payment_method,
+          status: 'PENDING_APPROVAL',
+          created_at: now,
+          lines,
+          branch_id: sale.branch_id,
+        });
+      }
+
+      /* ─── تحديث المخزون محلياً (IndexedDB) ─────────────────── */
+      for (const line of lines) {
+        if (!line.inventory_id) continue;
+
+        try {
+          const item = await GMS.IDB.get(line.inventory_id);
+          if (item) {
+            item.status = 'SOLD';
+            item.updated_at = now;
+            await GMS.IDB.put(item);
+          }
+        } catch (e) {
+          console.warn('[POS] IDB update failed:', e);
+        }
+      }
+
+      /* ─── تحديث الإحصائيات ─────────────────────────────────── */
+      POSState.stats.salesCompleted++;
+      POSState.stats.totalRevenue += totals.total;
+      POSState.stats.totalPureWeight += totals.pure;
+
+      /* ─── Audit log ─────────────────────────────────────────── */
+      if (GMS.Audit) {
+        await GMS.Audit.log(
+          'CREATE',
+          'sale',
+          sale.id,
+          `فاتورة بيع ${sale.sale_no} — ${GMS.moneyFmt(sale.grand_total)} ج.م`,
+          {
+            invoice_no: sale.sale_no,
+            total: sale.grand_total,
+            items: sale.item_count,
+            online,
+          }
+        );
+      }
+
+      /* ─── تفريغ السلة ───────────────────────────────────────── */
+      Cart.clear();
+      refreshCart();
+      refreshStats();
+
+      GMS.Loading.hide();
+
+      /* ─── صوت النجاح ────────────────────────────────────────── */
+      if (POSState.config.beepEnabled) {
+        GMS.Beep?.complete();
+      }
+
+      /* ─── إشعار ────────────────────────────────────────────── */
+      if (online) {
+        GMS.Toast.ok(
+          'تمت الفاتورة',
+          `${sale.sale_no} · ${GMS.moneyFmt(sale.grand_total)} ج.م`
+        );
+      } else {
+        GMS.Toast.warn(
+          'تم الحفظ محلياً',
+          `${sale.sale_no} في الطابور — سيُرفع عند عودة الاتصال`
+        );
+      }
+
+      /* ─── إطلاق حدث Realtime (محلي) ────────────────────────── */
+      if (GMS.Realtime) {
+        GMS.Realtime.emit('sales', 'INSERT', sale);
+      }
+
+      /* ─── عرض Modal النجاح ─────────────────────────────────── */
+      showSaleSuccess(sale, online);
+
+    } catch (e) {
+      GMS.Loading.hide();
+      console.error('[POS.completeSale]', e);
+      GMS.Toast.err('فشل حفظ الفاتورة', e.message);
+      if (POSState.config.beepEnabled) {
+        GMS.Beep?.error();
+      }
+    }
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §14 · SUCCESS MODAL + RECEIPT
+     ───────────────────────────────────────────────────────────────────── */
+
+  function showSaleSuccess(sale, online) {
+    GMS.Modal.open({
+      title: online ? 'تم إنشاء الفاتورة' : 'تم الحفظ محلياً',
+      icon: online ? 'check-circle-2' : 'cloud-off',
+      size: 'lg',
+      dismissible: false,
+      body: `
+        <div style="text-align:center;padding:10px 0 20px">
+          <div style="width:72px;height:72px;border-radius:22px;
+                      background:${online ? 'var(--gold-grad)' : 'var(--info-bg)'};
+                      display:grid;place-items:center;margin:0 auto 14px;
+                      color:${online ? '#2a1f05' : 'var(--info)'};
+                      box-shadow:0 14px 36px -12px rgba(184,145,47,.9)">
+            <i data-lucide="${online ? 'check' : 'cloud-off'}"
+               style="width:36px;height:36px"></i>
+          </div>
+
+          <h3 style="font-size:18px;margin-bottom:6px">
+            ${online ? 'تم إنشاء الفاتورة بنجاح' : 'تم الحفظ محلياً'}
+          </h3>
+
+          <div class="mono" style="font-size:22px;font-weight:900;
+                      color:var(--primary);letter-spacing:.5px;margin-top:6px">
+            ${GMS.esc(sale.sale_no)}
+          </div>
+
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;font-weight:700">
+            الحالة:
+            <span class="pill ${online ? 'pill-green' : 'pill-amber'}"
+                  style="margin-inline-start:4px">
+              ${online ? 'معتمد · APPROVED' : 'قيد المزامنة · QUEUED'}
+            </span>
+          </div>
+        </div>
+
+        <div style="background:var(--surface-2);border-radius:12px;
+                    padding:16px;border:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;
+                      padding:6px 0;font-size:12.5px;
+                      border-bottom:1px dashed var(--border)">
+            <span style="color:var(--muted);font-weight:700">عدد القطع</span>
+            <span class="mono" style="font-weight:900">${sale.item_count}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;
+                      padding:6px 0;font-size:12.5px;
+                      border-bottom:1px dashed var(--border)">
+            <span style="color:var(--muted);font-weight:700">إجمالي الوزن الصافي</span>
+            <span class="mono" style="font-weight:900">
+              ${GMS.gramFmt(sale.total_net_weight)} جم
+            </span>
+          </div>
+          <div style="display:flex;justify-content:space-between;
+                      padding:6px 0;font-size:12.5px;
+                      border-bottom:1px dashed var(--border)">
+            <span style="color:var(--muted);font-weight:700">إجمالي البندق 24K</span>
+            <span class="mono" style="color:var(--primary);font-weight:900">
+              ${GMS.gramFmt(sale.total_pure_weight)} جم
+            </span>
+          </div>
+          <div style="display:flex;justify-content:space-between;
+                      padding:6px 0;font-size:12.5px;
+                      border-bottom:1px dashed var(--border)">
+            <span style="color:var(--muted);font-weight:700">قيمة الذهب</span>
+            <span class="mono" style="font-weight:900">
+              ${GMS.moneyFmt(sale.gold_value)} ج.م
+            </span>
+          </div>
+          <div style="display:flex;justify-content:space-between;
+                      padding:6px 0;font-size:12.5px;
+                      border-bottom:1px dashed var(--border)">
+            <span style="color:var(--muted);font-weight:700">المصنعية</span>
+            <span class="mono" style="font-weight:900">
+              ${GMS.moneyFmt(sale.total_workmanship)} ج.م
+            </span>
+          </div>
+          <div style="display:flex;justify-content:space-between;
+                      padding:12px 0 4px;font-size:15px;
+                      border-top:2px solid var(--border-strong);margin-top:6px">
+            <span style="color:var(--text);font-weight:900">الإجمالي</span>
+            <span class="mono" style="color:var(--primary);
+                        font-weight:900;font-size:18px">
+              ${GMS.moneyFmt(sale.grand_total)} ج.م
+            </span>
+          </div>
+          ${sale.change_due > 0 ? `
+            <div style="display:flex;justify-content:space-between;
+                        padding:6px 0;font-size:13px;
+                        border-top:1px dashed var(--border);margin-top:6px">
+              <span style="color:var(--muted);font-weight:700">الباقي للعميل</span>
+              <span class="mono" style="color:var(--success);font-weight:900">
+                ${GMS.moneyFmt(sale.change_due)} ج.م
+              </span>
+            </div>
+          ` : ''}
+        </div>
+      `,
+      footer: `
+        <button class="btn" id="print-receipt">
+          <i data-lucide="printer"></i> طباعة الإيصال
+        </button>
+        <button class="btn btn-primary" id="next-sale">
+          <i data-lucide="plus-circle"></i> فاتورة جديدة
+        </button>
+      `,
+      onMount: (el, close) => {
+        el.querySelector('#print-receipt').onclick = () => {
+          printReceipt(sale);
+        };
+
+        el.querySelector('#next-sale').onclick = () => {
+          close();
+          setTimeout(() => {
+            const si = document.getElementById('pos-scan-input');
+            const active = document.activeElement;
+            if (si && (!active || active === document.body)) {
+              try {
+                si.focus({ preventScroll: true });
+              } catch (_) {
+                si.focus();
+              }
+            }
+          }, 300);
+        };
+      },
+    });
+  }
+
+  /**
+   * طباعة إيصال الفاتورة
+   * @param {Object} sale
+   */
+  function printReceipt(sale) {
+    const root = document.getElementById('print-root');
+    if (!root) {
+      GMS.Toast.err('لا يمكن الطباعة', 'عنصر الطباعة غير موجود');
+      return;
+    }
+
+    const price24 = getPrice24();
+
+    root.innerHTML = `
+      <div class="receipt-print">
+        <h2>${GMS.t('receipt.title')}</h2>
+
+        <div style="text-align:center;font-size:10pt;margin-bottom:5mm">
+          ${GMS.esc(GMS.APP_CONFIG.NAME_AR)}<br>
+          ${GMS.esc(GMS.Auth?.profile?.full_name || '—')}<br>
+          ${GMS.esc(GMS.Demo?.getBranches()?.find(b => b.id === sale.branch_id)?.name || '—')}
+        </div>
+
+        <hr>
+
+        <div class="rp-line">
+          <span>${GMS.t('receipt.no')}</span>
+          <b>${GMS.esc(sale.sale_no)}</b>
+        </div>
+        <div class="rp-line">
+          <span>${GMS.t('receipt.date')}</span>
+          <b>${GMS.dateTimeAr(sale.created_at)}</b>
+        </div>
+        <div class="rp-line">
+          <span>${GMS.t('receipt.customer')}</span>
+          <b>${GMS.esc(sale.customer_name || 'عميل نقدي')}</b>
+        </div>
+
+        <hr>
+
+        ${(sale.lines || []).map((line, i) => `
+          <div style="margin:2mm 0">
+            <div style="font-weight:900;font-size:10.5pt">
+              ${i + 1}. ${GMS.esc(line.sku || '—')} — ${line.karat}K
+            </div>
+            <div class="rp-line" style="font-size:9.5pt">
+              <span>صافي ${GMS.gramFmt(line.net_weight)} جم</span>
+              <span>بندق ${GMS.gramFmt(line.pure_weight)} جم</span>
+            </div>
+            <div class="rp-line" style="font-size:9.5pt">
+              <span>ذهب ${GMS.moneyFmt(line.gold_value)}</span>
+              <span>مصنعية ${GMS.moneyFmt(line.workmanship_value)}</span>
+              <span style="font-weight:900">${GMS.moneyFmt(line.line_total)}</span>
+            </div>
+          </div>
+        `).join('')}
+
+        <hr>
+
+        <div class="rp-line">
+          <span>عدد القطع</span>
+          <b>${GMS.intFmt(sale.item_count)}</b>
+        </div>
+        <div class="rp-line">
+          <span>إجمالي الوزن الصافي</span>
+          <b>${GMS.gramFmt(sale.total_net_weight)} جم</b>
+        </div>
+        <div class="rp-line">
+          <span>إجمالي البندق 24K</span>
+          <b>${GMS.gramFmt(sale.total_pure_weight)} جم</b>
+        </div>
+        <div class="rp-line">
+          <span>سعر 24K الحالي</span>
+          <b>${GMS.moneyFmt(price24)} ج.م</b>
+        </div>
+
+        <hr>
+
+        <div class="rp-line">
+          <span>قيمة الذهب</span>
+          <b>${GMS.moneyFmt(sale.gold_value)} ج.م</b>
+        </div>
+        <div class="rp-line">
+          <span>المصنعية</span>
+          <b>${GMS.moneyFmt(sale.total_workmanship)} ج.م</b>
+        </div>
+
+        <div class="rp-total">
+          <span>الإجمالي</span>
+          <span>${GMS.moneyFmt(sale.grand_total)} ج.م</span>
+        </div>
+
+        <div class="rp-line" style="margin-top:2mm">
+          <span>طريقة الدفع</span>
+          <b>${GMS.getPaymentMethod(sale.payment_method)?.label || sale.payment_method}</b>
+        </div>
+        <div class="rp-line">
+          <span>المدفوع</span>
+          <b>${GMS.moneyFmt(sale.paid)} ج.م</b>
+        </div>
+        ${sale.change_due > 0 ? `
+          <div class="rp-line">
+            <span>الباقي</span>
+            <b>${GMS.moneyFmt(sale.change_due)} ج.م</b>
+          </div>
+        ` : ''}
+
+        <hr>
+
+        <div style="text-align:center;font-size:9pt;margin-top:5mm">
+          ${GMS.t('receipt.thanks')}<br>
+          ${GMS.t('receipt.warrantyNote')}
+        </div>
+
+        <div class="pr-sign" style="margin-top:8mm;display:flex;justify-content:space-between;font-size:9pt">
+          <div style="border-top:1px solid #000;padding-top:2mm;min-width:30mm;text-align:center">
+            ${GMS.t('receipt.customerSignature')}
+          </div>
+          <div style="border-top:1px solid #000;padding-top:2mm;min-width:30mm;text-align:center">
+            ${GMS.t('receipt.cashierSignature')}
+          </div>
+        </div>
+      </div>
+    `;
+
+    setTimeout(() => window.print(), 150);
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §15 · CLEANUP
+     ───────────────────────────────────────────────────────────────────── */
+
+  function cleanup() {
+    /* تنظيف المؤقتات */
+    clearTimeout(POSState.timers.scanClear);
+    clearTimeout(POSState.timers.searchDebounce);
+
+    /* إلغاء المستمعين */
+    POSState.unsubscribers.forEach(fn => {
+      try { fn(); } catch (_) {}
+    });
+    POSState.unsubscribers = [];
+
+    /* إلغاء تفعيل الـ scanner */
+    if (GMS.QRScanner) {
+      try {
+        GMS.QRScanner.unbind();
+      } catch (_) {}
+    }
+
+    /* إغلاق modal مفتوح */
+    if (POSState.ui.checkoutOpen) {
+      GMS.Modal.closeAll();
+      POSState.ui.checkoutOpen = false;
+    }
+
+    /* ✅ إعادة تعيين flag التركيز الأولي */
+    POSState.ui._initialFocusDone = false;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §16 · VIEW REGISTRATION
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.Views = GMS.Views || {};
+
+  GMS.Views.pos = {
+    render,
+    cleanup,
+    state: POSState,
+
+    /* Cart API */
+    cart: Cart,
+
+    /* Helpers */
+    handleScan,
+    findBySku,
+    searchItems,
+    computeTotals: computeCartTotals,
+
+    /* Actions */
+    checkout: openCheckoutModal,
+    printReceipt,
+  };
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §17 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📱 QR Engine loaded · Generate + Print + Scan',
-    'color:#0e7490;font-weight:800;font-size:12px;padding:1px 5px;' +
-    'background:#e0f2f7;border-radius:4px;'
+    '%c🛒 POS View loaded · Scanner + Cart + Checkout',
+    'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
+    'background:#e6f6ee;border-radius:4px;'
   );
 
   console.log(
-    `%c🎫 58mm / 80mm labels · 3 payload modes · Batch printing · Scanner buffer`,
+    `%c⚡ IndexedDB instant search · Offline-first · Hardware scanner · Thermal receipt`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
-     ✅ js/09-qr.js — نهاية الملف
+     ✅ js/13-views-pos.js — نهاية الملف
      ═════════════════════════════════════════════════════════════════════ */
 
 })();
