@@ -61,37 +61,11 @@
     console.log('[Inventory] ✅ Interaction lock installed');
   })();
 
-  /* ✅ Patch Router لمنع rerender أثناء التفاعل */
-  (function patchRouter() {
-    if (!window.GMS) return;
-
-    const tryPatch = () => {
-      if (!window.GMS.Router) return false;
-      if (window.GMS.Router._invPatched) return true;
-
-      const original = window.GMS.Router.scheduleRerender;
-      window.GMS.Router.scheduleRerender = function (...args) {
-        if (isInteractionLocked() && window.GMS.Router.currentId() === 'inventory') {
-          console.log('[Inventory] ⛔ Rerender blocked — interaction locked');
-          return;
-        }
-        return original.apply(this, args);
-      };
-
-      window.GMS.Router._invPatched = true;
-      console.log('[Inventory] ✅ Router patched for interaction lock');
-      return true;
-    };
-
-    if (!tryPatch()) {
-      // حاول مرة أخرى بعد تحميل Router
-      let attempts = 0;
-      const timer = setInterval(() => {
-        attempts++;
-        if (tryPatch() || attempts > 20) clearInterval(timer);
-      }, 200);
-    }
-  })();
+  /* ملحوظة: كان هنا monkey-patch لـ Router.scheduleRerender خاص بهذه
+     الصفحة بس، بتوقيت مختلف عن حماية الراوتر العامة — ده كان بيعمل
+     تصادم/سباق مع الحماية الموجودة أصلاً في js/22-router.js.
+     تمت إزالته؛ الراوتر بيغطي كل الحقول هنا تلقائياً لأنه بيسمع على
+     document بالكامل (capture phase). */
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · INVENTORY STATE
