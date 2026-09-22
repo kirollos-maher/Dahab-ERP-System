@@ -1,12 +1,20 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/26-views-accounting.js
-   النظام المحاسبي الشامل للذهب والسيولة:
-     - دفتر اليومية المزدوج (نقد + ذهب)
-     - بطاقات مؤشرات الأداء المالي (KPIs)
-     - تسجيل المصروفات التشغيلية
-     - تسويات الذهب والنقد مع الموردين والورش
-     - تصدير Excel + طباعة كشوفات
-     - Realtime integration
+   النظام المحاسبي الشامل للذهب والسيولة — دفتر اليومية المزدوج
+   ─────────────────────────────────────────────────────────────────────
+   المكونات:
+     • KPI Cards — رصيد نقدي + أرصدة ذهب مفصلة بالعيارات
+     • Ledger Table — دفتر اليومية العام مع فلاتر + Pagination
+     • Expense Modal — تسجيل المصروفات التشغيلية
+     • Settlement Modal — تسوية ذهب/نقد مع الموردين والورش
+     • Entry Details Modal — عرض تفاصيل حركة محاسبية
+     • Excel Export — تصدير الدفتر والملخص
+     • Realtime Integration — تحديث حي
+     • Auto-redirect عبر window.App.navigateTo('accounting')
+
+   Export:
+     • GMS.Views.accounting
+     • window.AccountingView
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -15,16 +23,62 @@
   const GMS = window.GMS = window.GMS || {};
 
   /* ═════════════════════════════════════════════════════════════════════
-     §1 · CACHEDB WRAPPER
-     ─────────────────────────────────────────────────────────────────────
-     واجهة موحدة للتخزين (localStorage + IndexedDB + ذاكرة مؤقتة)
-     - ledger:       دفتر اليومية المحاسبي
-     - expenses:     سجل المصروفات (مدمج مع ledger)
-     - settlements:  تسويات الذهب/النقد (مدمج مع ledger)
+     §1 · CONSTANTS — أنواع الحركات المحاسبية
+     ═════════════════════════════════════════════════════════════════════ */
+  const ENTRY_TYPES = Object.freeze({
+    sale:             { key: 'sale',             label: 'فاتورة بيع',      icon: 'receipt',             cls: 'pill-green',  cashSign: +1, goldSign: -1, color: 'success' },
+    purchase:         { key: 'purchase',         label: 'فاتورة شراء',     icon: 'truck',               cls: 'pill-blue',   cashSign: -1, goldSign: +1, color: 'info'    },
+    expense:          { key: 'expense',          label: 'مصروف تشغيلي',    icon: 'receipt-text',        cls: 'pill-amber',  cashSign: -1, goldSign: 0,  color: 'warn'    },
+    cash_received:    { key: 'cash_received',    label: 'استلام نقدي',     icon: 'hand-coins',          cls: 'pill-green',  cashSign: +1, goldSign: 0,  color: 'success' },
+    cash_payment:     { key: 'cash_payment',     label: 'سداد نقدي',       icon: 'banknote',            cls: 'pill-red',    cashSign: -1, goldSign: 0,  color: 'danger'  },
+    gold_received:    { key: 'gold_received',    label: 'استلام ذهب',      icon: 'package-plus',        cls: 'pill-green',  cashSign: 0,  goldSign: +1, color: 'success' },
+    gold_payment:     { key: 'gold_payment',     label: 'تسليم ذهب',       icon: 'package-minus',       cls: 'pill-red',    cashSign: 0,  goldSign: -1, color: 'danger'  },
+    gold_settlement:  { key: 'gold_settlement',  label: 'تسوية ذهب',       icon: 'scale',               cls: 'pill-violet', cashSign: 0,  goldSign: +1, color: 'violet'  },
+    cash_settlement:  { key: 'cash_settlement',  label: 'تسوية نقدية',     icon: 'sliders-horizontal',  cls: 'pill-violet', cashSign: +1, goldSign: 0,  color: 'violet'  },
+    workmanship:      { key: 'workmanship',      label: 'مصنعية',          icon: 'hammer',              cls: 'pill-amber',  cashSign: -1, goldSign: 0,  color: 'warn'    },
+    scrap_settlement: { key: 'scrap_settlement', label: 'تسوية كسر',       icon: 'recycle',             cls: 'pill-amber',  cashSign: 0,  goldSign: +1, color: 'warn'    },
+    return_sale:      { key: 'return_sale',      label: 'مرتجع بيع',       icon: 'rotate-ccw',          cls: 'pill-blue',   cashSign: -1, goldSign: +1, color: 'info'    },
+    return_purchase:  { key: 'return_purchase',  label: 'مرتجع شراء',      icon: 'undo-2',              cls: 'pill-blue',   cashSign: +1, goldSign: -1, color: 'info'    },
+    adjustment:       { key: 'adjustment',       label: 'تسوية يدوية',     icon: 'settings-2',          cls: 'pill-violet', cashSign: +1, goldSign: +1, color: 'violet'  },
+    opening:          { key: 'opening',          label: 'رصيد افتتاحي',    icon: 'flag',                cls: 'pill-gray',   cashSign: +1, goldSign: +1, color: 'muted'   },
+  });
+
+  /* ─── فئات المصروفات ─── */
+  const EXPENSE_CATEGORIES = Object.freeze([
+    { key: 'rent',        label: 'إيجار',             icon: 'home',             color: 'violet' },
+    { key: 'salaries',    label: 'رواتب وأجور',       icon: 'users',            color: 'success' },
+    { key: 'electricity', label: 'كهرباء',            icon: 'zap',              color: 'warn' },
+    { key: 'water',       label: 'مياه',              icon: 'droplets',         color: 'info' },
+    { key: 'gas',         label: 'غاز',               icon: 'flame',            color: 'danger' },
+    { key: 'internet',    label: 'إنترنت وهاتف',      icon: 'wifi',             color: 'teal' },
+    { key: 'maintenance', label: 'صيانة وإصلاح',      icon: 'wrench',           color: 'danger' },
+    { key: 'marketing',   label: 'تسويق وإعلان',      icon: 'megaphone',        color: 'violet' },
+    { key: 'transport',   label: 'نقل وشحن',          icon: 'truck',            color: 'info' },
+    { key: 'supplies',    label: 'مستلزمات وقرطاسية', icon: 'package',          color: 'teal' },
+    { key: 'insurance',   label: 'تأمينات',           icon: 'shield',           color: 'success' },
+    { key: 'taxes',       label: 'ضرائب ورسوم',       icon: 'receipt',          color: 'danger' },
+    { key: 'hospitality', label: 'ضيافة',             icon: 'coffee',           color: 'warn' },
+    { key: 'commissions', label: 'عمولات',            icon: 'hand-coins',       color: 'success' },
+    { key: 'other',       label: 'مصروفات أخرى',      icon: 'more-horizontal',  color: 'muted' },
+  ]);
+
+  /* ─── أنواع الجهات ─── */
+  const ENTITY_TYPES = Object.freeze([
+    { key: 'supplier', label: 'مورد',  icon: 'factory' },
+    { key: 'workshop', label: 'ورشة',  icon: 'hammer'  },
+    { key: 'customer', label: 'عميل',  icon: 'user'    },
+    { key: 'other',    label: 'أخرى',  icon: 'circle'  },
+  ]);
+
+  const STORE_LEDGER = 'ledger';
+  const MAX_ENTRIES  = 5000;
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §2 · CacheDB — واجهة تخزين موحّدة
      ═════════════════════════════════════════════════════════════════════ */
   const CacheDB = {
     _prefix: 'gms.acc.',
-    _maxPerStore: 5000,
+    _maxPerStore: MAX_ENTRIES,
 
     /**
      * قراءة كل عناصر متجر معين
@@ -33,22 +87,20 @@
      */
     async getAll(store) {
       try {
-        /* 1 · localStorage أولاً */
+        if (!store) return [];
         const key = this._prefix + store;
         const raw = localStorage.getItem(key);
 
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            return parsed;
-          }
+          if (Array.isArray(parsed)) return parsed;
         }
 
-        /* 2 · fallback: IndexedDB metadata */
+        /* fallback → IndexedDB metadata */
         if (GMS.IDB && GMS.IDB.isOpen) {
           try {
             const row = await GMS.IDB.metaGet(key);
-            if (row && Array.isArray(row)) return row;
+            if (Array.isArray(row)) return row;
           } catch (_) {}
         }
 
@@ -60,46 +112,41 @@
     },
 
     /**
-     * حفظ عنصر واحد (upsert)
+     * حفظ / تحديث عنصر (upsert)
      * @param {string} store
      * @param {Object} entry
      * @returns {Promise<boolean>}
      */
     async save(store, entry) {
       try {
-        if (!entry || typeof entry !== 'object') return false;
+        if (!store || !entry || typeof entry !== 'object') return false;
 
         const key = this._prefix + store;
         const existing = await this.getAll(store);
 
-        /* Upsert: لو فيه id → استبدل */
         const id = entry.id || GMS.uid();
         entry.id = id;
 
         const idx = existing.findIndex(x => x.id === id);
-
         if (idx >= 0) {
           existing[idx] = { ...existing[idx], ...entry };
         } else {
           existing.unshift(entry);
         }
 
-        /* احتفظ بالحد الأقصى */
         const trimmed = existing.slice(0, this._maxPerStore);
 
         /* 1 · localStorage */
         try {
           localStorage.setItem(key, JSON.stringify(trimmed));
         } catch (e) {
-          console.warn('[CacheDB.save] localStorage quota exceeded');
-          /* اقتطع أقدم العناصر */
-          const smaller = trimmed.slice(0, Math.floor(this._maxPerStore / 2));
+          console.warn('[CacheDB] localStorage quota exceeded — trimming');
           try {
-            localStorage.setItem(key, JSON.stringify(smaller));
+            localStorage.setItem(key, JSON.stringify(trimmed.slice(0, Math.floor(this._maxPerStore / 2))));
           } catch (_) {}
         }
 
-        /* 2 · IndexedDB metadata (احتياطي) */
+        /* 2 · IndexedDB metadata */
         if (GMS.IDB && GMS.IDB.isOpen) {
           try {
             await GMS.IDB.metaSet(key, trimmed.slice(0, 500));
@@ -124,11 +171,7 @@
         const key = this._prefix + store;
         const existing = await this.getAll(store);
         const filtered = existing.filter(x => x.id !== id);
-
-        try {
-          localStorage.setItem(key, JSON.stringify(filtered));
-        } catch (_) {}
-
+        localStorage.setItem(key, JSON.stringify(filtered));
         return true;
       } catch (e) {
         console.warn(`[CacheDB.delete:${store}]`, e);
@@ -143,8 +186,7 @@
      */
     async clear(store) {
       try {
-        const key = this._prefix + store;
-        localStorage.removeItem(key);
+        localStorage.removeItem(this._prefix + store);
         return true;
       } catch (_) {
         return false;
@@ -153,9 +195,7 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2 · window.App ALIAS
-     ─────────────────────────────────────────────────────────────────────
-     يوفر واجهة موحدة للتوجيه
+     §3 · window.App — واجهة التوجيه الموحّدة
      ═════════════════════════════════════════════════════════════════════ */
   window.App = window.App || {
     /**
@@ -192,70 +232,15 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · CONSTANTS
-     ═════════════════════════════════════════════════════════════════════ */
-
-  /* أنواع الحركات المحاسبية */
-  const ENTRY_TYPES = Object.freeze({
-    sale:                { key: 'sale',                label: 'فاتورة بيع',        icon: 'receipt',      cls: 'pill-green',  cashSign: +1, goldSign: -1, color: 'success' },
-    purchase:            { key: 'purchase',            label: 'فاتورة شراء',       icon: 'truck',        cls: 'pill-blue',   cashSign: -1, goldSign: +1, color: 'info' },
-    expense:             { key: 'expense',             label: 'مصروف تشغيلي',      icon: 'receipt',      cls: 'pill-amber',  cashSign: -1, goldSign: 0,  color: 'warn' },
-    cash_received:       { key: 'cash_received',       label: 'استلام نقدي',       icon: 'hand-coins',   cls: 'pill-green',  cashSign: +1, goldSign: 0,  color: 'success' },
-    cash_payment:        { key: 'cash_payment',        label: 'سداد نقدي',         icon: 'banknote',     cls: 'pill-red',    cashSign: -1, goldSign: 0,  color: 'danger' },
-    gold_received:       { key: 'gold_received',       label: 'استلام ذهب',        icon: 'package-plus', cls: 'pill-green',  cashSign: 0,  goldSign: +1, color: 'success' },
-    gold_payment:        { key: 'gold_payment',        label: 'تسليم ذهب',         icon: 'package-minus',cls: 'pill-red',    cashSign: 0,  goldSign: -1, color: 'danger' },
-    gold_settlement:     { key: 'gold_settlement',     label: 'تسوية ذهب',         icon: 'scale',        cls: 'pill-violet', cashSign: 0,  goldSign: +1, color: 'violet' },
-    cash_settlement:     { key: 'cash_settlement',     label: 'تسوية نقدية',       icon: 'sliders-horizontal', cls: 'pill-violet', cashSign: +1, goldSign: 0, color: 'violet' },
-    workmanship:         { key: 'workmanship',         label: 'مصنعية',            icon: 'hammer',       cls: 'pill-amber',  cashSign: -1, goldSign: 0,  color: 'warn' },
-    scrap_settlement:    { key: 'scrap_settlement',    label: 'تسوية كسر',         icon: 'recycle',      cls: 'pill-amber',  cashSign: 0,  goldSign: +1, color: 'warn' },
-    return_sale:         { key: 'return_sale',         label: 'مرتجع بيع',         icon: 'rotate-ccw',   cls: 'pill-blue',   cashSign: -1, goldSign: +1, color: 'info' },
-    return_purchase:     { key: 'return_purchase',     label: 'مرتجع شراء',        icon: 'undo-2',       cls: 'pill-blue',   cashSign: +1, goldSign: -1, color: 'info' },
-    adjustment:          { key: 'adjustment',          label: 'تسوية يدوية',       icon: 'settings-2',   cls: 'pill-violet', cashSign: +1, goldSign: +1, color: 'violet' },
-    opening:             { key: 'opening',             label: 'رصيد افتتاحي',      icon: 'flag',         cls: 'pill-gray',   cashSign: +1, goldSign: +1, color: 'muted' },
-  });
-
-  /* فئات المصروفات (مع أيقونات وألوان) */
-  const EXPENSE_CATEGORIES = Object.freeze([
-    { key: 'rent',        label: 'إيجار',            icon: 'home',           color: 'violet' },
-    { key: 'salaries',    label: 'رواتب وأجور',      icon: 'users',          color: 'success' },
-    { key: 'electricity', label: 'كهرباء',           icon: 'zap',            color: 'warn' },
-    { key: 'water',       label: 'مياه',             icon: 'droplets',       color: 'info' },
-    { key: 'gas',         label: 'غاز',              icon: 'flame',          color: 'danger' },
-    { key: 'internet',    label: 'إنترنت وهاتف',     icon: 'wifi',           color: 'teal' },
-    { key: 'maintenance', label: 'صيانة وإصلاح',     icon: 'wrench',         color: 'danger' },
-    { key: 'marketing',   label: 'تسويق وإعلان',     icon: 'megaphone',      color: 'violet' },
-    { key: 'transport',   label: 'نقل وشحن',         icon: 'truck',          color: 'info' },
-    { key: 'supplies',    label: 'مستلزمات وقرطاسية', icon: 'package',       color: 'teal' },
-    { key: 'insurance',   label: 'تأمينات',          icon: 'shield',         color: 'success' },
-    { key: 'taxes',       label: 'ضرائب ورسوم',      icon: 'receipt',        color: 'danger' },
-    { key: 'hospitality', label: 'ضيافة',            icon: 'coffee',         color: 'warn' },
-    { key: 'commissions', label: 'عمولات',           icon: 'hand-coins',     color: 'success' },
-    { key: 'other',       label: 'مصروفات أخرى',     icon: 'more-horizontal',color: 'muted' },
-  ]);
-
-  /* أنواع الجهات المسوّى معها */
-  const ENTITY_TYPES = Object.freeze([
-    { key: 'supplier', label: 'مورد',     icon: 'factory' },
-    { key: 'workshop', label: 'ورشة',     icon: 'hammer' },
-    { key: 'customer', label: 'عميل',     icon: 'user' },
-    { key: 'other',    label: 'أخرى',     icon: 'circle' },
-  ]);
-
-  /* مفاتيح التخزين */
-  const STORE_LEDGER = 'ledger';
-  const MAX_ENTRIES = 5000;
-
-  /* ═════════════════════════════════════════════════════════════════════
      §4 · STATE
      ═════════════════════════════════════════════════════════════════════ */
-  const AccountState = {
+  const State = {
     /* البيانات الخام */
     ledger: [],
     filtered: [],
 
     /* بيانات مساعدة */
     inventory: [],
-    sales: [],
 
     /* الحسابات */
     kpis: {
@@ -263,14 +248,17 @@
       cashRevenue: 0,
       cashExpenses: 0,
       cashPurchases: 0,
+      cashSettlements: 0,
+
       gold24Balance: 0,
       gold21Balance: 0,
       gold18Balance: 0,
       gold24Pure: 0,
       gold21Pure: 0,
       gold18Pure: 0,
-      totalPure: 0,
+
       totalNet: 0,
+      totalPure: 0,
       totalEntries: 0,
     },
 
@@ -288,42 +276,55 @@
       entity: '',
     },
 
-    /* العرض */
+    /* حالة داخلية */
     loading: false,
+    initialized: false,
 
     /* المستمعون */
     unsubscribers: [],
 
-    /* مؤقتات */
+    /* المؤقتات */
     timers: {
       search: null,
     },
-
-    /* حالة داخلية */
-    _initialized: false,
-    _initialFocusDone: false,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * ترجمة بأمان — مع fallback للنص العربي
-   */
-  function T(key, fallback) {
-    try {
-      if (GMS.I18n && typeof GMS.I18n.t === 'function') {
-        const v = GMS.I18n.t(key);
-        if (v && v !== key) return v;
-      }
-    } catch (_) {}
-    return fallback || key;
+  function esc(v) {
+    return GMS.esc ? GMS.esc(v) : String(v == null ? '' : v);
   }
 
-  /**
-   * قراءة سعر الذهب الحالي
-   */
+  function moneyFmt(v) {
+    return GMS.moneyFmt ? GMS.moneyFmt(v) : Number(v || 0).toFixed(2);
+  }
+
+  function gramFmt(v) {
+    return GMS.gramFmt ? GMS.gramFmt(v) : Number(v || 0).toFixed(3);
+  }
+
+  function intFmt(v) {
+    return GMS.intFmt ? GMS.intFmt(v) : String(Math.round(Number(v) || 0));
+  }
+
+  function round(v, d = 2) {
+    return GMS.round ? GMS.round(v, d) : Math.round((Number(v) + Number.EPSILON) * Math.pow(10, d)) / Math.pow(10, d);
+  }
+
+  function dateAr(d) {
+    try { return GMS.dateAr ? GMS.dateAr(d) : String(d || '—'); } catch (_) { return '—'; }
+  }
+
+  function dateTimeAr(d) {
+    try { return GMS.dateTimeAr ? GMS.dateTimeAr(d) : String(d || '—'); } catch (_) { return '—'; }
+  }
+
+  function timeAgo(d) {
+    try { return GMS.timeAgo ? GMS.timeAgo(d) : '—'; } catch (_) { return '—'; }
+  }
+
   function getPrice24() {
     try {
       if (GMS.Cache && GMS.Cache.getPrice) {
@@ -334,93 +335,46 @@
     return (GMS.APP_CONFIG && GMS.APP_CONFIG.DEFAULT_PRICE_24) || 4500;
   }
 
-  /**
-   * قراءة الفروع
-   */
   function getBranches() {
     try {
-      if (GMS.Demo && GMS.Demo.getBranches) return GMS.Demo.getBranches();
+      if (GMS.Demo && GMS.Demo.getBranches) return GMS.Demo.getBranches() || [];
     } catch (_) {}
     return [];
   }
 
-  /**
-   * قراءة الموردين
-   */
   function getSuppliers() {
     try {
-      if (GMS.Demo && GMS.Demo.getSuppliers) return GMS.Demo.getSuppliers();
+      if (GMS.Demo && GMS.Demo.getSuppliers) return GMS.Demo.getSuppliers() || [];
     } catch (_) {}
     return [];
   }
 
-  /**
-   * قراءة الورش
-   */
   function getWorkshops() {
     try {
-      if (GMS.Demo && GMS.Demo.getWorkshops) return GMS.Demo.getWorkshops();
+      if (GMS.Demo && GMS.Demo.getWorkshops) return GMS.Demo.getWorkshops() || [];
     } catch (_) {}
     return [];
   }
 
-  /**
-   * تنسيق رقم
-   */
-  function moneyFmt(v) {
-    return GMS.moneyFmt ? GMS.moneyFmt(v) : Number(v || 0).toFixed(2);
+  function getEntryType(key) {
+    return ENTRY_TYPES[key] || {
+      key, label: key, icon: 'activity', cls: 'pill-gray', color: 'muted',
+      cashSign: 0, goldSign: 0,
+    };
   }
 
-  /**
-   * تنسيق وزن
-   */
-  function gramFmt(v) {
-    return GMS.gramFmt ? GMS.gramFmt(v) : Number(v || 0).toFixed(3);
+  function getExpenseCategory(key) {
+    return EXPENSE_CATEGORIES.find(c => c.key === key) || {
+      key, label: 'مصروف', icon: 'receipt', color: 'muted',
+    };
   }
 
-  /**
-   * escape HTML
-   */
-  function esc(v) {
-    return GMS.esc ? GMS.esc(v) : String(v == null ? '' : v);
+  function getEntityType(key) {
+    return ENTITY_TYPES.find(e => e.key === key) || {
+      key, label: key, icon: 'circle',
+    };
   }
 
-  /**
-   * تاريخ عربي
-   */
-  function dateAr(d) {
-    try {
-      return GMS.dateAr ? GMS.dateAr(d) : String(d || '—');
-    } catch (_) {
-      return String(d || '—');
-    }
-  }
-
-  /**
-   * تاريخ ووقت عربي
-   */
-  function dateTimeAr(d) {
-    try {
-      return GMS.dateTimeAr ? GMS.dateTimeAr(d) : String(d || '—');
-    } catch (_) {
-      return String(d || '—');
-    }
-  }
-
-  /**
-   * منذ فترة
-   */
-  function timeAgo(d) {
-    try {
-      return GMS.timeAgo ? GMS.timeAgo(d) : '—';
-    } catch (_) {
-      return '—';
-    }
-  }
-
-  /**
-   * توليد رقم حركة محاسبي
-   */
   function generateEntryNo() {
     const d = new Date();
     const stamp =
@@ -434,54 +388,18 @@
     return `ACC-${stamp}-${rand}`;
   }
 
-  /**
-   * قراءة نوع الحركة
-   */
-  function getEntryType(key) {
-    return ENTRY_TYPES[key] || {
-      key,
-      label: key,
-      icon: 'activity',
-      cls: 'pill-gray',
-      color: 'muted',
-      cashSign: 0,
-      goldSign: 0,
-    };
+  function getActiveBranchId() {
+    return (GMS.Auth && GMS.Auth.profile && GMS.Auth.profile.branch_id)
+      || (GMS.APP_CONFIG && GMS.APP_CONFIG.DEFAULT_BRANCH_ID)
+      || 'br-1';
   }
 
-  /**
-   * قراءة فئة مصروف
-   */
-  function getExpenseCategory(key) {
-    return EXPENSE_CATEGORIES.find(c => c.key === key) || {
-      key,
-      label: 'مصروف',
-      icon: 'receipt',
-      color: 'muted',
-    };
-  }
-
-  /**
-   * قراءة نوع جهة
-   */
-  function getEntityType(key) {
-    return ENTITY_TYPES.find(e => e.key === key) || {
-      key,
-      label: key,
-      icon: 'circle',
-    };
-  }
-
-  /**
-   * تفريغ المستمعين
-   */
   function cleanupListeners() {
-    AccountState.unsubscribers.forEach(fn => {
+    State.unsubscribers.forEach(fn => {
       try { fn(); } catch (_) {}
     });
-    AccountState.unsubscribers = [];
-
-    clearTimeout(AccountState.timers.search);
+    State.unsubscribers = [];
+    clearTimeout(State.timers.search);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -489,24 +407,25 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * تحميل دفتر اليومية
+   * تحميل دفتر اليومية — المصدر: CacheDB + Supabase
    * @returns {Promise<Array>}
    */
   async function loadLedger() {
     try {
-      AccountState.loading = true;
+      State.loading = true;
 
       let rows = [];
 
-      /* 1 · CacheDB */
+      /* 1 · CacheDB (المصدر الأساسي) */
       try {
         rows = await CacheDB.getAll(STORE_LEDGER);
       } catch (e) {
         console.warn('[Accounting] CacheDB read failed:', e);
       }
 
-      /* 2 · Supabase (لو متصل + مسموح) */
-      if (GMS.Supabase?.isReady?.() && GMS.Auth?.can?.('viewProfitReport')) {
+      /* 2 · Supabase (إن متاح + الصلاحية موجودة) */
+      if (GMS.Supabase && GMS.Supabase.isReady && GMS.Supabase.isReady()
+          && (!GMS.Auth || !GMS.Auth.can || GMS.Auth.can('viewProfitReport'))) {
         try {
           const client = GMS.Supabase.get();
           const { data, error } = await client
@@ -516,7 +435,6 @@
             .limit(2000);
 
           if (!error && Array.isArray(data)) {
-            /* ادمج — نتجنب التكرار بالـ id */
             const ids = new Set(rows.map(r => r.id));
             data.forEach(row => {
               if (!ids.has(row.id)) rows.push(row);
@@ -527,39 +445,27 @@
         }
       }
 
-      /* 3 · أضف حركات الموردين من ledger الموردين الحالي (تكامل مع 15) */
-      try {
-        const supplierLedger = await CacheDB.getAll('entity_ledger_mirror');
-        if (Array.isArray(supplierLedger)) {
-          const ids = new Set(rows.map(r => r.id));
-          supplierLedger.forEach(row => {
-            if (!ids.has(row.id)) rows.push(row);
-          });
-        }
-      } catch (_) {}
-
-      /* ترتيب حسب التاريخ */
+      /* ترتيب تنازلي حسب التاريخ */
       rows.sort((a, b) => {
         const ta = new Date(a.entry_date || a.created_at || 0).getTime();
         const tb = new Date(b.entry_date || b.created_at || 0).getTime();
         return tb - ta;
       });
 
-      AccountState.ledger = rows.slice(0, MAX_ENTRIES);
-
-      return AccountState.ledger;
+      State.ledger = rows.slice(0, MAX_ENTRIES);
+      return State.ledger;
 
     } catch (e) {
       console.error('[Accounting] loadLedger failed:', e);
-      AccountState.ledger = [];
+      State.ledger = [];
       return [];
     } finally {
-      AccountState.loading = false;
+      State.loading = false;
     }
   }
 
   /**
-   * تحميل المخزون (لحساب أرصدة الذهب)
+   * تحميل المخزون — لحساب أرصدة الذهب عند غياب قيود
    */
   async function loadInventory() {
     try {
@@ -571,33 +477,15 @@
         } catch (_) {}
       }
 
-      if (!items.length && GMS.Demo) {
+      if (!items.length && GMS.Demo && GMS.Demo.getInventory) {
         items = GMS.Demo.getInventory();
       }
 
-      AccountState.inventory = Array.isArray(items) ? items : [];
-      return AccountState.inventory;
-
+      State.inventory = Array.isArray(items) ? items : [];
+      return State.inventory;
     } catch (e) {
       console.warn('[Accounting] loadInventory failed:', e);
-      AccountState.inventory = [];
-      return [];
-    }
-  }
-
-  /**
-   * تحميل المبيعات
-   */
-  async function loadSales() {
-    try {
-      let sales = [];
-      if (GMS.Demo && GMS.Demo.getSales) {
-        sales = GMS.Demo.getSales();
-      }
-      AccountState.sales = Array.isArray(sales) ? sales : [];
-      return AccountState.sales;
-    } catch (e) {
-      AccountState.sales = [];
+      State.inventory = [];
       return [];
     }
   }
@@ -607,25 +495,24 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * حساب المؤشرات المالية
+   * حساب كل المؤشرات المالية
    */
   function computeKPIs() {
-    const ledger = AccountState.ledger;
-    const inventory = AccountState.inventory;
+    const ledger = State.ledger;
+    const inventory = State.inventory;
 
     let cashBalance = 0;
     let cashRevenue = 0;
     let cashExpenses = 0;
     let cashPurchases = 0;
+    let cashSettlements = 0;
 
-    /* أرصدة الذهب — تُحسب من دفتر اليومية */
     const goldByKarat = {
       24: { net: 0, pure: 0 },
       21: { net: 0, pure: 0 },
       18: { net: 0, pure: 0 },
     };
 
-    /* من دفتر اليومية */
     ledger.forEach(entry => {
       const cashDelta = Number(entry.cash_delta || 0);
       const goldDelta = Number(entry.gold_delta || 0);
@@ -634,6 +521,7 @@
       const pureWeight = Number(entry.gold_pure_weight || entry.pure_weight || 0);
       const type = entry.entry_type || entry.type;
 
+      /* النقدية */
       cashBalance += cashDelta;
 
       if (type === 'sale' || type === 'return_sale') {
@@ -642,15 +530,22 @@
         cashExpenses += Math.abs(cashDelta);
       } else if (type === 'purchase') {
         cashPurchases += Math.abs(cashDelta);
+      } else if (type === 'cash_settlement' || type === 'gold_settlement') {
+        cashSettlements += cashDelta;
       }
 
+      /* الذهب — توزيع حسب العيار */
       if (karat && goldByKarat[karat]) {
-        goldByKarat[karat].net += netWeight || (goldDelta / (GMS.karatRatio(karat) || 1));
-        goldByKarat[karat].pure += pureWeight || goldDelta;
+        const ratio = GMS.karatRatio ? GMS.karatRatio(karat) : 1;
+        const net = netWeight || (ratio > 0 ? goldDelta / ratio : 0);
+        const pure = pureWeight || goldDelta;
+
+        goldByKarat[karat].net += net;
+        goldByKarat[karat].pure += pure;
       }
     });
 
-    /* من المخزون المتوفر (إذا لم تكن هناك قيود كافية) */
+    /* fallback — إذا كان الدفتر فارغاً، نستخدم المخزون */
     if (ledger.length === 0 && inventory.length > 0) {
       inventory.forEach(item => {
         if (item.status !== 'IN_STOCK') return;
@@ -662,7 +557,6 @@
       });
     }
 
-    /* حساب الإجماليات */
     let totalNet = 0;
     let totalPure = 0;
     [24, 21, 18].forEach(k => {
@@ -670,40 +564,37 @@
       totalPure += goldByKarat[k].pure;
     });
 
-    AccountState.kpis = {
-      cashBalance: GMS.round ? GMS.round(cashBalance, 2) : Number(cashBalance.toFixed(2)),
-      cashRevenue: GMS.round ? GMS.round(cashRevenue, 2) : Number(cashRevenue.toFixed(2)),
-      cashExpenses: GMS.round ? GMS.round(cashExpenses, 2) : Number(cashExpenses.toFixed(2)),
-      cashPurchases: GMS.round ? GMS.round(cashPurchases, 2) : Number(cashPurchases.toFixed(2)),
+    State.kpis = {
+      cashBalance: round(cashBalance, 2),
+      cashRevenue: round(cashRevenue, 2),
+      cashExpenses: round(cashExpenses, 2),
+      cashPurchases: round(cashPurchases, 2),
+      cashSettlements: round(cashSettlements, 2),
 
-      gold24Balance: GMS.round ? GMS.round(goldByKarat[24].net, 3) : Number(goldByKarat[24].net.toFixed(3)),
-      gold21Balance: GMS.round ? GMS.round(goldByKarat[21].net, 3) : Number(goldByKarat[21].net.toFixed(3)),
-      gold18Balance: GMS.round ? GMS.round(goldByKarat[18].net, 3) : Number(goldByKarat[18].net.toFixed(3)),
+      gold24Balance: round(goldByKarat[24].net, 3),
+      gold21Balance: round(goldByKarat[21].net, 3),
+      gold18Balance: round(goldByKarat[18].net, 3),
+      gold24Pure: round(goldByKarat[24].pure, 4),
+      gold21Pure: round(goldByKarat[21].pure, 4),
+      gold18Pure: round(goldByKarat[18].pure, 4),
 
-      gold24Pure: GMS.round ? GMS.round(goldByKarat[24].pure, 4) : Number(goldByKarat[24].pure.toFixed(4)),
-      gold21Pure: GMS.round ? GMS.round(goldByKarat[21].pure, 4) : Number(goldByKarat[21].pure.toFixed(4)),
-      gold18Pure: GMS.round ? GMS.round(goldByKarat[18].pure, 4) : Number(goldByKarat[18].pure.toFixed(4)),
-
-      totalNet: GMS.round ? GMS.round(totalNet, 3) : Number(totalNet.toFixed(3)),
-      totalPure: GMS.round ? GMS.round(totalPure, 4) : Number(totalPure.toFixed(4)),
+      totalNet: round(totalNet, 3),
+      totalPure: round(totalPure, 4),
       totalEntries: ledger.length,
     };
 
-    return AccountState.kpis;
+    return State.kpis;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · FILTERS
+     §8 · FILTERS + PAGINATION
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تطبيق الفلاتر
-   */
   function applyFilters() {
-    const f = AccountState.filters;
-    let rows = AccountState.ledger.slice();
+    const f = State.filters;
+    let rows = State.ledger.slice();
 
-    /* البحث */
+    /* البحث النصي */
     if (f.search) {
       const q = f.search.toLowerCase().trim();
       rows = rows.filter(r => {
@@ -717,12 +608,10 @@
 
     /* نوع الحركة */
     if (f.type) {
-      rows = rows.filter(r =>
-        (r.entry_type || r.type) === f.type
-      );
+      rows = rows.filter(r => (r.entry_type || r.type) === f.type);
     }
 
-    /* التاريخ من */
+    /* التاريخ — من */
     if (f.dateFrom) {
       rows = rows.filter(r => {
         const d = (r.entry_date || r.created_at || '').slice(0, 10);
@@ -730,7 +619,7 @@
       });
     }
 
-    /* التاريخ إلى */
+    /* التاريخ — إلى */
     if (f.dateTo) {
       rows = rows.filter(r => {
         const d = (r.entry_date || r.created_at || '').slice(0, 10);
@@ -741,42 +630,32 @@
     /* الجهة */
     if (f.entity) {
       rows = rows.filter(r =>
-        (r.entity_type === f.entity) ||
-        (r.entity_id === f.entity)
+        r.entity_type === f.entity || r.entity_id === f.entity
       );
     }
 
-    AccountState.filtered = rows;
-    AccountState.totalPages = Math.max(1, Math.ceil(rows.length / AccountState.pageSize));
+    State.filtered = rows;
+    State.totalPages = Math.max(1, Math.ceil(rows.length / State.pageSize));
 
-    if (AccountState.page > AccountState.totalPages) {
-      AccountState.page = AccountState.totalPages;
-    }
+    if (State.page > State.totalPages) State.page = State.totalPages;
 
     return rows;
   }
 
-  /**
-   * قراءة عناصر الصفحة الحالية
-   */
   function getPageItems() {
-    const start = (AccountState.page - 1) * AccountState.pageSize;
-    const end = start + AccountState.pageSize;
-    return AccountState.filtered.slice(start, end);
+    const start = (State.page - 1) * State.pageSize;
+    return State.filtered.slice(start, start + State.pageSize);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · HTML RENDERERS
+     §9 · HTML RENDERERS — KPI CARDS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * بطاقات KPI
-   */
   function renderKPIs() {
-    const k = AccountState.kpis;
+    const k = State.kpis;
     const price24 = getPrice24();
     const cashCls = k.cashBalance >= 0 ? 'success' : 'danger';
-    const goldValue = GMS.round ? GMS.round(k.totalPure * price24, 2) : Number((k.totalPure * price24).toFixed(2));
+    const goldValue = round(k.totalPure * price24, 2);
 
     return `
       <div class="kpi-row cols-4">
@@ -791,8 +670,8 @@
             <small>ج.م</small>
           </div>
           <div class="kpi-meta">
-            مبيعات: <b>${moneyFmt(k.cashRevenue)}</b> ·
-            مصروفات: <b>${moneyFmt(k.cashExpenses)}</b>
+            مبيعات: <b>${moneyFmt(k.cashRevenue)}</b>
+            · مصروفات: <b>${moneyFmt(k.cashExpenses)}</b>
           </div>
         </div>
 
@@ -842,7 +721,7 @@
         </div>
       </div>
 
-      <!-- صف ثانوي: إجمالي الذهب والقيمة -->
+      <!-- الصف الثانوي -->
       <div class="kpi-row cols-3">
         <div class="kpi gold">
           <div class="kpi-label">
@@ -868,7 +747,7 @@
             <small>جم</small>
           </div>
           <div class="kpi-meta">
-            القيمة: <b>${moneyFmt(goldValue)}</b> ج.م
+            القيمة السوقية: <b>${moneyFmt(goldValue)}</b> ج.م
           </div>
         </div>
 
@@ -878,7 +757,7 @@
             عدد الحركات
           </div>
           <div class="kpi-value">
-            ${GMS.intFmt ? GMS.intFmt(k.totalEntries) : k.totalEntries}
+            ${intFmt(k.totalEntries)}
           </div>
           <div class="kpi-meta">
             في دفتر اليومية
@@ -888,9 +767,10 @@
     `;
   }
 
-  /**
-   * شريط الأدوات
-   */
+  /* ═════════════════════════════════════════════════════════════════════
+     §10 · HTML RENDERERS — TOOLBAR
+     ═════════════════════════════════════════════════════════════════════ */
+
   function renderToolbar() {
     return `
       <div class="card" style="margin-bottom:16px">
@@ -899,14 +779,14 @@
             <i data-lucide="search"></i>
             <input id="acc-search-input"
                    placeholder="بحث برقم الحركة، البيان، أو المورد…"
-                   value="${esc(AccountState.filters.search)}"
+                   value="${esc(State.filters.search)}"
                    autocomplete="off">
           </div>
 
           <select class="filter-select" id="acc-filter-type" style="min-width:170px">
             <option value="">كل الأنواع</option>
             ${Object.values(ENTRY_TYPES).map(t => `
-              <option value="${t.key}" ${AccountState.filters.type === t.key ? 'selected' : ''}>
+              <option value="${t.key}" ${State.filters.type === t.key ? 'selected' : ''}>
                 ${t.label}
               </option>
             `).join('')}
@@ -914,13 +794,13 @@
 
           <div class="field" style="min-width:140px;max-width:160px">
             <input type="date" id="acc-filter-from"
-                   value="${esc(AccountState.filters.dateFrom)}"
+                   value="${esc(State.filters.dateFrom)}"
                    style="padding:8px 12px">
           </div>
 
           <div class="field" style="min-width:140px;max-width:160px">
             <input type="date" id="acc-filter-to"
-                   value="${esc(AccountState.filters.dateTo)}"
+                   value="${esc(State.filters.dateTo)}"
                    style="padding:8px 12px">
           </div>
 
@@ -928,27 +808,27 @@
 
           <span class="chip info">
             <i data-lucide="database" style="width:12px;height:12px"></i>
-            ${(GMS.intFmt ? GMS.intFmt(AccountState.filtered.length) : AccountState.filtered.length)} حركة
+            ${intFmt(State.filtered.length)} حركة
           </span>
 
-          <button class="btn btn-sm" id="acc-export-btn">
+          <button class="btn btn-sm" id="acc-export-btn" type="button">
             <i data-lucide="download"></i>
             تصدير
           </button>
         </div>
 
         <div class="toolbar-row">
-          <button class="btn btn-primary btn-sm" id="acc-new-expense">
+          <button class="btn btn-primary btn-sm" id="acc-new-expense" type="button">
             <i data-lucide="plus-circle"></i>
             مصروف جديد
           </button>
 
-          <button class="btn btn-info btn-sm" id="acc-new-settlement">
+          <button class="btn btn-info btn-sm" id="acc-new-settlement" type="button">
             <i data-lucide="scale"></i>
             تسوية ذهب/نقد
           </button>
 
-          <button class="btn btn-sm" id="acc-refresh-btn">
+          <button class="btn btn-sm" id="acc-refresh-btn" type="button">
             <i data-lucide="refresh-cw"></i>
             تحديث
           </button>
@@ -957,20 +837,18 @@
     `;
   }
 
-  /**
-   * صف في جدول اليومية
-   */
-  function renderEntryRow(entry, idx) {
+  /* ═════════════════════════════════════════════════════════════════════
+     §11 · HTML RENDERERS — LEDGER TABLE
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function renderEntryRow(entry) {
     const type = getEntryType(entry.entry_type || entry.type);
     const cashDelta = Number(entry.cash_delta || 0);
     const goldDelta = Number(entry.gold_delta || 0);
     const karat = Number(entry.gold_karat || entry.karat || 0);
-    const netWeight = Number(entry.gold_net_weight || entry.net_weight || 0);
-    const pureWeight = Number(entry.gold_pure_weight || entry.pure_weight || 0);
 
     const date = entry.entry_date || entry.created_at;
 
-    /* ألوان المبالغ */
     const cashCls = cashDelta > 0 ? 'pill-green'
                   : cashDelta < 0 ? 'pill-red'
                   : 'pill-gray';
@@ -980,18 +858,14 @@
                   : 'pill-gray';
 
     return `
-      <tr data-entry-id="${esc(entry.id)}">
+      <tr data-entry-id="${esc(entry.id)}" style="cursor:pointer">
         <td class="mono" style="font-weight:800;font-size:11.5px">
           ${esc(entry.entry_no || entry.id || '—')}
         </td>
         <td style="font-size:11px;color:var(--muted)">
           <div style="display:flex;flex-direction:column;line-height:1.3">
-            <span class="mono" style="font-weight:700">
-              ${esc(dateAr(date))}
-            </span>
-            <span class="mono" style="font-size:10px">
-              ${timeAgo(date)}
-            </span>
+            <span class="mono" style="font-weight:700">${esc(dateAr(date))}</span>
+            <span class="mono" style="font-size:10px">${timeAgo(date)}</span>
           </div>
         </td>
         <td>
@@ -1000,21 +874,19 @@
             ${esc(type.label)}
           </span>
         </td>
-        <td style="font-size:11.5px">
-          ${esc(entry.description || '—')}
-        </td>
-        <td class="col-num" style="font-weight:900">
+        <td style="font-size:11.5px">${esc(entry.description || '—')}</td>
+        <td class="col-num">
           ${cashDelta !== 0
             ? `<span class="pill ${cashCls}" style="font-family:var(--font-mono);font-size:11px">
-                ${cashDelta > 0 ? '+' : ''}${moneyFmt(Math.abs(cashDelta))}
-              </span>`
+                 ${cashDelta > 0 ? '+' : '−'}${moneyFmt(Math.abs(cashDelta))}
+               </span>`
             : '<span style="color:var(--muted)">—</span>'}
         </td>
         <td class="col-num">
           ${goldDelta !== 0
             ? `<span class="pill ${goldCls}" style="font-family:var(--font-mono);font-size:11px">
-                ${goldDelta > 0 ? '+' : ''}${gramFmt(Math.abs(goldDelta))}
-              </span>`
+                 ${goldDelta > 0 ? '+' : '−'}${gramFmt(Math.abs(goldDelta))}
+               </span>`
             : '<span style="color:var(--muted)">—</span>'}
         </td>
         <td class="col-c">
@@ -1031,22 +903,19 @@
     `;
   }
 
-  /**
-   * جدول اليومية
-   */
   function renderLedgerTable() {
     const pageItems = getPageItems();
 
-    if (AccountState.filtered.length === 0) {
+    if (State.filtered.length === 0) {
       return `
         <div class="empty" style="padding:80px 20px">
           <i data-lucide="book-open"></i>
           <p>لا توجد حركات محاسبية</p>
-          <span>${AccountState.filters.search || AccountState.filters.type
+          <span>${State.filters.search || State.filters.type
             ? 'جرّب تعديل الفلاتر'
             : 'ابدأ بتسجيل مصروف أو تسوية'}</span>
           <div style="margin-top:16px">
-            <button class="btn btn-primary btn-sm" id="acc-empty-expense">
+            <button class="btn btn-primary btn-sm" id="acc-empty-expense" type="button">
               <i data-lucide="plus-circle"></i>
               مصروف جديد
             </button>
@@ -1060,29 +929,26 @@
         <table class="tbl">
           <thead>
             <tr>
-              <th style="width:140px">رقم الحركة</th>
+              <th style="width:150px">رقم الحركة</th>
               <th style="width:120px">التاريخ</th>
               <th style="width:130px">النوع</th>
               <th>البيان</th>
               <th style="width:140px" class="col-num">المبلغ النقدي</th>
               <th style="width:130px" class="col-num">وزن الذهب</th>
-              <th style="width:70px" class="col-c">العيار</th>
-              <th style="width:60px" class="col-c">—</th>
+              <th style="width:70px"  class="col-c">العيار</th>
+              <th style="width:60px"  class="col-c">—</th>
             </tr>
           </thead>
           <tbody>
-            ${pageItems.map((e, i) => renderEntryRow(e, i)).join('')}
+            ${pageItems.map(renderEntryRow).join('')}
           </tbody>
         </table>
       </div>
     `;
   }
 
-  /**
-   * الترقيم
-   */
   function renderPagination() {
-    const { page, totalPages, pageSize, filtered } = AccountState;
+    const { page, totalPages, pageSize, filtered } = State;
 
     if (totalPages <= 1) return '';
 
@@ -1092,22 +958,19 @@
     const pageButtons = [];
     const winSize = 2;
     const from = Math.max(1, page - winSize);
-    const to = Math.min(totalPages, page + winSize);
+    const to   = Math.min(totalPages, page + winSize);
 
     const btn = (p, label, opts = {}) => `
       <button class="pg-btn ${opts.active ? 'active' : ''}"
               data-acc-page="${p}"
+              type="button"
               ${opts.disabled ? 'disabled' : ''}>
         ${label}
       </button>
     `;
 
-    pageButtons.push(btn(1,
-      '<i data-lucide="chevrons-right" style="width:14px;height:14px"></i>',
-      { disabled: page === 1 }));
-    pageButtons.push(btn(page - 1,
-      '<i data-lucide="chevron-right" style="width:14px;height:14px"></i>',
-      { disabled: page === 1 }));
+    pageButtons.push(btn(1, '<i data-lucide="chevrons-right" style="width:14px;height:14px"></i>', { disabled: page === 1 }));
+    pageButtons.push(btn(page - 1, '<i data-lucide="chevron-right" style="width:14px;height:14px"></i>', { disabled: page === 1 }));
 
     if (from > 1) {
       pageButtons.push(btn(1, '1'));
@@ -1123,21 +986,17 @@
       pageButtons.push(btn(totalPages, String(totalPages)));
     }
 
-    pageButtons.push(btn(page + 1,
-      '<i data-lucide="chevron-left" style="width:14px;height:14px"></i>',
-      { disabled: page === totalPages }));
-    pageButtons.push(btn(totalPages,
-      '<i data-lucide="chevrons-left" style="width:14px;height:14px"></i>',
-      { disabled: page === totalPages }));
+    pageButtons.push(btn(page + 1, '<i data-lucide="chevron-left" style="width:14px;height:14px"></i>', { disabled: page === totalPages }));
+    pageButtons.push(btn(totalPages, '<i data-lucide="chevrons-left" style="width:14px;height:14px"></i>', { disabled: page === totalPages }));
 
     return `
       <div class="pager">
         <div class="pg-info">
           <i data-lucide="rows-3" style="width:14px;height:14px"></i>
           <span>عرض</span>
-          <b>${GMS.intFmt ? GMS.intFmt(startIdx) : startIdx}–${GMS.intFmt ? GMS.intFmt(endIdx) : endIdx}</b>
+          <b>${intFmt(startIdx)}–${intFmt(endIdx)}</b>
           <span>من</span>
-          <b>${GMS.intFmt ? GMS.intFmt(filtered.length) : filtered.length}</b>
+          <b>${intFmt(filtered.length)}</b>
           <span class="sep">·</span>
           <span>صفحة</span>
           <b>${page}</b>
@@ -1163,14 +1022,19 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · MAIN RENDER
+     §12 · MAIN RENDER
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * تصيير الصفحة
+   * تصيير الصفحة الكاملة
    * @param {Element} root
    */
   async function render(root) {
+    if (!root) {
+      console.warn('[Accounting.render] No root element');
+      return;
+    }
+
     try {
       /* حالة التحميل */
       root.innerHTML = `
@@ -1185,7 +1049,6 @@
       /* تحميل البيانات */
       await loadLedger();
       await loadInventory();
-      await loadSales();
 
       /* الحسابات */
       computeKPIs();
@@ -1205,7 +1068,6 @@
         </div>
 
         ${renderKPIs()}
-
         ${renderToolbar()}
 
         <div class="card">
@@ -1216,7 +1078,7 @@
             </h3>
             <div class="spacer" style="flex:1"></div>
             <span class="card-sub">
-              ${AccountState.ledger.length} حركة في الدفتر
+              ${intFmt(State.ledger.length)} حركة في الدفتر
             </span>
           </div>
 
@@ -1230,9 +1092,9 @@
         </div>
       `;
 
+      /* الأيقونات + الأحداث */
       window.lucide?.createIcons();
 
-      /* الأحداث */
       if (typeof afterRender === 'function') afterRender();
       if (typeof initEvents === 'function') initEvents();
 
@@ -1246,7 +1108,7 @@
               <p>فشل تحميل الصفحة المحاسبية</p>
               <span>${esc(e.message)}</span>
               <div style="margin-top:16px">
-                <button class="btn btn-primary" id="acc-retry-btn">
+                <button class="btn btn-primary" id="acc-retry-btn" type="button">
                   <i data-lucide="refresh-cw"></i>
                   إعادة المحاولة
                 </button>
@@ -1265,18 +1127,14 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · EXPENSE MODAL
-     ─────────────────────────────────────────────────────────────────────
-     نافذة تسجيل مصروف تشغيلي
+     §13 · EXPENSE MODAL
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * فتح نافذة إضافة مصروف
-   */
   function openExpenseModal() {
     try {
       const branches = getBranches();
       const today = new Date().toISOString().slice(0, 10);
+      const defaultBranch = getActiveBranchId();
 
       GMS.Modal.open({
         title: 'تسجيل مصروف تشغيلي',
@@ -1329,7 +1187,7 @@
               <label>الفرع</label>
               <select id="exp-branch">
                 ${branches.map(b => `
-                  <option value="${b.id}" ${GMS.Auth?.profile?.branch_id === b.id ? 'selected' : ''}>
+                  <option value="${b.id}" ${defaultBranch === b.id ? 'selected' : ''}>
                     ${esc(b.name)}
                   </option>
                 `).join('')}
@@ -1353,7 +1211,6 @@
             </div>
           </div>
 
-          <!-- Live preview -->
           <div id="exp-preview"
                style="margin-top:16px;padding:14px;
                       background:var(--warn-bg);border-radius:11px;
@@ -1364,14 +1221,14 @@
             </div>
             <div style="font-family:var(--font-mono);font-size:12.5px;
                         font-weight:700;color:var(--text-2);line-height:1.9">
-              <div>ح/ مصروفات &nbsp;<span style="color:var(--danger)">مدين</span></div>
-              <div>ح/ النقدية &nbsp;<span style="color:var(--success)">دائن</span></div>
+              ح/ مصروفات &nbsp;<span style="color:var(--danger)">مدين</span><br>
+              ح/ النقدية &nbsp;<span style="color:var(--success)">دائن</span>
             </div>
           </div>
         `,
         footer: `
           <button class="btn" data-close>إلغاء</button>
-          <button class="btn btn-primary btn-lg" id="exp-save">
+          <button class="btn btn-primary btn-lg" id="exp-save" type="button">
             <i data-lucide="save"></i>
             حفظ المصروف
           </button>
@@ -1420,12 +1277,8 @@
 
           updatePreview();
 
-          /* حفظ */
-          $('exp-save').onclick = async () => {
-            await saveExpense(el, close);
-          };
+          $('exp-save').onclick = () => saveExpense(el, close);
 
-          /* Focus على المبلغ */
           setTimeout(() => {
             const amt = $('exp-amount');
             if (amt) {
@@ -1441,7 +1294,7 @@
   }
 
   /**
-   * حفظ المصروف
+   * حفظ مصروف تشغيلي
    */
   async function saveExpense(el, closeFn) {
     try {
@@ -1453,7 +1306,7 @@
       const method = $('exp-payment-method')?.value || 'cash';
       const paidTo = $('exp-paid-to')?.value.trim() || '';
       const receiptNo = $('exp-receipt-no')?.value.trim() || '';
-      const branchId = $('exp-branch')?.value || GMS.APP_CONFIG?.DEFAULT_BRANCH_ID || 'br-1';
+      const branchId = $('exp-branch')?.value || getActiveBranchId();
       const costCenter = $('exp-cost-center')?.value || 'general';
       const description = $('exp-description')?.value.trim() || '';
 
@@ -1477,24 +1330,23 @@
 
       const now = new Date().toISOString();
       const categoryLabel = getExpenseCategory(category).label;
+      const entryNo = generateEntryNo();
 
       /* بناء القيد المحاسبي */
       const entry = {
         id: GMS.uid(),
-        entry_no: generateEntryNo(),
+        entry_no: entryNo,
         entry_date: date + 'T' + new Date().toTimeString().slice(0, 8),
         created_at: now,
         entry_type: 'expense',
         type: 'expense',
 
-        /* المبالغ */
         cash_delta: -amount,
         gold_delta: 0,
         gold_karat: null,
         gold_net_weight: null,
         gold_pure_weight: null,
 
-        /* التفاصيل */
         expense_category: category,
         expense_category_label: categoryLabel,
         payment_method: method,
@@ -1502,26 +1354,24 @@
         receipt_no: receiptNo,
         cost_center: costCenter,
         description: description || `${categoryLabel}${paidTo ? ' — ' + paidTo : ''}`,
-        reference_no: receiptNo || entry_no,
+        reference_no: receiptNo || entryNo,
 
-        /* الجهة */
         entity_type: 'expense',
         entity_id: null,
         entity_name: paidTo || categoryLabel,
 
-        /* الفرع والمستخدم */
         branch_id: branchId,
         branch_name: getBranches().find(b => b.id === branchId)?.name || '—',
-        created_by: GMS.Auth?.profile?.full_name || '—',
-        created_by_id: GMS.Auth?.user?.id || null,
+        created_by: (GMS.Auth && GMS.Auth.profile && GMS.Auth.profile.full_name) || '—',
+        created_by_id: (GMS.Auth && GMS.Auth.user && GMS.Auth.user.id) || null,
       };
 
-      /* 1 · حفظ في CacheDB */
+      /* 1 · CacheDB */
       const saved = await CacheDB.save(STORE_LEDGER, entry);
       if (!saved) throw new Error('فشل الحفظ في الذاكرة المحلية');
 
       /* 2 · Supabase */
-      if (GMS.Supabase?.isReady?.()) {
+      if (GMS.Supabase && GMS.Supabase.isReady && GMS.Supabase.isReady()) {
         try {
           await GMS.Supabase.get()
             .from(GMS.SUPABASE_CONFIG.TABLES.GENERAL_LEDGER)
@@ -1540,8 +1390,7 @@
             });
         } catch (e) {
           console.warn('[Accounting.saveExpense] Supabase failed:', e);
-          /* أضف للطابور */
-          if (GMS.IDB?.queueAdd) {
+          if (GMS.IDB && GMS.IDB.queueAdd) {
             try {
               await GMS.IDB.queueAdd({
                 id: 'exp-' + entry.id,
@@ -1558,41 +1407,29 @@
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
-            'CREATE',
-            'expense',
-            entry.id,
+            'CREATE', 'expense', entry.id,
             `مصروف تشغيلي — ${categoryLabel} · ${moneyFmt(amount)} ج.م`,
-            {
-              entry_no: entry.entry_no,
-              category: category,
-              amount: amount,
-              paid_to: paidTo,
-            }
+            { entry_no: entry.entry_no, category, amount, paid_to: paidTo }
           );
         } catch (_) {}
       }
 
       /* 4 · Realtime */
       if (GMS.Realtime) {
-        try {
-          GMS.Realtime.emit('general_ledger', 'INSERT', entry);
-        } catch (_) {}
+        try { GMS.Realtime.emit('general_ledger', 'INSERT', entry); } catch (_) {}
       }
 
       /* 5 · تحديث الحالة */
-      AccountState.ledger.unshift(entry);
+      State.ledger.unshift(entry);
       computeKPIs();
       applyFilters();
 
       /* 6 · Feedback */
       GMS.Beep?.success?.();
-      GMS.Toast.ok(
-        'تم تسجيل المصروف',
-        `${categoryLabel} · ${moneyFmt(amount)} ج.م`
-      );
+      GMS.Toast.ok('تم تسجيل المصروف', `${categoryLabel} · ${moneyFmt(amount)} ج.م`);
 
-      /* 7 · إغلاق وإعادة التوجيه */
-      closeFn();
+      /* 7 · إغلاق + توجيه */
+      if (typeof closeFn === 'function') closeFn();
       window.App.navigateTo('accounting');
 
     } catch (e) {
@@ -1610,14 +1447,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · SETTLEMENT MODAL
-     ─────────────────────────────────────────────────────────────────────
-     نافذة تسوية ذهب أو نقد مع مورد / ورشة / عميل
+     §14 · SETTLEMENT MODAL
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * فتح نافذة تسوية
-   */
   function openSettlementModal() {
     try {
       const suppliers = getSuppliers();
@@ -1685,7 +1517,8 @@
               نوع التسوية
             </div>
             <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
-              <button type="button" data-settle="gold" class="settlement-type-btn active"
+              <button type="button" data-settle="gold"
+                      class="settlement-type-btn active"
                       style="padding:12px;border-radius:11px;
                              border:1.5px solid var(--primary);
                              background:var(--gold-soft);cursor:pointer;
@@ -1695,7 +1528,8 @@
                 <i data-lucide="gem" style="width:16px;height:16px"></i>
                 تسوية ذهب
               </button>
-              <button type="button" data-settle="cash" class="settlement-type-btn"
+              <button type="button" data-settle="cash"
+                      class="settlement-type-btn"
                       style="padding:12px;border-radius:11px;
                              border:1.5px solid var(--border);
                              background:var(--surface-2);cursor:pointer;
@@ -1859,7 +1693,7 @@
         `,
         footer: `
           <button class="btn" data-close>إلغاء</button>
-          <button class="btn btn-primary btn-lg" id="set-save">
+          <button class="btn btn-primary btn-lg" id="set-save" type="button">
             <i data-lucide="save"></i>
             حفظ التسوية
           </button>
@@ -1867,17 +1701,15 @@
         onMount: (el, close) => {
           const $ = (id) => el.querySelector('#' + id);
 
-          /* حالة داخلية */
           const state = {
             entityType: 'supplier',
             settlementType: 'gold',
           };
 
-          /* ─── نوع الجهة ─── */
+          /* نوع الجهة */
           el.querySelectorAll('[data-entity-type]').forEach(btn => {
             btn.onclick = () => {
               state.entityType = btn.dataset.entityType;
-
               el.querySelectorAll('[data-entity-type]').forEach(b => {
                 const active = b === btn;
                 b.style.borderColor = active ? 'var(--primary)' : 'var(--border)';
@@ -1890,11 +1722,10 @@
             };
           });
 
-          /* ─── نوع التسوية ─── */
+          /* نوع التسوية */
           el.querySelectorAll('[data-settle]').forEach(btn => {
             btn.onclick = () => {
               state.settlementType = btn.dataset.settle;
-
               el.querySelectorAll('[data-settle]').forEach(b => {
                 const active = b === btn;
                 b.style.borderColor = active ? 'var(--primary)' : 'var(--border)';
@@ -1917,7 +1748,7 @@
             };
           });
 
-          /* ─── حساب الذهب ─── */
+          /* حساب الذهب */
           const recalcGold = () => {
             const karat = Number($('set-karat')?.value) || 21;
             const gross = parseFloat($('set-gross')?.value) || 0;
@@ -1929,14 +1760,9 @@
             const price24 = getPrice24();
             const value = pure * price24;
 
-            const netEl = $('set-net');
-            if (netEl) netEl.value = net.toFixed(3);
-
-            const pureEl = $('set-pure');
-            if (pureEl) pureEl.value = pure.toFixed(3);
-
-            const valueEl = $('set-value');
-            if (valueEl) valueEl.value = moneyFmt(value) + ' ج.م';
+            if ($('set-net')) $('set-net').value = net.toFixed(3);
+            if ($('set-pure')) $('set-pure').value = pure.toFixed(3);
+            if ($('set-value')) $('set-value').value = moneyFmt(value) + ' ج.م';
 
             updatePreview();
           };
@@ -1949,13 +1775,10 @@
             }
           });
 
-          /* ─── حساب النقد ─── */
           const cashInput = $('set-cash-amount');
-          if (cashInput) {
-            cashInput.addEventListener('input', updatePreview);
-          }
+          if (cashInput) cashInput.addEventListener('input', updatePreview);
 
-          /* ─── معاينة ─── */
+          /* معاينة */
           function updatePreview() {
             const preview = $('set-preview');
             if (!preview) return;
@@ -2009,7 +1832,6 @@
             }
           }
 
-          /* اتجاهات */
           el.querySelectorAll('input[name="set-direction"]').forEach(r => {
             r.addEventListener('change', updatePreview);
           });
@@ -2017,19 +1839,15 @@
             r.addEventListener('change', updatePreview);
           });
 
-          /* الجهة */
           const entitySelect = $('set-entity');
           if (entitySelect) entitySelect.addEventListener('change', updatePreview);
 
           /* حفظ */
           const saveBtn = $('set-save');
           if (saveBtn) {
-            saveBtn.onclick = async () => {
-              await saveSettlement(el, close, state);
-            };
+            saveBtn.onclick = () => saveSettlement(el, close, state);
           }
 
-          /* Focus أولي */
           setTimeout(() => {
             const grossInput = $('set-gross');
             if (grossInput) {
@@ -2045,7 +1863,7 @@
   }
 
   /**
-   * حفظ التسوية
+   * حفظ تسوية ذهب/نقد
    */
   async function saveSettlement(el, closeFn, state) {
     try {
@@ -2062,6 +1880,7 @@
       const entityName = entitySelect.selectedOptions?.[0]?.dataset?.name || '—';
       const description = $('set-description')?.value.trim() || '';
       const reference = $('set-reference')?.value.trim() || '';
+      const now = new Date().toISOString();
 
       let entry = null;
 
@@ -2081,14 +1900,14 @@
         const pure = net * ratio;
         const price24 = getPrice24();
         const value = pure * price24;
-
         const sign = direction === 'in' ? +1 : -1;
+        const entryNo = generateEntryNo();
 
         entry = {
           id: GMS.uid(),
-          entry_no: generateEntryNo(),
-          entry_date: new Date().toISOString(),
-          created_at: new Date().toISOString(),
+          entry_no: entryNo,
+          entry_date: now,
+          created_at: now,
           entry_type: 'gold_settlement',
           type: 'gold_settlement',
 
@@ -2100,19 +1919,18 @@
           gold_value_egp: sign * value,
 
           description: description || `تسوية ذهب — ${entityName} (${direction === 'in' ? 'استلام' : 'تسليم'})`,
-          reference_no: reference || entry.no,
+          reference_no: reference || entryNo,
           settlement_direction: direction,
 
           entity_type: entityType,
           entity_id: entityId,
           entity_name: entityName,
 
-          branch_id: GMS.Auth?.profile?.branch_id || GMS.APP_CONFIG?.DEFAULT_BRANCH_ID || 'br-1',
-          created_by: GMS.Auth?.profile?.full_name || '—',
-          created_by_id: GMS.Auth?.user?.id || null,
+          branch_id: getActiveBranchId(),
+          created_by: (GMS.Auth && GMS.Auth.profile && GMS.Auth.profile.full_name) || '—',
+          created_by_id: (GMS.Auth && GMS.Auth.user && GMS.Auth.user.id) || null,
         };
       } else {
-        /* cash settlement */
         const amount = parseFloat($('set-cash-amount')?.value) || 0;
         const direction = el.querySelector('input[name="set-cash-direction"]:checked')?.value || 'in';
 
@@ -2122,12 +1940,13 @@
         }
 
         const sign = direction === 'in' ? +1 : -1;
+        const entryNo = generateEntryNo();
 
         entry = {
           id: GMS.uid(),
-          entry_no: generateEntryNo(),
-          entry_date: new Date().toISOString(),
-          created_at: new Date().toISOString(),
+          entry_no: entryNo,
+          entry_date: now,
+          created_at: now,
           entry_type: 'cash_settlement',
           type: 'cash_settlement',
 
@@ -2138,20 +1957,19 @@
           gold_pure_weight: null,
 
           description: description || `تسوية نقدية — ${entityName} (${direction === 'in' ? 'استلام' : 'سداد'})`,
-          reference_no: reference || entry.no,
+          reference_no: reference || entryNo,
           settlement_direction: direction,
 
           entity_type: entityType,
           entity_id: entityId,
           entity_name: entityName,
 
-          branch_id: GMS.Auth?.profile?.branch_id || GMS.APP_CONFIG?.DEFAULT_BRANCH_ID || 'br-1',
-          created_by: GMS.Auth?.profile?.full_name || '—',
-          created_by_id: GMS.Auth?.user?.id || null,
+          branch_id: getActiveBranchId(),
+          created_by: (GMS.Auth && GMS.Auth.profile && GMS.Auth.profile.full_name) || '—',
+          created_by_id: (GMS.Auth && GMS.Auth.user && GMS.Auth.user.id) || null,
         };
       }
 
-      /* تعطيل الزر */
       const saveBtn = $('set-save');
       if (saveBtn) {
         saveBtn.disabled = true;
@@ -2164,7 +1982,7 @@
       if (!saved) throw new Error('فشل الحفظ المحلي');
 
       /* 2 · Supabase */
-      if (GMS.Supabase?.isReady?.()) {
+      if (GMS.Supabase && GMS.Supabase.isReady && GMS.Supabase.isReady()) {
         try {
           await GMS.Supabase.get()
             .from(GMS.SUPABASE_CONFIG.TABLES.GENERAL_LEDGER)
@@ -2186,13 +2004,13 @@
             });
         } catch (e) {
           console.warn('[Accounting.saveSettlement] Supabase failed:', e);
-          if (GMS.IDB?.queueAdd) {
+          if (GMS.IDB && GMS.IDB.queueAdd) {
             try {
               await GMS.IDB.queueAdd({
                 id: 'set-' + entry.id,
                 type: 'settlement_create',
                 entry,
-                created_at: new Date().toISOString(),
+                created_at: now,
               });
             } catch (_) {}
           }
@@ -2203,9 +2021,7 @@
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
-            'CREATE',
-            'settlement',
-            entry.id,
+            'CREATE', 'settlement', entry.id,
             `تسوية ${state.settlementType === 'gold' ? 'ذهب' : 'نقد'} — ${entityName}`,
             {
               entry_no: entry.entry_no,
@@ -2219,25 +2035,20 @@
 
       /* 4 · Realtime */
       if (GMS.Realtime) {
-        try {
-          GMS.Realtime.emit('general_ledger', 'INSERT', entry);
-        } catch (_) {}
+        try { GMS.Realtime.emit('general_ledger', 'INSERT', entry); } catch (_) {}
       }
 
       /* 5 · تحديث الحالة */
-      AccountState.ledger.unshift(entry);
+      State.ledger.unshift(entry);
       computeKPIs();
       applyFilters();
 
       /* 6 · Feedback */
       GMS.Beep?.success?.();
-      GMS.Toast.ok(
-        'تم حفظ التسوية',
-        `${entityName} · ${entry.entry_no}`
-      );
+      GMS.Toast.ok('تم حفظ التسوية', `${entityName} · ${entry.entry_no}`);
 
-      /* 7 · إغلاق وإعادة توجيه */
-      closeFn();
+      /* 7 · إغلاق + توجيه */
+      if (typeof closeFn === 'function') closeFn();
       window.App.navigateTo('accounting');
 
     } catch (e) {
@@ -2255,13 +2066,15 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · ENTRY DETAILS MODAL
-     ───────────────────────────────────────────────────────────────────── */
+     §15 · ENTRY DETAILS MODAL
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openEntryDetails(entryId) {
     try {
-      const entry = AccountState.ledger.find(e => e.id === entryId);
-      if (!entry) return;
+      const entry = State.ledger.find(e => e.id === entryId);
+      if (!entry) {
+        return GMS.Toast.warn('لم يتم العثور على الحركة');
+      }
 
       const type = getEntryType(entry.entry_type || entry.type);
       const cashDelta = Number(entry.cash_delta || 0);
@@ -2297,10 +2110,7 @@
 
           <div class="calc-list" style="margin-bottom:16px">
             <div class="cl-row">
-              <span class="k">
-                <i data-lucide="file-text"></i>
-                البيان
-              </span>
+              <span class="k"><i data-lucide="file-text"></i> البيان</span>
               <span class="v" style="font-family:var(--font-ui);font-size:12.5px;
                           direction:rtl;text-align:end;max-width:60%">
                 ${esc(entry.description || '—')}
@@ -2308,35 +2118,26 @@
             </div>
             ${entry.entity_name ? `
               <div class="cl-row">
-                <span class="k">
-                  <i data-lucide="user"></i>
-                  الجهة
-                </span>
-                <span class="v" style="font-size:12.5px">
-                  ${esc(entry.entity_name)}
-                </span>
+                <span class="k"><i data-lucide="user"></i> الجهة</span>
+                <span class="v" style="font-size:12.5px">${esc(entry.entity_name)}</span>
               </div>
             ` : ''}
             ${entry.reference_no ? `
               <div class="cl-row">
-                <span class="k">
-                  <i data-lucide="hash"></i>
-                  المرجع
-                </span>
-                <span class="v mono" style="font-size:11.5px">
-                  ${esc(entry.reference_no)}
-                </span>
+                <span class="k"><i data-lucide="hash"></i> المرجع</span>
+                <span class="v mono" style="font-size:11.5px">${esc(entry.reference_no)}</span>
               </div>
             ` : ''}
             ${entry.branch_name ? `
               <div class="cl-row">
-                <span class="k">
-                  <i data-lucide="building-2"></i>
-                  الفرع
-                </span>
-                <span class="v" style="font-size:12.5px">
-                  ${esc(entry.branch_name)}
-                </span>
+                <span class="k"><i data-lucide="building-2"></i> الفرع</span>
+                <span class="v" style="font-size:12.5px">${esc(entry.branch_name)}</span>
+              </div>
+            ` : ''}
+            ${entry.created_by ? `
+              <div class="cl-row">
+                <span class="k"><i data-lucide="user-check"></i> المستخدم</span>
+                <span class="v" style="font-size:12.5px">${esc(entry.created_by)}</span>
               </div>
             ` : ''}
           </div>
@@ -2357,7 +2158,7 @@
               <div class="mono" style="font-size:22px;font-weight:900;
                           color:${cashDelta > 0 ? 'var(--success)' : 'var(--danger)'};
                           letter-spacing:-.5px">
-                ${cashDelta > 0 ? '+' : ''}${moneyFmt(cashDelta)} ج.م
+                ${cashDelta > 0 ? '+' : '−'}${moneyFmt(Math.abs(cashDelta))} ج.م
               </div>
             </div>
           ` : ''}
@@ -2376,7 +2177,7 @@
               </div>
               <div class="mono" style="font-size:22px;font-weight:900;
                           color:var(--primary);letter-spacing:-.5px">
-                ${goldDelta > 0 ? '+' : ''}${gramFmt(goldDelta)} جم بندق
+                ${goldDelta > 0 ? '+' : '−'}${gramFmt(Math.abs(goldDelta))} جم بندق
               </div>
               ${entry.gold_karat ? `
                 <div style="font-size:12px;color:var(--text-2);
@@ -2388,9 +2189,7 @@
             </div>
           ` : ''}
         `,
-        footer: `
-          <button class="btn" data-close>إغلاق</button>
-        `,
+        footer: `<button class="btn" data-close>إغلاق</button>`,
       });
     } catch (e) {
       console.error('[Accounting.openEntryDetails]', e);
@@ -2399,19 +2198,16 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · EXPORT
-     ───────────────────────────────────────────────────────────────────── */
+     §16 · EXPORT TO EXCEL
+     ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تصدير دفتر اليومية
-   */
   function exportLedger() {
     try {
       if (!window.XLSX) {
         return GMS.Toast.err('محرك Excel غير متاح');
       }
 
-      const rows = AccountState.filtered;
+      const rows = State.filtered.length ? State.filtered : State.ledger;
       if (!rows.length) {
         return GMS.Toast.warn('لا توجد بيانات للتصدير');
       }
@@ -2442,7 +2238,7 @@
       ];
 
       /* ورقة الملخص */
-      const k = AccountState.kpis;
+      const k = State.kpis;
       const summary = [
         ['ملخص الدفتر المحاسبي'],
         ['تاريخ التصدير', new Date().toLocaleString('ar-EG')],
@@ -2452,6 +2248,7 @@
         ['إجمالي المبيعات (ج.م)', k.cashRevenue],
         ['إجمالي المصروفات (ج.م)', k.cashExpenses],
         ['إجمالي المشتريات (ج.م)', k.cashPurchases],
+        ['إجمالي التسويات النقدية (ج.م)', k.cashSettlements],
         [''],
         ['ذهب عيار 24 (جم)', k.gold24Balance],
         ['ذهب عيار 21 (جم)', k.gold21Balance],
@@ -2464,7 +2261,7 @@
       ];
 
       const wsSummary = XLSX.utils.aoa_to_sheet(summary);
-      wsSummary['!cols'] = [{ wch: 30 }, { wch: 20 }];
+      wsSummary['!cols'] = [{ wch: 34 }, { wch: 20 }];
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'دفتر اليومية');
@@ -2475,11 +2272,12 @@
 
       GMS.Toast.ok(`تم تصدير ${rows.length} حركة`);
 
-      /* Audit */
       if (GMS.Audit) {
-        GMS.Audit.log('EXPORT', 'accounting', null,
-          `تصدير دفتر اليومية — ${rows.length} حركة`,
-          { count: rows.length });
+        try {
+          GMS.Audit.log('EXPORT', 'accounting', null,
+            `تصدير دفتر اليومية — ${rows.length} حركة`,
+            { count: rows.length });
+        } catch (_) {}
       }
 
     } catch (e) {
@@ -2489,29 +2287,22 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · EVENTS — afterRender & initEvents
+     §17 · afterRender + initEvents
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * يُنفَّذ بعد التصيير مباشرة
+   * يُنفَّذ بعد كل عملية تصيير للصفحة
    */
   function afterRender() {
     try {
-      /* إعادة رسم الأيقونات */
       window.lucide?.createIcons();
-
-      /* تحديث مؤشر الاتصال */
-      const netText = document.getElementById('net-text');
-      if (netText && GMS.Sync?.state?.online !== undefined) {
-        netText.textContent = GMS.Sync.state.online ? 'متصل' : 'غير متصل';
-      }
     } catch (e) {
       console.warn('[Accounting.afterRender]', e);
     }
   }
 
   /**
-   * ربط كل الأحداث
+   * ربط كل الأحداث التفاعلية للصفحة
    */
   function initEvents() {
     try {
@@ -2519,10 +2310,10 @@
       const searchInput = document.getElementById('acc-search-input');
       if (searchInput) {
         searchInput.oninput = (e) => {
-          clearTimeout(AccountState.timers.search);
-          AccountState.timers.search = setTimeout(() => {
-            AccountState.filters.search = e.target.value.trim();
-            AccountState.page = 1;
+          clearTimeout(State.timers.search);
+          State.timers.search = setTimeout(() => {
+            State.filters.search = e.target.value.trim();
+            State.page = 1;
             applyFilters();
             refreshTable();
           }, 250);
@@ -2533,8 +2324,8 @@
       const typeFilter = document.getElementById('acc-filter-type');
       if (typeFilter) {
         typeFilter.onchange = () => {
-          AccountState.filters.type = typeFilter.value;
-          AccountState.page = 1;
+          State.filters.type = typeFilter.value;
+          State.page = 1;
           applyFilters();
           refreshTable();
         };
@@ -2544,8 +2335,8 @@
       const fromFilter = document.getElementById('acc-filter-from');
       if (fromFilter) {
         fromFilter.onchange = () => {
-          AccountState.filters.dateFrom = fromFilter.value;
-          AccountState.page = 1;
+          State.filters.dateFrom = fromFilter.value;
+          State.page = 1;
           applyFilters();
           refreshTable();
         };
@@ -2554,8 +2345,8 @@
       const toFilter = document.getElementById('acc-filter-to');
       if (toFilter) {
         toFilter.onchange = () => {
-          AccountState.filters.dateTo = toFilter.value;
-          AccountState.page = 1;
+          State.filters.dateTo = toFilter.value;
+          State.page = 1;
           applyFilters();
           refreshTable();
         };
@@ -2565,8 +2356,8 @@
       const pageSize = document.getElementById('acc-page-size');
       if (pageSize) {
         pageSize.onchange = () => {
-          AccountState.pageSize = Number(pageSize.value);
-          AccountState.page = 1;
+          State.pageSize = Number(pageSize.value);
+          State.page = 1;
           applyFilters();
           refreshTable();
         };
@@ -2595,6 +2386,7 @@
           refreshBtn.disabled = true;
           try {
             await loadLedger();
+            await loadInventory();
             computeKPIs();
             applyFilters();
             await render(document.getElementById('page'));
@@ -2612,7 +2404,7 @@
       const emptyExpense = document.getElementById('acc-empty-expense');
       if (emptyExpense) emptyExpense.onclick = openExpenseModal;
 
-      /* ─── Realtime listener ─── */
+      /* ─── Realtime ─── */
       bindRealtimeUpdates();
 
     } catch (e) {
@@ -2620,16 +2412,13 @@
     }
   }
 
-  /**
-   * ربط أحداث الترقيم
-   */
   function bindPaginationEvents() {
     document.querySelectorAll('[data-acc-page]').forEach(btn => {
       btn.onclick = () => {
         const page = Number(btn.dataset.accPage);
-        if (page < 1 || page > AccountState.totalPages) return;
+        if (page < 1 || page > State.totalPages) return;
 
-        AccountState.page = page;
+        State.page = page;
         refreshTable();
 
         document.getElementById('acc-table-host')?.scrollIntoView({
@@ -2640,9 +2429,6 @@
     });
   }
 
-  /**
-   * ربط أحداث الصفوف
-   */
   function bindRowEvents() {
     document.querySelectorAll('[data-view-acc-entry]').forEach(btn => {
       btn.onclick = (e) => {
@@ -2659,9 +2445,6 @@
     });
   }
 
-  /**
-   * إعادة تصيير الجدول فقط
-   */
   function refreshTable() {
     const host = document.getElementById('acc-table-host');
     if (host) {
@@ -2678,60 +2461,58 @@
     }
   }
 
-  /**
-   * ربط مستمعي Realtime
-   */
   function bindRealtimeUpdates() {
     if (!GMS.Realtime) return;
 
     const unsub = GMS.Realtime.on('event', (event) => {
-      if (GMS.Router?.currentId() !== 'accounting') return;
+      try {
+        if (GMS.Router?.currentId() !== 'accounting') return;
+        if (!event) return;
 
-      if (event.table === 'general_ledger' || event.table === 'entity_ledger') {
-        /* أضف للقائمة المحلية */
-        if (event.action === 'INSERT' && event.row) {
-          const exists = AccountState.ledger.find(x => x.id === event.row.id);
-          if (!exists) {
-            AccountState.ledger.unshift(event.row);
-            computeKPIs();
-            applyFilters();
-            refreshTable();
+        if (event.table === 'general_ledger' || event.table === 'entity_ledger') {
+          if (event.action === 'INSERT' && event.row) {
+            const exists = State.ledger.find(x => x.id === event.row.id);
+            if (!exists) {
+              State.ledger.unshift(event.row);
+              computeKPIs();
+              applyFilters();
+              refreshTable();
+            }
           }
         }
+      } catch (e) {
+        console.warn('[Accounting] Realtime handler failed:', e);
       }
     });
 
-    AccountState.unsubscribers.push(unsub);
+    State.unsubscribers.push(unsub);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · CLEANUP
-     ───────────────────────────────────────────────────────────────────── */
+     §18 · CLEANUP
+     ═════════════════════════════════════════════════════════════════════ */
 
   function cleanup() {
     try {
       cleanupListeners();
-      AccountState._initialFocusDone = false;
     } catch (e) {
       console.warn('[Accounting.cleanup]', e);
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · VIEW REGISTRATION
+     §19 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
   GMS.Views.accounting = {
-    render: async (root) => {
-      await render(root);
-    },
+    render,
     cleanup,
-    state: AccountState,
+    state: State,
     afterRender,
     initEvents,
 
-    /* API */
+    /* Data */
     load: loadLedger,
     reload: async () => {
       await loadLedger();
@@ -2747,34 +2528,67 @@
     openEntryDetails,
     export: exportLedger,
 
-    /* CacheDB */
+    /* CacheDB — مُصدَّر للاستخدام الخارجي */
     CacheDB,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · EXPORT TO WINDOW
+     §20 · GLOBAL EXPORT — window.AccountingView
      ═════════════════════════════════════════════════════════════════════ */
-  const AccountingView = GMS.Views.accounting;
+  const AccountingView = {
+    /* Core */
+    render,
+    cleanup,
+    afterRender,
+    initEvents,
+
+    /* State */
+    state: State,
+
+    /* Data */
+    load: loadLedger,
+    reload: async () => {
+      await loadLedger();
+      await loadInventory();
+      computeKPIs();
+      applyFilters();
+      await render(document.getElementById('page'));
+    },
+
+    /* Actions */
+    openExpenseModal,
+    openSettlementModal,
+    openEntryDetails,
+    exportLedger,
+
+    /* Storage — مُصدَّر للاستخدام الخارجي */
+    CacheDB,
+
+    /* Constants */
+    ENTRY_TYPES,
+    EXPENSE_CATEGORIES,
+    ENTITY_TYPES,
+  };
 
   window.AccountingView = AccountingView;
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · LOADED CONFIRMATION
+     §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c💰 Accounting View loaded · Double-Entry Ledger',
+    '%c💰 Accounting View loaded · Double-Entry Ledger (Cash + Gold)',
     'color:#0f7a43;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#a8dfc4,#0f7a43);border-radius:4px;'
   );
 
   console.log(
-    `%c📊 KPIs · Ledger · Expenses · Settlements · Excel Export · Realtime`,
+    `%c📊 KPIs · Ledger Table · Expense Modal · Settlement Modal · Excel Export · Realtime`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🗄️  CacheDB → getAll('ledger') / save('ledger', entry) · ` +
-    `window.App.navigateTo() · afterRender() + initEvents()`,
+    `%c🗄️  CacheDB.getAll('ledger') / CacheDB.save('ledger', entry) · ` +
+    `window.App.navigateTo('accounting') · afterRender() + initEvents()`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
