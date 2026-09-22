@@ -713,7 +713,11 @@
      §8 · SCANNER INPUT
      ─────────────────────────────────────────────────────────────────────
      مستمع keydown عام لاستقبال مدخلات قارئ الباركود
-     ✅ مُصلَح: bind/unbind يربطان this بشكل صحيح
+     ✅ مُصلَح: 
+       - يتخطى أي keydown جاي من حقل إدخال
+       - يتخطى لو في Modal مفتوح
+       - يتخطى لو مش في صفحة POS
+       - لا يعمل preventDefault إلا على scan input الفعلي
      ═════════════════════════════════════════════════════════════════════ */
   const Scanner = {
 
@@ -723,7 +727,7 @@
     _resetTimer: null,
     _bound: false,
     _handler: null,
-    _boundHandler: null,   /* ✅ مرجع للدالة المربوطة */
+    _boundHandler: null,
 
     /* إعدادات */
     TIMEOUT_MS: 180,
@@ -740,17 +744,12 @@
       this._handler = onScan;
       this._bound = true;
 
-      /* ✅ اربط الـ this يدويًا */
       this._boundHandler = this._onKey.bind(this);
-
       document.addEventListener('keydown', this._boundHandler, true);
 
       console.log('[Scanner] Global listener bound');
     },
 
-    /**
-     * إلغاء التفعيل
-     */
     unbind() {
       if (this._boundHandler) {
         document.removeEventListener('keydown', this._boundHandler, true);
@@ -761,57 +760,68 @@
       this._reset();
     },
 
-    /**
-     * هل سرعة الإدخال تشبه ماسحاً؟
-     * @returns {boolean}
-     * @private
-     */
     _scannerSpeed() {
       if (this._gaps.length < 3) return false;
       const avg = this._gaps.reduce((a, b) => a + b, 0) / this._gaps.length;
       return avg < this.MAX_GAP_MS;
     },
 
-    /**
-     * إعادة تعيين الحالة
-     * @private
-     */
     _reset() {
       this._buffer = '';
       this._gaps = [];
       clearTimeout(this._resetTimer);
     },
 
-    /**
-     * جدولة إعادة تعيين
-     * @private
-     */
     _scheduleReset() {
       clearTimeout(this._resetTimer);
       this._resetTimer = setTimeout(() => this._reset(), this.TIMEOUT_MS);
     },
 
     /**
-     * معالج المفتاح
-     * @param {KeyboardEvent} e
-     * @private
+     * ✅ معالج المفتاح — مُصلَح بالكامل
      */
     _onKey(e) {
-      /* تجاهل المفاتيح المعدِّلة */
+      /* ─── تجاهل المفاتيح المعدِّلة ─── */
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-      /* تجاهل إذا كنا داخل حقل إدخال ليس scan-input */
       const t = e.target;
-      const isField = t && (
+
+      /* ✅ فحص 1: تجاهل تمامًا لو داخل أي حقل إدخال
+         (input / select / textarea / contentEditable)
+         هذا مهم جدًا — كان بيعمل preventDefault على Enter في الـ dropdowns */
+      if (t && (
         t.tagName === 'INPUT' ||
         t.tagName === 'TEXTAREA' ||
         t.tagName === 'SELECT' ||
-        t.isContentEditable
-      );
-      const isScanInput = t?.id === 'scan-input' || t?.classList?.contains('scan-input');
+        t.isContentEditable === true
+      )) {
+        /* اصفّر الـ buffer عشان مانخلطش */
+        this._reset();
+        return;
+      }
 
-      if (isField && !isScanInput) return;
+      /* ✅ فحص 2: تجاهل لو في Modal مفتوح */
+      if (GMS.Modal && typeof GMS.Modal.count === 'function') {
+        if (GMS.Modal.count() > 0) return;
+      }
 
+      /* ✅ فحص 3: تجاهل لو مش في صفحة POS
+         (الـ Scanner مسؤول عن POS فقط الآن) */
+      if (GMS.Router && typeof GMS.Router.currentId === 'function') {
+        const currentRoute = GMS.Router.currentId();
+        if (currentRoute && currentRoute !== 'pos') {
+          return;
+        }
+      }
+
+      /* ✅ فحص 4: تجاهل لو في dropdown مفتوح
+         (بعض المتصفحات مش بتظهر select في activeElement) */
+      const active = document.activeElement;
+      if (active && active.tagName === 'SELECT') {
+        return;
+      }
+
+      /* ─── معالجة المفاتيح ─── */
       const now = performance.now();
       const gap = now - this._lastKeyAt;
       this._lastKeyAt = now;
@@ -834,7 +844,6 @@
       if (e.key === 'Backspace') {
         this._buffer = this._buffer.slice(0, -1);
         this._scheduleReset();
-        if (isScanInput) e.preventDefault();
         return;
       }
 
@@ -845,19 +854,19 @@
 
         this._buffer += e.key;
 
-        if (isScanInput) {
-          this._scheduleReset();
-          return;
+        /* ✅ preventDefault فقط للمفاتيح القادمة من scanner حقيقي
+           (سرعات عالية) — مانأثرش على المستخدم العادي */
+        const isScannerSpeed = this._scannerSpeed();
+        if (isScannerSpeed) {
+          e.preventDefault();
         }
 
-        e.preventDefault();
         this._scheduleReset();
       }
     },
 
     /**
      * محاكاة مسح (للاختبار)
-     * @param {string} code
      */
     simulate(code) {
       if (typeof this._handler === 'function') {
