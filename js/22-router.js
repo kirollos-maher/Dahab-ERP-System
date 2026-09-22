@@ -289,6 +289,7 @@
     const markInteraction = () => {
       window.GMS = window.GMS || {};
       window.GMS._lastFormInteraction = Date.now();
+      window.GMS._lastInteraction = Date.now();
     };
 
     /* تفعيل المستمعين على document بمستوى capture */
@@ -587,14 +588,22 @@
    * ✅ فحص إذا كان يجب تأجيل إعادة التصيير
    *
    * يعود true (يجب التخطي) إذا:
+   *   0. كان InteractionGuard موجود وقفل التفاعل
    *   1. كان هناك Modal مفتوح
    *   2. كان المستخدم يكتب في حقل (Input/Select/Textarea)
-   *   3. كان هناك تفاعل حديث مع حقل (آخر 3 ثواني)
-   *   4. كان المستخدم داخل منطقة contentEditable
+   *   3. كان هناك تفاعل حديث مع حقل (آخر 5 ثواني)
+   *   4. كان هناك أي تفاعل حديث (آخر 3 ثواني)
    *
    * @returns {boolean}
    */
   function shouldSkipRerender() {
+    /* ✅ فحص 0: استخدم الـ InteractionGuard لو موجود */
+    if (GMS.InteractionGuard && typeof GMS.InteractionGuard.shouldBlock === 'function') {
+      if (GMS.InteractionGuard.shouldBlock()) {
+        return true;
+      }
+    }
+
     /* فحص 1: Modal مفتوح */
     if (GMS.Modal && typeof GMS.Modal.count === 'function' && GMS.Modal.count() > 0) {
       return true;
@@ -612,9 +621,17 @@
       }
     }
 
-    /* فحص 3: تفاعل حديث مع أي حقل (آخر 3 ثواني) */
+    /* فحص 3: تفاعل نموذج خلال آخر 5 ثواني */
     if (window.GMS && window.GMS._lastFormInteraction) {
       const elapsed = Date.now() - window.GMS._lastFormInteraction;
+      if (elapsed < 5000) {
+        return true;
+      }
+    }
+
+    /* ✅ فحص 4: أي تفاعل خلال آخر 3 ثواني */
+    if (window.GMS && window.GMS._lastInteraction) {
+      const elapsed = Date.now() - window.GMS._lastInteraction;
       if (elapsed < 3000) {
         return true;
       }
@@ -636,12 +653,12 @@
    * ✅ التحديثات:
    *   - يتخطى Rerender إذا كان هناك Modal مفتوح
    *   - يتخطى إذا كان المستخدم يكتب في حقل
-   *   - يتخطى إذا كان هناك تفاعل حديث مع أي حقل (آخر 3 ثواني)
+   *   - يتخطى إذا كان هناك أي تفاعل حديث (آخر 3 ثواني)
    */
   function scheduleRerender(delay) {
     /* ✅ فحص أولي — قبل الجدولة */
     if (shouldSkipRerender()) {
-      console.log('[Router] Skipping rerender — user is interacting');
+      console.log('[Router] ⛔ Rerender blocked — user interacting');
       return;
     }
 
@@ -656,7 +673,7 @@
 
       /* ✅ فحص ثاني — ربما تغيّر الوضع */
       if (shouldSkipRerender()) {
-        console.log('[Router] Deferred rerender — user interaction detected');
+        console.log('[Router] ⛔ Deferred rerender — user still interacting');
         scheduleRerender(d);
         return;
       }
@@ -673,7 +690,7 @@
         return;
       }
 
-      console.log('[Router] Scheduled rerender');
+      console.log('[Router] 🔄 Scheduled rerender executing');
 
       try {
         await go(RState.current, { force: true });
@@ -1068,6 +1085,7 @@
       total: TAB_ORDER.length,
       shouldSkipRerender: shouldSkipRerender(),
       lastFormInteraction: window.GMS?._lastFormInteraction || null,
+      lastInteraction: window.GMS?._lastInteraction || null,
     };
   }
 
