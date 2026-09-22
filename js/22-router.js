@@ -597,13 +597,6 @@
    * @returns {boolean}
    */
   function shouldSkipRerender() {
-    /* ✅ فحص 0: استخدم الـ InteractionGuard لو موجود */
-    if (GMS.InteractionGuard && typeof GMS.InteractionGuard.shouldBlock === 'function') {
-      if (GMS.InteractionGuard.shouldBlock()) {
-        return true;
-      }
-    }
-
     /* فحص 1: Modal مفتوح */
     if (GMS.Modal && typeof GMS.Modal.count === 'function' && GMS.Modal.count() > 0) {
       return true;
