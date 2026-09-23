@@ -12,6 +12,7 @@
      - Route guards
      - ✅ Form Interaction Tracker (يحمي النماذج والفلاتر أثناء التفاعل)
      - ✅ NEW: Accounting route مضافة
+     - ✅ NEW: Wholesale route مضافة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -133,7 +134,7 @@
       hidden: false,
     },
 
-    /* ✅ NEW: Accounting — المحاسبة والمالية */
+    /* ✅ Accounting — المحاسبة والمالية */
     accounting: {
       id: 'accounting',
       label: 'المحاسبة والمالية',
@@ -141,6 +142,18 @@
       icon: 'book-open',
       view: 'accounting',
       permission: 'viewProfitReport',
+      roles: null,
+      hidden: false,
+    },
+
+    /* ✅ NEW: Wholesale — التوريد والجملة والتحويلات */
+    wholesale: {
+      id: 'wholesale',
+      label: 'التوريد والجملة',
+      subtitle: 'بيع بالجملة · تحويلات بين الفروع · مقايضة',
+      icon: 'truck',
+      view: 'wholesale',
+      permission: 'createSale',
       roles: null,
       hidden: false,
     },
@@ -168,7 +181,7 @@
     },
   };
 
-  /* ✅ NEW: ترتيب التبويبات في الواجهة — مع إضافة accounting */
+  /* ✅ ترتيب التبويبات في الواجهة — مع إضافة wholesale */
   const TAB_ORDER = [
     'dashboard',
     'pos',
@@ -179,7 +192,8 @@
     'loss',
     'repair',
     'audit',
-    'accounting',   // ✅ NEW
+    'accounting',   // ✅ المحاسبة
+    'wholesale',    // ✅ NEW: التوريد والجملة
     'queue',
     'settings',
   ];
@@ -1189,8 +1203,13 @@
   );
 
   console.log(
-    `%c💰 Accounting route added · view: "accounting" · tab position: 10`,
+    `%c💰 Accounting route · view: "accounting" · tab position: 10`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🏭 Wholesale route · view: "wholesale" · tab position: 11 · B2B Supply & Transfers`,
+    'color:#6b3fa0;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
