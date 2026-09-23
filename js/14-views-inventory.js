@@ -3279,4 +3279,117 @@
       cb.onchange = () => {
         const key = cb.dataset.col;
         const visibleCount = Object.values(InvState.columns).filter(Boolean).length;
-        if (!cb.checked && visibleCount <= 
+        if (!cb.checked && visibleCount <= 2) {
+          cb.checked = true;
+          GMS.Toast.warn('يجب إبقاء عمودين على الأقل');
+          return;
+        }
+        InvState.columns[key] = cb.checked;
+        refreshTable();
+      };
+    });
+
+    el.querySelector('#inv-cols-reset').onclick = () => {
+      const defaults = {
+        sku: true, category: true, karat: true, weight_grams: true,
+        net_weight: true, pure_weight: true, workmanship_per_gram: true,
+        total_cost: true, branch: true, manufacturer: true,
+        status: true, created_at: false,
+      };
+      Object.assign(InvState.columns, defaults);
+      el.remove();
+      refreshTable();
+    };
+
+    const closeFn = (e) => {
+      if (!el.contains(e.target) && !anchorEl.contains(e.target)) {
+        el.remove();
+        document.removeEventListener('mousedown', closeFn);
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', closeFn), 0);
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §14 · INIT & CLEANUP
+     ═════════════════════════════════════════════════════════════════════ */
+
+  async function init() {
+    try {
+      await loadInventory();
+      applyFilters();
+    } catch (e) {
+      console.error('[Inventory.init]', e);
+      GMS.Toast.err('فشل تحميل المخزون', e.message);
+    }
+  }
+
+  function cleanup() {
+    cleanupListeners();
+    InvState.selected.clear();
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §15 · VIEW REGISTRATION
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.Views = GMS.Views || {};
+
+  GMS.Views.inventory = {
+    render: async (root) => {
+      await init();
+      render(root);
+    },
+    cleanup,
+    state: InvState,
+
+    load: loadInventory,
+    applyFilters,
+
+    openItemModal,
+    showItemDetails,
+    deleteItem,
+    printTag,
+    export: exportFiltered,
+
+    bulkPrintTags,
+    bulkExport,
+    bulkDelete,
+
+    columns: COLUMNS,
+
+    /* ✅ API */
+    buildUniqueSku,
+    lockInteraction,
+    isInteractionLocked,
+    getItemKaratInfo,
+  };
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §16 · LOADED CONFIRMATION
+     ═════════════════════════════════════════════════════════════════════ */
+  console.log(
+    '%c📦 Inventory View v3.0 loaded · Custom Karat Support',
+    'color:#b8912f;font-weight:800;font-size:12px;padding:1px 5px;' +
+    'background:#fdf3e3;border-radius:4px;'
+  );
+
+  console.log(
+    `%c🎯 Standard Karats + Custom (300-999) · Purity Ratio (0.3-1.0) · SKU: A888-...`,
+    'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🛡️  Interaction lock (10s) — dropdowns no longer close during rerenders`,
+    'color:#1c4fd8;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v3: 4th karat button "مخصص" · Custom presets (999.9, 995, 916, 888...)`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
+  );
+
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ js/14-views-inventory.js — نهاية الملف
+     ═════════════════════════════════════════════════════════════════════ */
+
+})();
