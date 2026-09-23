@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/01-config.js
    الثوابت العامة، الأدوار، الصلاحيات، وإعدادات النظام
-   ✅ النسخة: 3 عيارات فقط (24K, 21K, 18K)
+   ✅ النسخة v4: 3 عيارات قياسية + دعم عيارات مخصصة (Custom Karat)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -17,9 +17,20 @@
   /* ═════════════════════════════════════════════════════════════════════
      §1 · نظام العيارات (CARAT SYSTEM)
      ─────────────────────────────────────────────────────────────────────
-     ✅ 3 عيارات فقط: 24K, 21K, 18K
-     24K = 1.0000 · 21K = 0.8750 · 18K = 0.7500
+     ✅ 3 عيارات قياسية: 24K, 21K, 18K
+     ✅ v4: دعم عيارات مخصصة لأي قيمة بين 300 و 999
+     
+     🔑 الفلسفة الجديدة:
+        المصدر الوحيد للحقيقة = purity_ratio
+        العيار = مجرد واجهة عرض
+        
+        • 21K       → purity_ratio = 0.8750 (قياسي)
+        • سبيكة 888 → purity_ratio = 0.8880 (مخصص)
+        • سبيكة 999 → purity_ratio = 0.9990 (مخصص)
+        • سويسري    → purity_ratio = 0.9999 (مخصص)
      ═════════════════════════════════════════════════════════════════════ */
+
+  /* ─── العيارات القياسية ─── */
   GMS.KARAT_RATIO = Object.freeze({
     24: 1.0000,
     21: 0.8750,
@@ -41,6 +52,26 @@
     24: 'عيار 24',
     21: 'عيار 21',
     18: 'عيار 18',
+  });
+
+  /* ✅ v4: إعدادات العيارات المخصصة */
+  GMS.CUSTOM_KARAT = Object.freeze({
+    enabled: true,
+    label: 'مخصص',
+    labelEn: 'Custom',
+    icon: 'sliders-horizontal',
+    color: '#8b6b2e',
+    description: 'عيار من 300 إلى 999 (سبائك، مستورد، كسر)',
+  });
+
+  /* ✅ v4: حدود العيار المخصص */
+  GMS.KARAT_LIMITS = Object.freeze({
+    min: 300,
+    max: 999,
+    step: 1,
+    minPurity: 0.3000,
+    maxPurity: 1.0000,
+    purityStep: 0.0001,
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -639,8 +670,8 @@
   GMS.APP_CONFIG = Object.freeze({
     NAME: 'Gold MS Enterprise',
     NAME_AR: 'نظام إدارة الذهب',
-    VERSION: '1.0.0',
-    BUILD: '20260921',
+    VERSION: '1.0.1',
+    BUILD: '20260923',
     DEFAULT_LOCALE: 'ar-EG',
     DEFAULT_CURRENCY: 'EGP',
     DEFAULT_KARAT: 21,
@@ -687,7 +718,8 @@
       EXEC_DASHBOARD: 'exec-dashboard',
     },
     INVENTORY_COLUMNS: [
-      'id', 'sku', 'category', 'karat', 'purity_ratio',
+      'id', 'sku', 'category', 'karat', 'custom_karat', 'purity_ratio',
+      'is_custom_karat',
       'weight_grams', 'stone_weight', 'net_weight', 'pure_weight',
       'workmanship_per_gram', 'workmanship_value', 'gold_value',
       'total_cost', 'price_24', 'status', 'quantity', 'notes',
@@ -817,7 +849,7 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX) — ✅ 3 عيارات
+     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX) — للعيارات القياسية
      ═════════════════════════════════════════════════════════════════════ */
   GMS.WORKMANSHIP_MATRIX = Object.freeze([
     { karat: 24, min: 40,  max: 80,  default: 55 },
@@ -885,25 +917,297 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §38 · دوال مساعدة للتكوين
+     §38 · دوال مساعدة للتكوين (HELPERS)
      ═════════════════════════════════════════════════════════════════════ */
 
+  /* Local round — لأن 02-utils.js لسه مش اتحمّل */
+  function _round(v, d) {
+    const p = Math.pow(10, d == null ? 4 : d);
+    return Math.round((Number(v) + Number.EPSILON) * p) / p;
+  }
+
+  /* ─── العيار القياسي ─── */
   GMS.karatIndex = function (karat) {
     return GMS.KARAT_ORDER.indexOf(Number(karat));
   };
 
+  /* ✅ v4: دالة karatRatio المطوّرة — تقبل العيار القياسي أو المخصص */
   GMS.karatRatio = function (karat) {
-    return GMS.KARAT_RATIO[Number(karat)] || 0;
+    const num = Number(karat);
+
+    /* عيار قياسي */
+    if (GMS.KARAT_RATIO[num] !== undefined) {
+      return GMS.KARAT_RATIO[num];
+    }
+
+    /* عيار مخصص بين 300 و 999 */
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return _round(num / 1000, 4);
+    }
+
+    return 0;
   };
 
+  /* ✅ v4: karatColor — يضيف لون افتراضي للعيارات المخصصة */
   GMS.karatColor = function (karat) {
-    return GMS.KARAT_COLORS[Number(karat)] || '#6b7a95';
+    const num = Number(karat);
+    if (GMS.KARAT_COLORS[num]) return GMS.KARAT_COLORS[num];
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return GMS.CUSTOM_KARAT.color;
+    }
+    return '#6b7a95';
   };
 
+  /* ✅ v4: karatLabel — يدعم المخصص */
   GMS.karatLabel = function (karat) {
-    return GMS.KARAT_LABELS[Number(karat)] || `عيار ${karat}`;
+    const num = Number(karat);
+    if (GMS.KARAT_LABELS[num]) return GMS.KARAT_LABELS[num];
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return `عيار ${num}`;
+    }
+    return `عيار ${karat}`;
   };
 
+  /* ✅ v4: isValidKarat — يقبل القياسي والمخصص */
+  GMS.isValidKarat = function (karat) {
+    const num = Number(karat);
+    if (GMS.KARAT_ORDER.includes(num)) return true;
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return true;
+    }
+    return false;
+  };
+
+  /* ✅ v4: isValidPurity — للتحقق من نسبة النقاء */
+  GMS.isValidPurity = function (purity) {
+    const p = Number(purity);
+    return isFinite(p)
+      && p >= GMS.KARAT_LIMITS.minPurity
+      && p <= GMS.KARAT_LIMITS.maxPurity;
+  };
+
+  /* ✅ v4: resolveKarat — يترجم أي مُدخل إلى كائن موحّد
+     يقبل:
+       • 21 (رقم قياسي)
+       • 888 (رقم مخصص)
+       • "21K" أو "888" أو "0.8880" (نص)
+       • { karat, custom_karat, purity_ratio, is_custom } (كائن)
+     يرجّع:
+       { karat, custom_karat, purity_ratio, is_custom, display } */
+  GMS.resolveKarat = function (input) {
+    /* ─── كائن جاهز ─── */
+    if (input && typeof input === 'object') {
+      if (input.is_custom || (input.custom_karat != null && input.karat == null)) {
+        const customNum = Number(input.custom_karat) || Math.round((Number(input.purity_ratio) || 0) * 1000);
+        const purity = Number(input.purity_ratio) || (customNum / 1000);
+        return {
+          karat: null,
+          custom_karat: customNum,
+          purity_ratio: _round(purity, 4),
+          is_custom: true,
+          display: customNum ? String(customNum) : 'مخصص',
+        };
+      }
+      const k = Number(input.karat);
+      if (GMS.KARAT_RATIO[k] !== undefined) {
+        return {
+          karat: k,
+          custom_karat: null,
+          purity_ratio: GMS.KARAT_RATIO[k],
+          is_custom: false,
+          display: `${k}K`,
+        };
+      }
+    }
+
+    /* ─── نص ─── */
+    if (typeof input === 'string') {
+      const s = input.trim().toUpperCase().replace(/\s+/g, '');
+      if (!s) return GMS.resolveKarat(21);
+
+      /* 21K أو 21 أو 888 */
+      const karatMatch = s.match(/^(\d{1,4})K?$/);
+      if (karatMatch) {
+        const num = Number(karatMatch[1]);
+
+        /* قياسي */
+        if (GMS.KARAT_RATIO[num] !== undefined) {
+          return {
+            karat: num,
+            custom_karat: null,
+            purity_ratio: GMS.KARAT_RATIO[num],
+            is_custom: false,
+            display: `${num}K`,
+          };
+        }
+
+        /* مخصص */
+        if (num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+          return {
+            karat: null,
+            custom_karat: num,
+            purity_ratio: _round(num / 1000, 4),
+            is_custom: true,
+            display: String(num),
+          };
+        }
+      }
+
+      /* 0.8880 أو .8880 */
+      const purityMatch = s.match(/^0?\.(\d+)$/);
+      if (purityMatch) {
+        const purity = Number(s);
+        if (GMS.isValidPurity(purity)) {
+          const customNum = Math.round(purity * 1000);
+          return {
+            karat: null,
+            custom_karat: customNum,
+            purity_ratio: _round(purity, 4),
+            is_custom: true,
+            display: String(customNum),
+          };
+        }
+      }
+    }
+
+    /* ─── رقم مباشر ─── */
+    const num = Number(input);
+    if (isFinite(num)) {
+      /* قياسي */
+      if (GMS.KARAT_RATIO[num] !== undefined) {
+        return {
+          karat: num,
+          custom_karat: null,
+          purity_ratio: GMS.KARAT_RATIO[num],
+          is_custom: false,
+          display: `${num}K`,
+        };
+      }
+
+      /* مخصص */
+      if (num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+        return {
+          karat: null,
+          custom_karat: num,
+          purity_ratio: _round(num / 1000, 4),
+          is_custom: true,
+          display: String(num),
+        };
+      }
+    }
+
+    /* ─── fallback ─── */
+    return {
+      karat: 21,
+      custom_karat: null,
+      purity_ratio: 0.8750,
+      is_custom: false,
+      display: '21K',
+    };
+  };
+
+  /* ✅ v4: karatFromPurity — ترجمة عكسية من purity إلى karat كائن */
+  GMS.karatFromPurity = function (purity) {
+    const p = Number(purity);
+    if (!isFinite(p)) return GMS.resolveKarat(21);
+
+    /* قياسي؟ */
+    for (const k of GMS.KARAT_ORDER) {
+      if (Math.abs(GMS.KARAT_RATIO[k] - p) < 0.0001) {
+        return {
+          karat: k,
+          custom_karat: null,
+          purity_ratio: GMS.KARAT_RATIO[k],
+          is_custom: false,
+          display: `${k}K`,
+        };
+      }
+    }
+
+    /* مخصص */
+    const customNum = Math.round(p * 1000);
+    return {
+      karat: null,
+      custom_karat: customNum,
+      purity_ratio: _round(p, 4),
+      is_custom: true,
+      display: String(customNum),
+    };
+  };
+
+  /* ✅ v4: formatKarat — نص موحّد للعرض
+     يقبل كائن أو قيمة مباشرة */
+  GMS.formatKarat = function (item) {
+    if (!item) return '—';
+
+    /* كائن موحّد */
+    if (typeof item === 'object') {
+      if (item.is_custom) {
+        const num = item.custom_karat || Math.round((item.purity_ratio || 0) * 1000);
+        return `${num} (مخصص)`;
+      }
+      if (item.karat != null) return `${item.karat}K`;
+      if (item.custom_karat != null) return `${item.custom_karat} (مخصص)`;
+      if (item.purity_ratio != null) {
+        return GMS.formatKarat(GMS.karatFromPurity(item.purity_ratio));
+      }
+      return '—';
+    }
+
+    /* قيمة مباشرة */
+    const num = Number(item);
+    if (GMS.KARAT_RATIO[num] !== undefined) return `${num}K`;
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return `${num} (مخصص)`;
+    }
+    return '—';
+  };
+
+  /* ✅ v4: formatKaratShort — نسخة مختصرة للجداول والتاجات */
+  GMS.formatKaratShort = function (item) {
+    if (!item) return '—';
+    if (typeof item === 'object') {
+      if (item.is_custom) {
+        return String(item.custom_karat || Math.round((item.purity_ratio || 0) * 1000));
+      }
+      if (item.karat != null) return `${item.karat}K`;
+      if (item.custom_karat != null) return String(item.custom_karat);
+      if (item.purity_ratio != null) {
+        return GMS.formatKaratShort(GMS.karatFromPurity(item.purity_ratio));
+      }
+      return '—';
+    }
+    const num = Number(item);
+    if (GMS.KARAT_RATIO[num] !== undefined) return `${num}K`;
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return String(num);
+    }
+    return '—';
+  };
+
+  /* ✅ v4: skuKaratCode — الكود الذي يدخل في الـ SKU
+     • عيار 21 → "21"
+     • سبيكة 888 → "888"
+     • لو مش محدد → "21" */
+  GMS.skuKaratCode = function (item) {
+    if (!item) return '21';
+
+    if (typeof item === 'object') {
+      if (item.is_custom && item.custom_karat != null) return String(item.custom_karat);
+      if (item.karat != null) return String(item.karat);
+      if (item.custom_karat != null) return String(item.custom_karat);
+      if (item.purity_ratio != null) return String(Math.round(item.purity_ratio * 1000));
+    }
+
+    const num = Number(item);
+    if (GMS.KARAT_RATIO[num] !== undefined) return String(num);
+    if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
+      return String(num);
+    }
+    return '21';
+  };
+
+  /* ─── أدوار ─── */
   GMS.getRole = function (roleKey) {
     return GMS.ROLES[roleKey] || null;
   };
@@ -916,12 +1220,22 @@
     return GMS.PERM_LABELS[permKey] || permKey;
   };
 
+  GMS.isValidRole = function (roleKey) {
+    return GMS.ROLE_KEYS.includes(roleKey);
+  };
+
+  /* ─── حالات ─── */
   GMS.getStatus = function (statusKey) {
     return GMS.ITEM_STATUS[statusKey] || {
       key: statusKey, label: statusKey, cls: 'pill-gray', icon: 'circle',
     };
   };
 
+  GMS.isValidStatus = function (statusKey) {
+    return Object.keys(GMS.ITEM_STATUS).includes(statusKey);
+  };
+
+  /* ─── فواتير ─── */
   GMS.getInvoiceType = function (typeKey) {
     return GMS.INVOICE_TYPES[typeKey] || null;
   };
@@ -932,22 +1246,12 @@
     };
   };
 
+  /* ─── خسس ─── */
   GMS.getSeverity = function (severityKey) {
     return GMS.LOSS_SEVERITY[severityKey] || GMS.LOSS_SEVERITY.natural;
   };
 
-  GMS.isValidKarat = function (karat) {
-    return GMS.KARAT_ORDER.includes(Number(karat));
-  };
-
-  GMS.isValidRole = function (roleKey) {
-    return GMS.ROLE_KEYS.includes(roleKey);
-  };
-
-  GMS.isValidStatus = function (statusKey) {
-    return Object.keys(GMS.ITEM_STATUS).includes(statusKey);
-  };
-
+  /* ─── مصانع ─── */
   GMS.getPricingMode = function (modeKey) {
     return GMS.PRICING_MODES[modeKey] || GMS.PRICING_MODES.fixed;
   };
@@ -956,8 +1260,9 @@
     return GMS.PRICING_COLORS.find(c => c.key === colorKey) || null;
   };
 
-  GMS.resolveManufacturerRate = function (manufacturer, context = {}) {
+  GMS.resolveManufacturerRate = function (manufacturer, context) {
     if (!manufacturer) return 0;
+    context = context || {};
 
     switch (manufacturer.pricingMode) {
       case 'letters': {
@@ -992,7 +1297,7 @@
     MAX_PRICE_24: 50000,
     MIN_PRICE_24: 100,
     MAX_PURITY_RATIO: 1.0,
-    MIN_PURITY_RATIO: 0.4,
+    MIN_PURITY_RATIO: 0.3000,
     MAX_WORKMANSHIP: 5000,
     MIN_WORKMANSHIP: 0,
     MAX_QTY: 10000,
@@ -1001,12 +1306,14 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §40 · أنماط التحقق (VALIDATION PATTERNS) — ✅ 3 عيارات
+     §40 · أنماط التحقق (VALIDATION PATTERNS)
+     ✅ v4: SKU يقبل الآن عيارات مخصصة (2-3 أرقام)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PATTERNS = Object.freeze({
     EMAIL: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
     PHONE_EG: /^01[0125]\d{8}$/,
-    SKU: /^[A-Z0-9]{1,4}(18|21|24)?-\d{6}-\d{3,5}(-\d{3})?$/i,
+    /* يدعم: A21-260923-00001، A888-260923-00001، A-260923-00001 */
+    SKU: /^[A-Z0-9]{1,4}(\d{2,3})?-\d{6}-\d{3,5}(-\d{3})?$/i,
     INVOICE_NO: /^[A-Z]{2,4}-\d{6,8}-\d{3,5}$/i,
     BATCH_NO: /^(MB|PL|BB|SR|RT)-[A-Z0-9-]+$/i,
     CURRENCY: /^\d+(\.\d{1,2})?$/,
@@ -1018,9 +1325,9 @@
      §41 · الإصدار والبناء (VERSION INFO)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.VERSION_INFO = Object.freeze({
-    APP_VERSION: '1.0.0',
-    BUILD_NUMBER: '20260921',
-    BUILD_DATE: '2026-09-21',
+    APP_VERSION: '1.0.1',
+    BUILD_NUMBER: '20260923',
+    BUILD_DATE: '2026-09-23',
     ENVIRONMENT: 'production',
     AUTHOR: 'Gold MS Team',
   });
@@ -1048,16 +1355,14 @@
   );
 
   console.log(
-    `%c🎯 ${GMS.KARAT_ORDER.length} carats (24K/21K/18K) · ${GMS.ROLE_KEYS.length} roles · ` +
-    `${Object.keys(GMS.PERM_LABELS).length} permissions · ${GMS.CATEGORIES.length} categories`,
+    `%c🎯 ${GMS.KARAT_ORDER.length} carats (24K/21K/18K) + CUSTOM (300-999) · ` +
+    `${GMS.ROLE_KEYS.length} roles · ${Object.keys(GMS.PERM_LABELS).length} permissions`,
     'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🏭 ${GMS.DEFAULT_MANUFACTURERS.length} manufacturers · ` +
-    `${Object.keys(GMS.PRICING_MODES).length} pricing modes · ` +
-    `${GMS.PRICING_COLORS.length} colors available`,
-    'color:#0f7a43;font-weight:700;font-size:11px;'
+    `%c🆕 v4: resolveKarat() · formatKarat() · karatFromPurity() · skuKaratCode()`,
+    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
   if (GMS.SUPABASE_CREDENTIALS.URL && GMS.SUPABASE_CREDENTIALS.ANON_KEY) {
