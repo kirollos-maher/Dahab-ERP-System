@@ -5492,3 +5492,180 @@ select optgroup {
 [data-theme="dark"] .modal-foot {
   background-color: var(--surface-2) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §78 · Dropdown & Select Protection
+   ─────────────────────────────────────────────────────────────────────
+   حماية القوائم المنسدلة من الإغلاق التلقائي
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ✅ منع أي تأثير على select أثناء فتحه */
+select,
+.filter-select,
+.pg-size {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+select:focus,
+.filter-select:focus {
+  /* ثبّت مؤشر الفأرة */
+  cursor: pointer;
+}
+
+/* ✅ Toolbar قوائم منسدلة — تأكد إنها مش بتتفاعل مع pointer events */
+.toolbar-row select,
+.toolbar select,
+.toolbar-row .filter-select {
+  pointer-events: auto !important;
+}
+
+/* ✅ تحسين تجربة المستخدم على الموبايل */
+@media (hover: none) and (pointer: coarse) {
+  select,
+  .filter-select {
+    /* حجم لمس مناسب */
+    min-height: 40px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    font-size: 14px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §79 · CUSTOM KARAT — العيارات المخصصة (v3.0)
+   ─────────────────────────────────────────────────────────────────────
+   أنماط لدعم العيارات المخصصة (سبائك 888، 900، 916، 995، 999.9)
+   - زر رابع في karat-grid بلون برتقالي (warn)
+   - لوحة إدخال مخصصة (custom karat panel)
+   - شارة مميزة في الجداول
+   - presets جاهزة للسبائك الشائعة
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─── زر العيار المخصص في karat-grid ─── */
+.karat-btn.custom-karat-btn {
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--warn) 12%, var(--surface-2)) 0%,
+    color-mix(in srgb, var(--warn) 5%, var(--surface-2)) 100%);
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--border));
+}
+
+.karat-btn.custom-karat-btn:hover {
+  border-color: var(--warn);
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--warn) 18%, var(--surface-3)) 0%,
+    color-mix(in srgb, var(--warn) 8%, var(--surface-3)) 100%);
+  transform: translateY(-1px);
+}
+
+.karat-btn.custom-karat-btn .kb-num {
+  color: var(--warn);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.karat-btn.custom-karat-btn .kb-ratio {
+  color: var(--warn);
+  opacity: 0.8;
+}
+
+.karat-btn.custom-karat-btn.active {
+  border-color: var(--warn);
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--warn) 20%, var(--surface)) 0%,
+    color-mix(in srgb, var(--warn) 8%, var(--surface)) 100%);
+  box-shadow: 0 6px 18px -10px rgba(165, 90, 0, 0.85);
+}
+
+.karat-btn.custom-karat-btn.active .kb-num {
+  color: var(--warn);
+  opacity: 1;
+}
+
+.karat-btn.custom-karat-btn.active .kb-ratio {
+  color: var(--warn);
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   شارة العيار المخصص في الجداول
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.karat-badge.custom-karat-badge {
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--warn) 20%, var(--surface-3)) 0%,
+    color-mix(in srgb, var(--warn) 10%, var(--surface-3)) 100%);
+  color: var(--warn);
+  border: 1px dashed color-mix(in srgb, var(--warn) 50%, transparent);
+  font-weight: 900;
+  padding: 3px 8px;
+  position: relative;
+}
+
+.karat-badge.custom-karat-badge::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  inset-inline-end: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   لوحة العيار المخصص داخل Modal
+   ═══════════════════════════════════════════════════════════════════════ */
+
+#f-custom-karat-panel {
+  animation: customPanelIn 0.28s var(--bounce);
+}
+
+@keyframes customPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    max-height: 500px;
+  }
+}
+
+/* حقول العيار المخصص */
+#f-custom-karat,
+#f-custom-purity {
+  background: var(--surface) !important;
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--border)) !important;
+  color: var(--warn) !important;
+}
+
+#f-custom-karat:focus,
+#f-custom-purity:focus {
+  border-color: var(--warn) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   تعديل karat-grid — 4 أزرار بدل 3
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.karat-grid {
+  grid-template-columns: repeat(4, 1fr) !important;
+}
+
+@media (max-width: 640px) {
+  .karat-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ✅ style.css — نهاية الملف
+   ═══════════════════════════════════════════════════════════════════════ */
