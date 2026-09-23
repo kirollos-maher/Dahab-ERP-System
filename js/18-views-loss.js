@@ -7,6 +7,11 @@
      - دفتر خسس التشغيل
      - تصدير Excel
      - طباعة إيصالات
+
+   ✅ v2: دعم كامل للعيارات المخصصة
+     - السبك يقبل أي عيار (888، 916، 995...)
+     - الششني بحسب النقاء مباشرة
+     - التحميم بحسب النقاء الصحيح
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -18,10 +23,8 @@
      §1 · STATE
      ═════════════════════════════════════════════════════════════════════ */
   const LossState = {
-    /* التبويب النشط */
     activeTab: 'melting',
 
-    /* ─── Melt State ──────────────────────────────────────── */
     melting: {
       pieces: [],
       postWeight: 0,
@@ -30,11 +33,12 @@
       batchNo: '',
     },
 
-    /* ─── Assay State ─────────────────────────────────────── */
     assaying: {
       sku: '',
       claimedKarat: 21,
       claimedPurity: GMS.karatRatio(21),
+      claimedKaratMode: 'standard',
+      claimedCustomKarat: 888,
       weightGrams: 0,
       testedPurity: GMS.karatRatio(21),
       assayerName: '',
@@ -45,7 +49,6 @@
       notes: '',
     },
 
-    /* ─── Polishing State ─────────────────────────────────── */
     polishing: {
       batchNo: '',
       pieces: [],
@@ -55,24 +58,15 @@
       notes: '',
     },
 
-    /* ─── Records (persisted) ─────────────────────────────── */
     meltingRecords: [],
     assayRecords: [],
     polishRecords: [],
 
-    /* ─── Tolerances ──────────────────────────────────────── */
     tolerances: null,
 
-    /* ─── Loading ─────────────────────────────────────────── */
     loading: false,
-
-    /* ─── Subscriptions ───────────────────────────────────── */
     unsubscribers: [],
-
-    /* ─── Timers ──────────────────────────────────────────── */
-    timers: {
-      recalc: null,
-    },
+    timers: { recalc: null },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -86,6 +80,10 @@
     }
   }
 
+  function esc(v) {
+    return GMS.esc ? GMS.esc(v) : String(v == null ? '' : v);
+  }
+
   function getPrice24() {
     if (GMS.Cache) {
       const p = GMS.Cache.getPrice();
@@ -95,8 +93,26 @@
   }
 
   /**
-   * تحميل الحدود من LocalStorage
+   * ✅ v2: قراءة معلومات العيار من قطعة كسر (قياسي أو مخصص)
    */
+  function getPieceKaratInfo(piece) {
+    if (!piece) return GMS.resolveKarat(21);
+
+    if (piece.is_custom_karat === true || piece.custom_karat != null) {
+      return GMS.resolveKarat({
+        custom_karat: piece.custom_karat,
+        purity_ratio: piece.purity_ratio,
+        is_custom: true,
+      });
+    }
+
+    if (piece.karat != null) {
+      return GMS.resolveKarat(piece.karat);
+    }
+
+    return GMS.resolveKarat(21);
+  }
+
   function loadTolerances() {
     try {
       const saved = JSON.parse(localStorage.getItem(GMS.LS_KEYS.TOLERANCES) || 'null');
@@ -118,9 +134,6 @@
     } catch (_) {}
   }
 
-  /**
-   * محرّك التسامح
-   */
   function evaluateTolerance(type, lossPct) {
     const t = LossState.tolerances[type];
     if (!t) return {
@@ -176,7 +189,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §3 · DATA LOADING
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function loadRecords() {
     try {
@@ -195,7 +208,6 @@
       LossState.polishRecords = [];
     }
 
-    /* تحميل من Demo إذا كانت فارغة */
     if (!LossState.meltingRecords.length && GMS.Demo) {
       LossState.meltingRecords = GMS.Demo.getMeltingBatches().slice(0, 30).map(r => ({
         id: r.id,
@@ -257,7 +269,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · KPIs
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function computeStats() {
     const all = [
@@ -336,7 +348,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · TABS
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderTabs() {
     const tabs = [
@@ -362,8 +374,34 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · TAB 1 — MELTING
-     ───────────────────────────────────────────────────────────────────── */
+     §6 · KARAT BADGE (v2)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function renderKaratBadge(piece) {
+    const info = getPieceKaratInfo(piece);
+
+    if (info.is_custom) {
+      return `
+        <span class="karat-badge custom-karat-badge"
+              data-k="custom"
+              data-custom="${info.custom_karat}"
+              title="عيار مخصص ${info.custom_karat} — نقاء ${Number(info.purity_ratio).toFixed(4)}"
+              style="font-size:10px">
+          <i data-lucide="sliders-horizontal"
+             style="width:9px;height:9px;
+                    display:inline;vertical-align:-1px;
+                    margin-inline-end:2px"></i>
+          ${info.custom_karat}
+        </span>
+      `;
+    }
+
+    return `<span class="karat-badge" data-k="${info.karat}" style="font-size:10px">${info.karat}K</span>`;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §7 · TAB 1 — MELTING (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderMeltingTab() {
     const m = LossState.melting;
@@ -378,9 +416,7 @@
 
     return `
       <div class="workspace">
-        <!-- LEFT: Form -->
         <div>
-          <!-- Scrap pieces -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -395,9 +431,8 @@
             </div>
 
             <div class="card-body">
-              <!-- Add piece -->
               <div class="scrap-add" style="display:grid;
-                          grid-template-columns:1fr 90px 100px auto;
+                          grid-template-columns:1fr 110px 100px auto;
                           gap:8px;align-items:end">
                 <div class="field">
                   <label>وصف القطعة</label>
@@ -410,6 +445,7 @@
                     ${GMS.KARAT_ORDER.map(k => `
                       <option value="${k}" ${k === 21 ? 'selected' : ''}>${k}K</option>
                     `).join('')}
+                    <option value="custom">🔸 مخصص</option>
                   </select>
                 </div>
                 <div class="field">
@@ -425,7 +461,35 @@
                 </button>
               </div>
 
-              <!-- Pieces list -->
+              <!-- ✅ v2: Custom karat panel for pieces -->
+              <div id="loss-piece-custom-panel"
+                   style="margin-top:10px;padding:12px 14px;
+                          background:var(--warn-bg);border-radius:10px;
+                          border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
+                          display:none">
+                <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                            text-transform:uppercase;letter-spacing:.4px;
+                            margin-bottom:8px">
+                  عيار مخصص للقطعة
+                </div>
+                <div class="grid-form" style="gap:10px">
+                  <div class="field">
+                    <label style="font-size:10.5px">العيار</label>
+                    <input type="number" id="loss-piece-custom-karat"
+                           step="1" min="300" max="999" value="888"
+                           class="mono"
+                           style="font-weight:900;text-align:center;font-size:14px">
+                  </div>
+                  <div class="field">
+                    <label style="font-size:10.5px">النقاء</label>
+                    <input type="number" id="loss-piece-custom-purity"
+                           step="0.0001" min="0.3000" max="1.0000" value="0.8880"
+                           class="mono"
+                           style="font-weight:900;text-align:center;font-size:14px">
+                  </div>
+                </div>
+              </div>
+
               <div style="margin-top:14px" id="loss-pieces-list">
                 ${m.pieces.length === 0 ? `
                   <div class="empty" style="padding:28px 16px">
@@ -433,33 +497,46 @@
                     <p>لم تُضف قطع كسر بعد</p>
                     <span>أضف كل قطعة كسر لتتبع الخسس</span>
                   </div>
-                ` : m.pieces.map(p => `
-                  <div class="scrap-row" style="display:grid;
-                              grid-template-columns:1fr 100px 100px 36px;
-                              gap:8px;align-items:center;
-                              padding:8px 10px;background:var(--surface);
-                              border:1px solid var(--border);border-radius:9px;
-                              margin-bottom:6px">
-                    <div style="font-size:12px;font-weight:700;
-                                white-space:nowrap;overflow:hidden;
-                                text-overflow:ellipsis">
-                      ${GMS.esc(p.label || '—')}
+                ` : m.pieces.map(p => {
+                  const info = getPieceKaratInfo(p);
+                  return `
+                    <div class="scrap-row" style="display:grid;
+                                grid-template-columns:1fr 130px 100px 36px;
+                                gap:8px;align-items:center;
+                                padding:8px 10px;background:var(--surface);
+                                border:1px solid var(--border);border-radius:9px;
+                                margin-bottom:6px">
+                      <div style="font-size:12px;font-weight:700;
+                                  white-space:nowrap;overflow:hidden;
+                                  text-overflow:ellipsis">
+                        ${esc(p.label || '—')}
+                      </div>
+                      <div style="text-align:center">
+                        ${info.is_custom
+                          ? `<span class="karat-badge custom-karat-badge"
+                                   style="font-size:10px">
+                               ${info.custom_karat}
+                             </span>
+                             <span class="mono" style="font-size:9.5px;
+                                          color:var(--muted);
+                                          margin-inline-start:3px">
+                               ${Number(info.purity_ratio).toFixed(4)}
+                             </span>`
+                          : `<span class="karat-badge" data-k="${p.karat}"
+                                   style="font-size:10px">${p.karat}K</span>`}
+                      </div>
+                      <div class="mono" style="text-align:end;font-weight:900;
+                                  color:var(--primary)">
+                        ${GMS.gramFmt(p.weight)} جم
+                      </div>
+                      <button class="row-act danger"
+                              data-loss-piece-rm="${esc(p.id)}"
+                              style="width:26px;height:26px">
+                        <i data-lucide="x"></i>
+                      </button>
                     </div>
-                    <div style="text-align:center">
-                      <span class="karat-badge" data-k="${p.karat}"
-                            style="font-size:10px">${p.karat}K</span>
-                    </div>
-                    <div class="mono" style="text-align:end;font-weight:900;
-                                color:var(--primary)">
-                      ${GMS.gramFmt(p.weight)} جم
-                    </div>
-                    <button class="row-act danger"
-                            data-loss-piece-rm="${GMS.esc(p.id)}"
-                            style="width:26px;height:26px">
-                      <i data-lucide="x"></i>
-                    </button>
-                  </div>
-                `).join('')}
+                  `;
+                }).join('')}
               </div>
 
               ${m.pieces.length > 0 ? `
@@ -481,7 +558,6 @@
             </div>
           </div>
 
-          <!-- Post-melt -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -518,7 +594,7 @@
                 <div class="field">
                   <label>رقم الدفعة</label>
                   <input id="loss-batch-no" readonly
-                         value="${GMS.esc(m.batchNo)}"
+                         value="${esc(m.batchNo)}"
                          class="mono"
                          style="font-weight:800;text-align:center">
                 </div>
@@ -528,10 +604,9 @@
                 <label>ملاحظات على الدفعة</label>
                 <input id="loss-melt-notes"
                        placeholder="ملاحظات فنية، اسم الصائغ…"
-                       value="${GMS.esc(m.notes)}">
+                       value="${esc(m.notes)}">
               </div>
 
-              <!-- Tolerance legend -->
               <div style="margin-top:16px;padding:12px 14px;
                           background:var(--surface-2);border-radius:10px;
                           border:1px solid var(--border);
@@ -566,9 +641,7 @@
           </div>
         </div>
 
-        <!-- RIGHT: Gauge + Summary -->
         <div style="position:sticky;top:calc(calc(var(--topbar-h) + var(--tabs-h)) + 22px)">
-          <!-- Gauge -->
           <div class="gauge ${evaluation.severity}" id="loss-melt-gauge">
             <div class="gauge-head">
               <div class="gauge-icon">
@@ -576,10 +649,10 @@
               </div>
               <div>
                 <div class="gauge-title">
-                  ${GMS.esc(evaluation.severityMeta.label)}
+                  ${esc(evaluation.severityMeta.label)}
                 </div>
                 <div class="gauge-sub">
-                  ${GMS.esc(evaluation.interpretation)}
+                  ${esc(evaluation.interpretation)}
                 </div>
               </div>
             </div>
@@ -616,7 +689,6 @@
             </div>
           </div>
 
-          <!-- Summary -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -663,7 +735,6 @@
             </div>
           </div>
 
-          <!-- Recent -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -719,7 +790,7 @@
             <div style="font-size:12px;font-weight:800;
                         font-family:var(--font-mono);
                         direction:ltr;text-align:left">
-              ${GMS.esc(r.batch_no || '—')}
+              ${esc(r.batch_no || '—')}
             </div>
             <div style="font-size:10.5px;color:var(--muted);
                         font-weight:600;margin-top:2px">
@@ -742,8 +813,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · TAB 2 — ASSAYING
-     ───────────────────────────────────────────────────────────────────── */
+     §8 · TAB 2 — ASSAYING (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderAssayingTab() {
     const a = LossState.assaying;
@@ -778,7 +849,7 @@
                          placeholder="A21-260918-00001"
                          dir="ltr"
                          class="mono"
-                         value="${GMS.esc(a.sku)}">
+                         value="${esc(a.sku)}">
                 </div>
 
                 <div class="field">
@@ -795,11 +866,11 @@
                          placeholder="CERT-2024-001"
                          dir="ltr"
                          class="mono"
-                         value="${GMS.esc(a.certificateNo)}">
+                         value="${esc(a.certificateNo)}">
                 </div>
               </div>
 
-              <!-- Claimed Karat -->
+              <!-- ✅ v2: Claimed Karat with custom support -->
               <div style="margin-top:18px">
                 <div style="font-size:11px;font-weight:800;color:var(--muted);
                             text-transform:uppercase;letter-spacing:.4px;
@@ -811,12 +882,53 @@
                 <div class="karat-grid">
                   ${GMS.KARAT_ORDER.map(k => `
                     <button type="button"
-                            class="karat-btn ${k === a.claimedKarat ? 'active' : ''}"
+                            class="karat-btn ${a.claimedKaratMode === 'standard' && k === a.claimedKarat ? 'active' : ''}"
                             data-loss-claimed="${k}">
                       <div class="kb-num">${k}K</div>
                       <div class="kb-ratio">${GMS.karatRatio(k).toFixed(4)}</div>
                     </button>
                   `).join('')}
+                  <button type="button"
+                          class="karat-btn custom-karat-btn ${a.claimedKaratMode === 'custom' ? 'active' : ''}"
+                          data-loss-claimed-custom="1">
+                    <div class="kb-num">
+                      <i data-lucide="sliders-horizontal"
+                         style="width:20px;height:20px"></i>
+                    </div>
+                    <div class="kb-ratio">مخصص</div>
+                  </button>
+                </div>
+
+                <!-- ✅ v2: Custom panel -->
+                <div id="loss-assay-custom-panel"
+                     style="margin-top:12px;padding:14px 16px;
+                            background:var(--warn-bg);border-radius:11px;
+                            border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
+                            ${a.claimedKaratMode === 'custom' ? '' : 'display:none'}">
+                  <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                              text-transform:uppercase;letter-spacing:.4px;
+                              margin-bottom:10px">
+                    العيار المخصص المُدَّعى
+                  </div>
+
+                  <div class="grid-form" style="gap:12px">
+                    <div class="field">
+                      <label style="font-size:10.5px">العيار</label>
+                      <input type="number" id="loss-assay-custom-karat"
+                             step="1" min="300" max="999"
+                             value="${a.claimedCustomKarat || 888}"
+                             class="mono"
+                             style="font-weight:900;text-align:center;font-size:15px">
+                    </div>
+                    <div class="field">
+                      <label style="font-size:10.5px">النقاء</label>
+                      <input type="number" id="loss-assay-custom-purity"
+                             step="0.0001" min="0.3000" max="1.0000"
+                             value="${Number(a.claimedPurity || 0.888).toFixed(4)}"
+                             class="mono"
+                             style="font-weight:900;text-align:center;font-size:15px">
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -894,7 +1006,7 @@
                     <label>اسم الفاحص / المكتب</label>
                     <input id="loss-assay-assayer"
                            placeholder="مكتب الششني المعتمد"
-                           value="${GMS.esc(a.assayerName)}">
+                           value="${esc(a.assayerName)}">
                   </div>
                 </div>
               </div>
@@ -903,7 +1015,7 @@
                 <label>ملاحظات</label>
                 <input id="loss-assay-notes"
                        placeholder="ملاحظات على نتيجة الفحص…"
-                       value="${GMS.esc(a.notes)}">
+                       value="${esc(a.notes)}">
               </div>
 
               <!-- Comparison -->
@@ -995,7 +1107,6 @@
           </div>
         </div>
 
-        <!-- RIGHT: Net adjustment + Fee -->
         <div style="position:sticky;top:calc(calc(var(--topbar-h) + var(--tabs-h)) + 22px)">
           <div class="card">
             <div class="card-head">
@@ -1075,7 +1186,6 @@
             </div>
           </div>
 
-          <!-- Recent -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -1113,24 +1223,32 @@
                        : delta < 0 ? 'var(--danger)'
                        : 'var(--muted)';
 
+      const isCustom = r.is_custom_karat === true || r.custom_karat != null;
+
+      const karatLabel = isCustom
+        ? `مخصص ${r.custom_karat || '—'}`
+        : `${r.claimed_karat || '—'}K`;
+
       return `
         <div style="padding:11px 16px;border-bottom:1px dashed var(--border);
                     display:grid;grid-template-columns:auto 1fr auto;
                     gap:11px;align-items:center">
           <div style="width:32px;height:32px;border-radius:9px;
                       display:grid;place-items:center;
-                      background:var(--info-bg);color:var(--info)">
-            <i data-lucide="test-tube" style="width:15px;height:15px"></i>
+                      background:${isCustom ? 'var(--warn-bg)' : 'var(--info-bg)'};
+                      color:${isCustom ? 'var(--warn)' : 'var(--info)'}">
+            <i data-lucide="${isCustom ? 'sliders-horizontal' : 'test-tube'}"
+               style="width:15px;height:15px"></i>
           </div>
           <div style="min-width:0">
             <div style="font-size:12px;font-weight:800;
                         font-family:var(--font-mono);
                         direction:ltr;text-align:left">
-              ${GMS.esc(r.sku || '—')}
+              ${esc(r.sku || '—')}
             </div>
             <div style="font-size:10.5px;color:var(--muted);
                         font-weight:600;margin-top:2px">
-              ${r.claimed_karat}K → ${Number(r.tested_purity || 0).toFixed(4)} ·
+              ${karatLabel} → ${Number(r.tested_purity || 0).toFixed(4)} ·
               ${GMS.timeAgo(r.created_at)}
             </div>
           </div>
@@ -1149,8 +1267,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · TAB 3 — POLISHING
-     ───────────────────────────────────────────────────────────────────── */
+     §9 · TAB 3 — POLISHING (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderPolishingTab() {
     const p = LossState.polishing;
@@ -1166,7 +1284,6 @@
     return `
       <div class="workspace">
         <div>
-          <!-- Pieces -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -1182,7 +1299,7 @@
 
             <div class="card-body">
               <div class="scrap-add" style="display:grid;
-                          grid-template-columns:1fr 90px 100px auto;
+                          grid-template-columns:1fr 110px 100px auto;
                           gap:8px;align-items:end">
                 <div class="field">
                   <label>كود القطعة</label>
@@ -1196,6 +1313,7 @@
                     ${GMS.KARAT_ORDER.map(k => `
                       <option value="${k}" ${k === 21 ? 'selected' : ''}>${k}K</option>
                     `).join('')}
+                    <option value="custom">🔸 مخصص</option>
                   </select>
                 </div>
                 <div class="field">
@@ -1211,6 +1329,35 @@
                 </button>
               </div>
 
+              <!-- ✅ v2: Custom karat panel -->
+              <div id="loss-polish-custom-panel"
+                   style="margin-top:10px;padding:12px 14px;
+                          background:var(--warn-bg);border-radius:10px;
+                          border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
+                          display:none">
+                <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                            text-transform:uppercase;letter-spacing:.4px;
+                            margin-bottom:8px">
+                  عيار مخصص
+                </div>
+                <div class="grid-form" style="gap:10px">
+                  <div class="field">
+                    <label style="font-size:10.5px">العيار</label>
+                    <input type="number" id="loss-polish-custom-karat"
+                           step="1" min="300" max="999" value="888"
+                           class="mono"
+                           style="font-weight:900;text-align:center;font-size:14px">
+                  </div>
+                  <div class="field">
+                    <label style="font-size:10.5px">النقاء</label>
+                    <input type="number" id="loss-polish-custom-purity"
+                           step="0.0001" min="0.3000" max="1.0000" value="0.8880"
+                           class="mono"
+                           style="font-weight:900;text-align:center;font-size:14px">
+                  </div>
+                </div>
+              </div>
+
               <div style="margin-top:14px">
                 ${p.pieces.length === 0 ? `
                   <div class="empty" style="padding:28px 16px">
@@ -1218,33 +1365,46 @@
                     <p>لم تُضف قطع صيانة بعد</p>
                     <span>أضف كل قطعة مرسلة للورشة</span>
                   </div>
-                ` : p.pieces.map(piece => `
-                  <div style="display:grid;
-                              grid-template-columns:1fr 100px 100px 36px;
-                              gap:8px;align-items:center;
-                              padding:8px 10px;background:var(--surface);
-                              border:1px solid var(--border);border-radius:9px;
-                              margin-bottom:6px">
-                    <div class="mono" style="font-size:12px;font-weight:700;
-                                white-space:nowrap;overflow:hidden;
-                                text-overflow:ellipsis">
-                      ${GMS.esc(piece.sku || '—')}
+                ` : p.pieces.map(piece => {
+                  const info = getPieceKaratInfo(piece);
+                  return `
+                    <div style="display:grid;
+                                grid-template-columns:1fr 130px 100px 36px;
+                                gap:8px;align-items:center;
+                                padding:8px 10px;background:var(--surface);
+                                border:1px solid var(--border);border-radius:9px;
+                                margin-bottom:6px">
+                      <div class="mono" style="font-size:12px;font-weight:700;
+                                  white-space:nowrap;overflow:hidden;
+                                  text-overflow:ellipsis">
+                        ${esc(piece.sku || '—')}
+                      </div>
+                      <div style="text-align:center">
+                        ${info.is_custom
+                          ? `<span class="karat-badge custom-karat-badge"
+                                   style="font-size:10px">
+                               ${info.custom_karat}
+                             </span>
+                             <span class="mono" style="font-size:9.5px;
+                                          color:var(--muted);
+                                          margin-inline-start:3px">
+                               ${Number(info.purity_ratio).toFixed(4)}
+                             </span>`
+                          : `<span class="karat-badge" data-k="${piece.karat}"
+                                   style="font-size:10px">${piece.karat}K</span>`}
+                      </div>
+                      <div class="mono" style="text-align:end;font-weight:900;
+                                  color:var(--primary)">
+                        ${GMS.gramFmt(piece.preWeight)} جم
+                      </div>
+                      <button class="row-act danger"
+                              data-loss-polish-rm="${esc(piece.id)}"
+                              style="width:26px;height:26px">
+                        <i data-lucide="x"></i>
+                      </button>
                     </div>
-                    <div style="text-align:center">
-                      <span class="karat-badge" data-k="${piece.karat}"
-                            style="font-size:10px">${piece.karat}K</span>
-                    </div>
-                    <div class="mono" style="text-align:end;font-weight:900;
-                                color:var(--primary)">
-                      ${GMS.gramFmt(piece.preWeight)} جم
-                    </div>
-                    <button class="row-act danger"
-                            data-loss-polish-rm="${GMS.esc(piece.id)}"
-                            style="width:26px;height:26px">
-                      <i data-lucide="x"></i>
-                    </button>
-                  </div>
-                `).join('')}
+                  `;
+                }).join('')}
               </div>
 
               ${p.pieces.length > 0 ? `
@@ -1265,7 +1425,6 @@
             </div>
           </div>
 
-          <!-- Service info -->
           <div class="card">
             <div class="card-head">
               <h3>
@@ -1291,13 +1450,13 @@
                   <label>اسم الورشة</label>
                   <input id="loss-polish-workshop"
                          placeholder="ورشة الصيانة"
-                         value="${GMS.esc(p.workshopName)}">
+                         value="${esc(p.workshopName)}">
                 </div>
 
                 <div class="field">
                   <label>رقم الدفعة</label>
                   <input id="loss-polish-batch-no" readonly
-                         value="${GMS.esc(p.batchNo)}"
+                         value="${esc(p.batchNo)}"
                          class="mono"
                          style="font-weight:800;text-align:center">
                 </div>
@@ -1317,10 +1476,9 @@
                 <label>ملاحظات</label>
                 <input id="loss-polish-notes"
                        placeholder="ملاحظات على الحالة…"
-                       value="${GMS.esc(p.notes)}">
+                       value="${esc(p.notes)}">
               </div>
 
-              <!-- Tolerance legend -->
               <div style="margin-top:16px;padding:12px 14px;
                           background:var(--surface-2);border-radius:10px;
                           border:1px solid var(--border);
@@ -1355,7 +1513,6 @@
           </div>
         </div>
 
-        <!-- RIGHT: Gauge + Recent -->
         <div style="position:sticky;top:calc(calc(var(--topbar-h) + var(--tabs-h)) + 22px)">
           <div class="gauge ${evaluation.severity}" id="loss-polish-gauge">
             <div class="gauge-head">
@@ -1364,10 +1521,10 @@
               </div>
               <div>
                 <div class="gauge-title">
-                  ${GMS.esc(evaluation.severityMeta.label)}
+                  ${esc(evaluation.severityMeta.label)}
                 </div>
                 <div class="gauge-sub">
-                  ${GMS.esc(evaluation.interpretation)}
+                  ${esc(evaluation.interpretation)}
                 </div>
               </div>
             </div>
@@ -1457,7 +1614,7 @@
             <div style="font-size:12px;font-weight:800;
                         font-family:var(--font-mono);
                         direction:ltr;text-align:left">
-              ${GMS.esc(r.batch_no || '—')}
+              ${esc(r.batch_no || '—')}
             </div>
             <div style="font-size:10.5px;color:var(--muted);
                         font-weight:600;margin-top:2px">
@@ -1479,8 +1636,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · TAB 4 — OPERATIONAL LEDGER
-     ───────────────────────────────────────────────────────────────────── */
+     §10 · TAB 4 — OPERATIONAL LEDGER (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderLedgerTab() {
     const all = [
@@ -1609,9 +1766,9 @@
                     </td>
                     <td class="mono" style="font-size:11.5px;
                                 font-weight:800">
-                      ${GMS.esc(r.batch_no || '—')}
+                      ${esc(r.batch_no || '—')}
                     </td>
-                    <td style="font-size:11.5px">${GMS.esc(desc)}</td>
+                    <td style="font-size:11.5px">${esc(desc)}</td>
                     <td class="col-num" style="font-weight:800">
                       ${GMS.gramFmt(r.loss_weight)}
                     </td>
@@ -1653,8 +1810,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · MAIN RENDER
-     ───────────────────────────────────────────────────────────────────── */
+     §11 · MAIN RENDER
+     ═════════════════════════════════════════════════════════════════════ */
 
   function render(root) {
     const stats = computeStats();
@@ -1676,7 +1833,12 @@
           <i data-lucide="flame"></i>
           ${GMS.t('loss.title')}
         </h2>
-        <p>${GMS.t('loss.subtitle')}</p>
+        <p>${GMS.t('loss.subtitle')}
+          <span class="chip warn" style="font-size:10px;margin-inline-start:6px">
+            <i data-lucide="sliders-horizontal" style="width:10px;height:10px"></i>
+            يدعم العيارات المخصصة
+          </span>
+        </p>
       </div>
 
       ${renderKPIs(stats)}
@@ -1686,23 +1848,13 @@
 
     window.lucide?.createIcons();
     bindControls();
-
-    /* Initial recalc */
-    if (LossState.activeTab === 'melting') {
-      setTimeout(() => updateMeltingGauge(), 50);
-    } else if (LossState.activeTab === 'assaying') {
-      setTimeout(() => updateAssayDisplay(), 50);
-    } else if (LossState.activeTab === 'polishing') {
-      setTimeout(() => updatePolishingGauge(), 50);
-    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · CONTROLS BINDING
-     ───────────────────────────────────────────────────────────────────── */
+     §12 · CONTROLS BINDING
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
-    /* Tabs */
     document.querySelectorAll('[data-loss-tab]').forEach(tab => {
       tab.onclick = () => {
         const key = tab.dataset.lossTab;
@@ -1713,7 +1865,6 @@
       };
     });
 
-    /* Each tab */
     if (LossState.activeTab === 'melting') bindMelting();
     else if (LossState.activeTab === 'assaying') bindAssaying();
     else if (LossState.activeTab === 'polishing') bindPolishing();
@@ -1721,25 +1872,50 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · BIND — MELTING
-     ───────────────────────────────────────────────────────────────────── */
+     §13 · BIND — MELTING (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindMelting() {
     const m = LossState.melting;
 
-    /* Generate batch no if missing */
     if (!m.batchNo) {
       m.batchNo = GMS.batchNo('MB');
       const el = document.getElementById('loss-batch-no');
       if (el) el.value = m.batchNo;
     }
 
-    /* Add piece */
+    /* Karat select — handle custom option */
+    const karatSelect = document.getElementById('loss-piece-karat');
+    const customPanel = document.getElementById('loss-piece-custom-panel');
+    if (karatSelect && customPanel) {
+      karatSelect.onchange = () => {
+        const isCustom = karatSelect.value === 'custom';
+        customPanel.style.display = isCustom ? '' : 'none';
+      };
+    }
+
+    /* Custom karat input sync */
+    const ckInput = document.getElementById('loss-piece-custom-karat');
+    const cpInput = document.getElementById('loss-piece-custom-purity');
+    if (ckInput && cpInput) {
+      ckInput.oninput = () => {
+        let v = parseInt(ckInput.value) || 888;
+        v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
+        cpInput.value = GMS.round(v / 1000, 4).toFixed(4);
+      };
+      cpInput.oninput = () => {
+        let v = parseFloat(cpInput.value) || 0.8880;
+        v = Math.max(GMS.KARAT_LIMITS.minPurity,
+                     Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+        ckInput.value = Math.round(v * 1000);
+      };
+    }
+
     const addBtn = document.getElementById('loss-piece-add');
     if (addBtn) {
       addBtn.onclick = () => {
         const label = document.getElementById('loss-piece-label')?.value.trim();
-        const karat = Number(document.getElementById('loss-piece-karat')?.value) || 21;
+        const karatVal = karatSelect?.value || '21';
         const weight = parseFloat(document.getElementById('loss-piece-weight')?.value) || 0;
 
         if (weight <= 0) {
@@ -1748,14 +1924,32 @@
           return;
         }
 
+        let pieceKarat = 21;
+        let customKarat = null;
+        let purity = GMS.karatRatio(21);
+        let isCustom = false;
+
+        if (karatVal === 'custom') {
+          const ck = parseInt(ckInput?.value) || 888;
+          const cp = parseFloat(cpInput?.value) || 0.8880;
+          isCustom = true;
+          customKarat = ck;
+          purity = cp;
+        } else {
+          pieceKarat = Number(karatVal) || 21;
+          purity = GMS.karatRatio(pieceKarat);
+        }
+
         m.pieces.push({
           id: GMS.uid(),
-          label: label || `كسر ${karat}K`,
-          karat,
+          label: label || (isCustom ? `كسر مخصص ${customKarat}` : `كسر ${pieceKarat}K`),
+          karat: isCustom ? null : pieceKarat,
+          custom_karat: customKarat,
+          is_custom_karat: isCustom,
+          purity_ratio: purity,
           weight: GMS.round(weight, 3),
         });
 
-        /* Clear inputs */
         const labelInput = document.getElementById('loss-piece-label');
         if (labelInput) labelInput.value = '';
         const weightInput = document.getElementById('loss-piece-weight');
@@ -1766,7 +1960,6 @@
       };
     }
 
-    /* Enter on weight field */
     const weightInput = document.getElementById('loss-piece-weight');
     if (weightInput) {
       weightInput.onkeydown = (e) => {
@@ -1777,7 +1970,6 @@
       };
     }
 
-    /* Remove piece */
     document.querySelectorAll('[data-loss-piece-rm]').forEach(btn => {
       btn.onclick = () => {
         const id = btn.dataset.lossPieceRm;
@@ -1787,7 +1979,6 @@
       };
     });
 
-    /* Post weight */
     const postInput = document.getElementById('loss-post-weight');
     if (postInput) {
       postInput.oninput = (e) => {
@@ -1796,7 +1987,6 @@
       };
     }
 
-    /* Target karat */
     const targetKarat = document.getElementById('loss-target-karat');
     if (targetKarat) {
       targetKarat.onchange = (e) => {
@@ -1804,13 +1994,11 @@
       };
     }
 
-    /* Notes */
     const notes = document.getElementById('loss-melt-notes');
     if (notes) {
       notes.oninput = (e) => { m.notes = e.target.value; };
     }
 
-    /* Reset */
     const resetBtn = document.getElementById('loss-melt-reset');
     if (resetBtn) {
       resetBtn.onclick = async () => {
@@ -1834,7 +2022,6 @@
       };
     }
 
-    /* Save */
     const saveBtn = document.getElementById('loss-melt-save');
     if (saveBtn) {
       saveBtn.onclick = () => saveMeltingBatch();
@@ -1861,10 +2048,10 @@
         </div>
         <div>
           <div class="gauge-title">
-            ${GMS.esc(evaluation.severityMeta.label)}
+            ${esc(evaluation.severityMeta.label)}
           </div>
           <div class="gauge-sub">
-            ${GMS.esc(evaluation.interpretation)}
+            ${esc(evaluation.interpretation)}
           </div>
         </div>
       </div>
@@ -1902,7 +2089,6 @@
     `;
     window.lucide?.createIcons();
 
-    /* Summary rows */
     const summaryRows = document.querySelectorAll('.calc-list .cl-row .v');
     if (summaryRows[2]) {
       summaryRows[2].textContent = m.postWeight > 0
@@ -1913,7 +2099,6 @@
       summaryRows[3].textContent = `${GMS.gramFmt(loss)} جم`;
     }
 
-    /* Enable save */
     const saveBtn = document.getElementById('loss-melt-save');
     if (saveBtn) {
       const pre = m.pieces.reduce((a, p) => a + Number(p.weight || 0), 0);
@@ -1944,6 +2129,16 @@
       if (!ok) return;
     }
 
+    /* ✅ v2: حساب الإجماليات بكل عيار */
+    let customCount = 0;
+    let puritySum = 0;
+    m.pieces.forEach(p => {
+      if (p.is_custom_karat) customCount++;
+      puritySum += Number(p.purity_ratio || 0);
+    });
+
+    const avgPurity = m.pieces.length ? puritySum / m.pieces.length : 0;
+
     const record = {
       id: GMS.uid(),
       batch_no: m.batchNo,
@@ -1957,12 +2152,14 @@
       is_suspicious: evaluation.isSuspicious,
       piece_count: m.pieces.length,
       pieces: m.pieces.slice(),
+      /* ✅ v2 */
+      custom_karat_count: customCount,
+      avg_purity: GMS.round(avgPurity, 4),
       notes: m.notes,
       created_at: new Date().toISOString(),
       created_by: GMS.Auth?.profile?.full_name || '—',
     };
 
-    /* Save to Supabase if online */
     if (GMS.Supabase?.isReady()) {
       try {
         await GMS.Supabase.get()
@@ -1976,6 +2173,8 @@
             is_suspicious: record.is_suspicious,
             target_karat: record.target_karat,
             piece_count: record.piece_count,
+            custom_karat_count: record.custom_karat_count,
+            avg_purity: record.avg_purity,
             notes: record.notes,
           });
       } catch (e) {
@@ -1983,11 +2182,9 @@
       }
     }
 
-    /* Save locally */
     LossState.meltingRecords.unshift(record);
     saveRecords();
 
-    /* Feedback */
     if (evaluation.isSuspicious) {
       GMS.Beep?.error();
       GMS.Toast.err(
@@ -2008,17 +2205,19 @@
       );
     }
 
-    /* Audit */
     if (GMS.Audit) {
       await GMS.Audit.log('MELTING_BATCH', 'inventory', record.id,
         `دفعة سبك ${record.batch_no} — خسس ${lossPct.toFixed(3)}%`,
-        { batch_no: record.batch_no, loss: record.loss_weight, severity: record.severity });
+        {
+          batch_no: record.batch_no,
+          loss: record.loss_weight,
+          severity: record.severity,
+          custom_karat_count: customCount,
+        });
     }
 
-    /* Receipt */
     showMeltingReceipt(record);
 
-    /* Reset */
     LossState.melting = {
       pieces: [],
       postWeight: 0,
@@ -2030,24 +2229,21 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · BIND — ASSAYING
-     ───────────────────────────────────────────────────────────────────── */
+     §14 · BIND — ASSAYING (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindAssaying() {
     const a = LossState.assaying;
 
-    /* SKU */
     const skuInput = document.getElementById('loss-assay-sku');
     if (skuInput) {
       skuInput.oninput = (e) => { a.sku = e.target.value; };
     }
 
-    /* Weight */
     const weightInput = document.getElementById('loss-assay-weight');
     if (weightInput) {
       weightInput.oninput = (e) => {
         a.weightGrams = parseFloat(e.target.value) || 0;
-        /* Simple refresh - could be optimized */
         const value = e.target.value;
         const focusId = document.activeElement?.id;
         render(document.getElementById('page'));
@@ -2061,21 +2257,20 @@
       };
     }
 
-    /* Certificate */
     const certInput = document.getElementById('loss-assay-cert');
     if (certInput) {
-      certInput.oninput = (e) => { a.certificateNo = e.target.value; };
+      certInput.oninput = (e) => { a.certificateNumber = e.target.value; a.certificateNo = e.target.value; };
     }
 
-    /* Claimed karat */
+    /* ✅ v2: Karat buttons — standard */
     document.querySelectorAll('[data-loss-claimed]').forEach(btn => {
       btn.onclick = () => {
         const k = Number(btn.dataset.lossClaimed);
+        a.claimedKaratMode = 'standard';
         a.claimedKarat = k;
         a.claimedPurity = GMS.karatRatio(k);
 
-        /* Auto-set tested if untouched */
-        if (Math.abs(a.testedPurity - GMS.karatRatio(a.claimedKarat)) > 0.05) {
+        if (Math.abs(a.testedPurity - a.claimedPurity) > 0.05) {
           a.testedPurity = a.claimedPurity;
         }
 
@@ -2083,7 +2278,41 @@
       };
     });
 
-    /* Tested slider */
+    /* ✅ v2: Custom karat button */
+    const customBtn = document.querySelector('[data-loss-claimed-custom]');
+    if (customBtn) {
+      customBtn.onclick = () => {
+        a.claimedKaratMode = 'custom';
+        a.claimedPurity = Number(a.claimedPurity) || (a.claimedCustomKarat / 1000);
+        if (a.testedPurity < 0.5) a.testedPurity = a.claimedPurity;
+        render(document.getElementById('page'));
+      };
+    }
+
+    /* ✅ v2: Custom karat inputs */
+    const ckInput = document.getElementById('loss-assay-custom-karat');
+    const cpInput = document.getElementById('loss-assay-custom-purity');
+    if (ckInput && cpInput) {
+      ckInput.oninput = () => {
+        let v = parseInt(ckInput.value) || 888;
+        v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
+        a.claimedCustomKarat = v;
+        a.claimedPurity = GMS.round(v / 1000, 4);
+        cpInput.value = a.claimedPurity.toFixed(4);
+
+        const summaryEl = document.querySelector('.calc-list');
+        if (summaryEl) render(document.getElementById('page'));
+      };
+      cpInput.oninput = () => {
+        let v = parseFloat(cpInput.value) || 0.8880;
+        v = Math.max(GMS.KARAT_LIMITS.minPurity,
+                     Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+        a.claimedPurity = GMS.round(v, 4);
+        a.claimedCustomKarat = Math.round(v * 1000);
+        ckInput.value = a.claimedCustomKarat;
+      };
+    }
+
     const slider = document.getElementById('loss-assay-tested-slider');
     if (slider) {
       slider.oninput = (e) => {
@@ -2092,7 +2321,6 @@
       };
     }
 
-    /* Tested input */
     const input = document.getElementById('loss-assay-tested-input');
     if (input) {
       input.oninput = (e) => {
@@ -2108,7 +2336,6 @@
       };
     }
 
-    /* Fee method */
     const feeMethod = document.getElementById('loss-assay-fee-method');
     if (feeMethod) {
       feeMethod.onchange = (e) => {
@@ -2120,31 +2347,26 @@
       };
     }
 
-    /* Fee amount */
     const feeAmount = document.getElementById('loss-assay-fee-amount');
     if (feeAmount) {
       feeAmount.oninput = (e) => { a.feeAmount = parseFloat(e.target.value) || 0; };
     }
 
-    /* Fee gold */
     const feeGold = document.getElementById('loss-assay-fee-gold');
     if (feeGold) {
       feeGold.oninput = (e) => { a.feeGoldGrams = parseFloat(e.target.value) || 0; };
     }
 
-    /* Assayer */
     const assayerInput = document.getElementById('loss-assay-assayer');
     if (assayerInput) {
       assayerInput.oninput = (e) => { a.assayerName = e.target.value; };
     }
 
-    /* Notes */
     const notesInput = document.getElementById('loss-assay-notes');
     if (notesInput) {
       notesInput.oninput = (e) => { a.notes = e.target.value; };
     }
 
-    /* Reset */
     const resetBtn = document.getElementById('loss-assay-reset');
     if (resetBtn) {
       resetBtn.onclick = () => {
@@ -2152,6 +2374,8 @@
           sku: '',
           claimedKarat: 21,
           claimedPurity: GMS.karatRatio(21),
+          claimedKaratMode: 'standard',
+          claimedCustomKarat: 888,
           weightGrams: 0,
           testedPurity: GMS.karatRatio(21),
           assayerName: '',
@@ -2165,7 +2389,6 @@
       };
     }
 
-    /* Save */
     const saveBtn = document.getElementById('loss-assay-save');
     if (saveBtn) {
       saveBtn.onclick = () => saveAssay();
@@ -2175,7 +2398,6 @@
   function updateAssayDisplay() {
     const a = LossState.assaying;
 
-    /* Update slider display */
     const disp = document.getElementById('loss-assay-tested-display');
     if (disp) disp.textContent = a.testedPurity.toFixed(4);
 
@@ -2201,12 +2423,24 @@
     const pureDelta = GMS.round(testedPure - claimedPure, 4);
     const valueDelta = GMS.round(pureDelta * getPrice24(), 2);
 
+    const karatPayload = GMS.buildKaratPayload({
+      karat: a.claimedKaratMode === 'custom' ? null : a.claimedKarat,
+      customKarat: a.claimedKaratMode === 'custom' ? a.claimedCustomKarat : null,
+      purityRatio: a.claimedPurity,
+      isCustom: a.claimedKaratMode === 'custom',
+    });
+
     const record = {
       id: GMS.uid(),
       sku: a.sku || 'بدون كود',
       certificate_no: a.certificateNo,
-      claimed_karat: a.claimedKarat,
-      claimed_purity: a.claimedPurity,
+
+      /* ✅ v2: حقول العيار */
+      claimed_karat: karatPayload.karat,
+      claimed_custom_karat: karatPayload.custom_karat,
+      is_custom_karat: karatPayload.is_custom_karat,
+      claimed_purity: karatPayload.purity_ratio,
+
       tested_purity: a.testedPurity,
       weight_grams: a.weightGrams,
       claimed_pure: claimedPure,
@@ -2223,7 +2457,6 @@
       created_at: new Date().toISOString(),
     };
 
-    /* Save to Supabase if online */
     if (GMS.Supabase?.isReady()) {
       try {
         await GMS.Supabase.get()
@@ -2232,6 +2465,8 @@
             sku: record.sku,
             certificate_no: record.certificate_no,
             claimed_karat: record.claimed_karat,
+            claimed_custom_karat: record.claimed_custom_karat,
+            is_custom_karat: record.is_custom_karat,
             claimed_purity: record.claimed_purity,
             tested_purity: record.tested_purity,
             weight_grams: record.weight_grams,
@@ -2257,24 +2492,32 @@
       );
     } else {
       GMS.Beep?.success();
+      const karatLabel = record.is_custom_karat
+        ? `مخصص ${record.claimed_custom_karat}`
+        : `${record.claimed_karat}K`;
       GMS.Toast.ok(
         'تم حفظ نتيجة الفحص',
-        `${record.sku} · ${record.claimed_karat}K → ${record.tested_purity.toFixed(4)}`
+        `${record.sku} · ${karatLabel} → ${record.tested_purity.toFixed(4)}`
       );
     }
 
-    /* Audit */
     if (GMS.Audit) {
       await GMS.Audit.log('ASSAY', 'inventory', record.id,
-        `فحص ششني ${record.sku} — ${record.claimed_karat}K → ${record.tested_purity.toFixed(4)}`,
-        { sku: record.sku, pure_delta: pureDelta });
+        `فحص ششني ${record.sku} — ${record.is_custom_karat ? 'مخصص ' + record.claimed_custom_karat : record.claimed_karat + 'K'} → ${record.tested_purity.toFixed(4)}`,
+        {
+          sku: record.sku,
+          pure_delta: pureDelta,
+          is_custom_karat: record.is_custom_karat,
+          claimed_custom_karat: record.claimed_custom_karat,
+        });
     }
 
-    /* Reset */
     LossState.assaying = {
       sku: '',
       claimedKarat: 21,
       claimedPurity: GMS.karatRatio(21),
+      claimedKaratMode: 'standard',
+      claimedCustomKarat: 888,
       weightGrams: 0,
       testedPurity: GMS.karatRatio(21),
       assayerName: '',
@@ -2288,25 +2531,48 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · BIND — POLISHING
-     ───────────────────────────────────────────────────────────────────── */
+     §15 · BIND — POLISHING (v2)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindPolishing() {
     const p = LossState.polishing;
 
-    /* Generate batch no */
     if (!p.batchNo) {
       p.batchNo = GMS.batchNo('PL');
       const el = document.getElementById('loss-polish-batch-no');
       if (el) el.value = p.batchNo;
     }
 
-    /* Add piece */
+    const karatSelect = document.getElementById('loss-polish-karat');
+    const customPanel = document.getElementById('loss-polish-custom-panel');
+    if (karatSelect && customPanel) {
+      karatSelect.onchange = () => {
+        const isCustom = karatSelect.value === 'custom';
+        customPanel.style.display = isCustom ? '' : 'none';
+      };
+    }
+
+    const ckInput = document.getElementById('loss-polish-custom-karat');
+    const cpInput = document.getElementById('loss-polish-custom-purity');
+    if (ckInput && cpInput) {
+      ckInput.oninput = () => {
+        let v = parseInt(ckInput.value) || 888;
+        v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
+        cpInput.value = GMS.round(v / 1000, 4).toFixed(4);
+      };
+      cpInput.oninput = () => {
+        let v = parseFloat(cpInput.value) || 0.8880;
+        v = Math.max(GMS.KARAT_LIMITS.minPurity,
+                     Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+        ckInput.value = Math.round(v * 1000);
+      };
+    }
+
     const addBtn = document.getElementById('loss-polish-add');
     if (addBtn) {
       addBtn.onclick = () => {
         const sku = document.getElementById('loss-polish-sku')?.value.trim();
-        const karat = Number(document.getElementById('loss-polish-karat')?.value) || 21;
+        const karatVal = karatSelect?.value || '21';
         const preWeight = parseFloat(document.getElementById('loss-polish-weight')?.value) || 0;
 
         if (preWeight <= 0) {
@@ -2315,10 +2581,27 @@
           return;
         }
 
+        let pieceKarat = 21;
+        let customKarat = null;
+        let purity = GMS.karatRatio(21);
+        let isCustom = false;
+
+        if (karatVal === 'custom') {
+          isCustom = true;
+          customKarat = parseInt(ckInput?.value) || 888;
+          purity = parseFloat(cpInput?.value) || 0.8880;
+        } else {
+          pieceKarat = Number(karatVal) || 21;
+          purity = GMS.karatRatio(pieceKarat);
+        }
+
         p.pieces.push({
           id: GMS.uid(),
           sku: sku || `SKU-${GMS.uid().toUpperCase().slice(0, 6)}`,
-          karat,
+          karat: isCustom ? null : pieceKarat,
+          custom_karat: customKarat,
+          is_custom_karat: isCustom,
+          purity_ratio: purity,
           preWeight: GMS.round(preWeight, 3),
         });
 
@@ -2341,7 +2624,6 @@
       };
     }
 
-    /* Remove piece */
     document.querySelectorAll('[data-loss-polish-rm]').forEach(btn => {
       btn.onclick = () => {
         const id = btn.dataset.lossPolishRm;
@@ -2350,7 +2632,6 @@
       };
     });
 
-    /* Post weight */
     const postInput = document.getElementById('loss-polish-post-weight');
     if (postInput) {
       postInput.oninput = (e) => {
@@ -2359,25 +2640,21 @@
       };
     }
 
-    /* Service type */
     const serviceType = document.getElementById('loss-polish-service');
     if (serviceType) {
       serviceType.onchange = (e) => { p.serviceType = e.target.value; };
     }
 
-    /* Workshop */
     const workshopInput = document.getElementById('loss-polish-workshop');
     if (workshopInput) {
       workshopInput.oninput = (e) => { p.workshopName = e.target.value; };
     }
 
-    /* Notes */
     const notesInput = document.getElementById('loss-polish-notes');
     if (notesInput) {
       notesInput.oninput = (e) => { p.notes = e.target.value; };
     }
 
-    /* Reset */
     const resetBtn = document.getElementById('loss-polish-reset');
     if (resetBtn) {
       resetBtn.onclick = async () => {
@@ -2402,7 +2679,6 @@
       };
     }
 
-    /* Save */
     const saveBtn = document.getElementById('loss-polish-save');
     if (saveBtn) {
       saveBtn.onclick = () => savePolishBatch();
@@ -2429,10 +2705,10 @@
         </div>
         <div>
           <div class="gauge-title">
-            ${GMS.esc(evaluation.severityMeta.label)}
+            ${esc(evaluation.severityMeta.label)}
           </div>
           <div class="gauge-sub">
-            ${GMS.esc(evaluation.interpretation)}
+            ${esc(evaluation.interpretation)}
           </div>
         </div>
       </div>
@@ -2470,7 +2746,6 @@
     `;
     window.lucide?.createIcons();
 
-    /* Enable save */
     const saveBtn = document.getElementById('loss-polish-save');
     if (saveBtn) {
       const pre = p.pieces.reduce((a, x) => a + Number(x.preWeight || 0), 0);
@@ -2501,6 +2776,15 @@
       if (!ok) return;
     }
 
+    let customCount = 0;
+    let puritySum = 0;
+    p.pieces.forEach(piece => {
+      if (piece.is_custom_karat) customCount++;
+      puritySum += Number(piece.purity_ratio || 0);
+    });
+
+    const avgPurity = p.pieces.length ? puritySum / p.pieces.length : 0;
+
     const record = {
       id: GMS.uid(),
       batch_no: p.batchNo,
@@ -2516,11 +2800,12 @@
       loss_value_egp: lossValue,
       severity: evaluation.severity,
       is_suspicious: evaluation.isSuspicious,
+      custom_karat_count: customCount,
+      avg_purity: GMS.round(avgPurity, 4),
       notes: p.notes,
       created_at: new Date().toISOString(),
     };
 
-    /* Save to Supabase if online */
     if (GMS.Supabase?.isReady()) {
       try {
         await GMS.Supabase.get()
@@ -2535,6 +2820,8 @@
             loss_weight: record.loss_weight,
             loss_percentage: record.loss_percentage,
             is_suspicious: record.is_suspicious,
+            custom_karat_count: record.custom_karat_count,
+            avg_purity: record.avg_purity,
             notes: record.notes,
           });
       } catch (e) {
@@ -2545,7 +2832,6 @@
     LossState.polishRecords.unshift(record);
     saveRecords();
 
-    /* Feedback */
     if (evaluation.isSuspicious) {
       GMS.Beep?.error();
       GMS.Toast.err(
@@ -2566,14 +2852,16 @@
       );
     }
 
-    /* Audit */
     if (GMS.Audit) {
       await GMS.Audit.log('POLISHING_BATCH', 'inventory', record.id,
         `دفعة تحميم ${record.batch_no} — خسس ${lossPct.toFixed(3)}%`,
-        { batch_no: record.batch_no, loss: record.loss_weight });
+        {
+          batch_no: record.batch_no,
+          loss: record.loss_weight,
+          custom_karat_count: customCount,
+        });
     }
 
-    /* Reset */
     LossState.polishing = {
       batchNo: GMS.batchNo('PL'),
       pieces: [],
@@ -2586,8 +2874,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · BIND — LEDGER
-     ───────────────────────────────────────────────────────────────────── */
+     §16 · BIND — LEDGER
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindLedger() {
     const exportBtn = document.getElementById('loss-ledger-export');
@@ -2597,8 +2885,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · MELTING RECEIPT MODAL
-     ───────────────────────────────────────────────────────────────────── */
+     §17 · MELTING RECEIPT MODAL
+     ═════════════════════════════════════════════════════════════════════ */
 
   function showMeltingReceipt(record) {
     const meta = GMS.LOSS_SEVERITY[record.severity] || GMS.LOSS_SEVERITY.natural;
@@ -2619,11 +2907,11 @@
             <i data-lucide="${meta.icon}" style="width:30px;height:30px"></i>
           </div>
           <h3 style="font-size:16px;margin-bottom:4px">
-            ${GMS.esc(meta.label)}
+            ${esc(meta.label)}
           </h3>
           <div class="mono" style="font-size:12px;color:var(--muted);
                       font-weight:800">
-            ${GMS.esc(record.batch_no)}
+            ${esc(record.batch_no)}
           </div>
         </div>
 
@@ -2632,6 +2920,17 @@
             <span class="k"><i data-lucide="package"></i> عدد القطع</span>
             <span class="v">${record.piece_count}</span>
           </div>
+          ${record.custom_karat_count > 0 ? `
+            <div class="cl-row">
+              <span class="k">
+                <i data-lucide="sliders-horizontal" style="color:var(--warn)"></i>
+                قطع بعيار مخصص
+              </span>
+              <span class="v" style="color:var(--warn)">
+                ${record.custom_karat_count}
+              </span>
+            </div>
+          ` : ''}
           <div class="cl-row">
             <span class="k"><i data-lucide="scale"></i> الوزن قبل السبك</span>
             <span class="v">${GMS.gramFmt(record.pre_melt_weight)} جم</span>
@@ -2695,14 +2994,14 @@
         <h2>${GMS.t('receipt.meltingTitle')}</h2>
 
         <div style="text-align:center;font-size:10pt;margin-bottom:5mm">
-          ${GMS.esc(GMS.APP_CONFIG.NAME_AR)}
+          ${esc(GMS.APP_CONFIG.NAME_AR)}
         </div>
 
         <hr>
 
         <div class="rp-line">
           <span>رقم الدفعة</span>
-          <b>${GMS.esc(record.batch_no)}</b>
+          <b>${esc(record.batch_no)}</b>
         </div>
         <div class="rp-line">
           <span>التاريخ</span>
@@ -2710,7 +3009,7 @@
         </div>
         <div class="rp-line">
           <span>الحالة</span>
-          <b>${GMS.esc(meta.label)}</b>
+          <b>${esc(meta.label)}</b>
         </div>
 
         <hr>
@@ -2719,6 +3018,12 @@
           <span>عدد القطع</span>
           <b>${record.piece_count}</b>
         </div>
+        ${record.custom_karat_count > 0 ? `
+          <div class="rp-line">
+            <span>قطع بعيار مخصص</span>
+            <b>${record.custom_karat_count}</b>
+          </div>
+        ` : ''}
         <div class="rp-line">
           <span>الوزن قبل السبك</span>
           <b>${GMS.gramFmt(record.pre_melt_weight)} جم</b>
@@ -2751,7 +3056,7 @@
           <hr>
           <div class="rp-line">
             <span>ملاحظات</span>
-            <b>${GMS.esc(record.notes)}</b>
+            <b>${esc(record.notes)}</b>
           </div>
         ` : ''}
 
@@ -2767,7 +3072,7 @@
         <hr>
 
         <div style="text-align:center;font-size:9pt;margin-top:5mm">
-          ${GMS.esc(meta.label)}
+          ${esc(meta.label)}
         </div>
 
         <div class="pr-sign" style="margin-top:8mm;display:flex;
@@ -2788,8 +3093,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · EXPORT
-     ───────────────────────────────────────────────────────────────────── */
+     §18 · EXPORT
+     ═════════════════════════════════════════════════════════════════════ */
 
   function exportLedger() {
     if (!window.XLSX) {
@@ -2804,6 +3109,7 @@
         batch_no: r.batch_no,
         created_at: r.created_at,
         piece_count: r.piece_count,
+        custom_karat_count: r.custom_karat_count || 0,
         pre_weight: r.pre_melt_weight,
         post_weight: r.post_melt_weight,
         loss_weight: r.loss_weight,
@@ -2818,6 +3124,7 @@
         batch_no: r.batch_no,
         created_at: r.created_at,
         piece_count: r.piece_count,
+        custom_karat_count: r.custom_karat_count || 0,
         pre_weight: r.pre_weight,
         post_weight: r.post_weight,
         loss_weight: r.loss_weight,
@@ -2838,6 +3145,7 @@
       'النوع': r._label,
       'رقم الدفعة': r.batch_no,
       'عدد القطع': r.piece_count,
+      'قطع بعيار مخصص': r.custom_karat_count,
       'الوزن قبل (جم)': r.pre_weight,
       'الوزن بعد (جم)': r.post_weight,
       'الخسس (جم)': r.loss_weight,
@@ -2853,8 +3161,8 @@
     const ws = XLSX.utils.json_to_sheet(rows);
     ws['!cols'] = [
       { wch: 20 }, { wch: 14 }, { wch: 20 }, { wch: 10 },
-      { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 },
-      { wch: 14 }, { wch: 12 }, { wch: 30 },
+      { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+      { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 30 },
     ];
 
     const wb = XLSX.utils.book_new();
@@ -2865,8 +3173,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · CLEANUP
-     ───────────────────────────────────────────────────────────────────── */
+     §19 · CLEANUP
+     ═════════════════════════════════════════════════════════════════════ */
 
   function cleanup() {
     LossState.unsubscribers.forEach(fn => {
@@ -2878,8 +3186,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · INIT
-     ───────────────────────────────────────────────────────────────────── */
+     §20 · INIT
+     ═════════════════════════════════════════════════════════════════════ */
 
   function init() {
     loadTolerances();
@@ -2887,7 +3195,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §20 · VIEW REGISTRATION
+     §21 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
@@ -2899,33 +3207,27 @@
     cleanup,
     state: LossState,
 
-    /* Data */
     init,
     loadRecords,
     saveRecords,
-
-    /* Tolerance */
     loadTolerances,
     saveTolerances,
     evaluateTolerance,
 
-    /* Actions */
     saveMeltingBatch,
     saveAssay,
     savePolishBatch,
 
-    /* Receipts */
     printMeltingReceipt,
 
-    /* Export */
     export: exportLedger,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §21 · LOADED CONFIRMATION
+     §22 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🔥 Loss Management View loaded',
+    '%c🔥 Loss Management v2 loaded · Custom Karat support',
     'color:#b3261e;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#fdecea;border-radius:4px;'
   );
@@ -2933,6 +3235,11 @@
   console.log(
     `%c⚗️ Melting · Assaying · Polishing · Tolerance Engine · Operational Ledger`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v2: Custom Karat in all 3 operations · Purity Ratio · Custom karat count in records`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
