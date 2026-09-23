@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة — النسخة v2.0
+   صفحة المخزون الشاملة — النسخة v3.0
      - جدول أصناف مع pagination
      - بحث فوري + فلاتر (عيار، حالة، فرع، ماركة، تصنيف)
      - CRUD كامل + تحديد متعدد + تصدير Excel + QR Tags
@@ -12,6 +12,8 @@
      - ✅ وزن الفصوص اختياري
      - ✅ حماية التفاعل: القوائم لا تُغلق أثناء الاستخدام
      - ✅ زر الإلغاء يعمل
+     - 🆕 v3: دعم العيارات المخصصة (سبائك 888، 900، 916، إلخ)
+     - 🆕 v3: حقل نقاء مباشر (purity_ratio) من 0.3000 إلى 1.0000
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -61,12 +63,6 @@
     console.log('[Inventory] ✅ Interaction lock installed');
   })();
 
-  /* ملحوظة: كان هنا monkey-patch لـ Router.scheduleRerender خاص بهذه
-     الصفحة بس، بتوقيت مختلف عن حماية الراوتر العامة — ده كان بيعمل
-     تصادم/سباق مع الحماية الموجودة أصلاً في js/22-router.js.
-     تمت إزالته؛ الراوتر بيغطي كل الحقول هنا تلقائياً لأنه بيسمع على
-     document بالكامل (capture phase). */
-
   /* ═════════════════════════════════════════════════════════════════════
      §1 · INVENTORY STATE
      ═════════════════════════════════════════════════════════════════════ */
@@ -85,6 +81,7 @@
       branch: '',
       manufacturer: '',
       category: '',
+      onlyCustomKarat: false,   /* ✅ v3: فلتر للعيارات المخصصة فقط */
     },
 
     selected: new Set(),
@@ -115,6 +112,7 @@
       reserved: 0,
       totalPure: 0,
       totalValue: 0,
+      customKaratCount: 0,   /* ✅ v3 */
     },
 
     loading: false,
@@ -130,7 +128,7 @@
   const COLUMNS = [
     { key: 'sku', label: 'كود التاج', width: 175, sortable: true, align: 'start' },
     { key: 'category', label: 'التصنيف', width: 100, sortable: true, align: 'start' },
-    { key: 'karat', label: 'العيار', width: 75, sortable: true, align: 'center' },
+    { key: 'karat', label: 'العيار', width: 95, sortable: true, align: 'center' },
     { key: 'weight_grams', label: 'قائم', width: 85, sortable: true, align: 'end' },
     { key: 'net_weight', label: 'صافي', width: 85, sortable: true, align: 'end' },
     { key: 'pure_weight', label: 'بندق 24K', width: 100, sortable: true, align: 'end' },
@@ -172,7 +170,7 @@
   }
 
   /**
-   * ✅ توليد SKU فريد لكل وحدة
+   * ✅ v3: توليد SKU فريد لكل وحدة — يدعم العيار المخصص
    * BASE-001, BASE-002, ..., BASE-NNN
    * @param {string} baseSku
    * @param {number} index — يبدأ من 1
@@ -183,9 +181,16 @@
     if (total <= 1) return baseSku;
 
     const suffix = String(index).padStart(3, '0');
-    // إزالة أي لاحقة سابقة
     const clean = String(baseSku || '').replace(/-\d{3}$/, '');
     return `${clean}-${suffix}`;
+  }
+
+  /**
+   * ✅ v3: قراءة معلومات العيار لعنصر (قياسي أو مخصص)
+   */
+  function getItemKaratInfo(item) {
+    if (!item) return GMS.resolveKarat(21);
+    return GMS.getItemKarat(item);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -234,7 +239,16 @@
       );
     }
 
-    if (f.karat) rows = rows.filter(i => Number(i.karat) === Number(f.karat));
+    /* ✅ v3: فلتر العيار (قياسي أو مخصص) */
+    if (f.karat) {
+      if (f.karat === 'custom') {
+        rows = rows.filter(i => i.is_custom_karat === true || i.custom_karat != null);
+      } else {
+        const karatNum = Number(f.karat);
+        rows = rows.filter(i => Number(i.karat) === karatNum);
+      }
+    }
+
     if (f.status) rows = rows.filter(i => i.status === f.status);
     if (f.branch) rows = rows.filter(i => i.branch_id === f.branch);
 
@@ -246,12 +260,26 @@
 
     if (f.category) rows = rows.filter(i => i.category === f.category);
 
+    /* ✅ v3: فلتر "مخصص فقط" */
+    if (f.onlyCustomKarat) {
+      rows = rows.filter(i => i.is_custom_karat === true || i.custom_karat != null);
+    }
+
     const dir = InvState.sortDir === 'desc' ? -1 : 1;
     const key = InvState.sortBy;
 
     rows.sort((a, b) => {
       let av = a[key];
       let bv = b[key];
+
+      /* ✅ v3: الفرز حسب العيار — القياسي بالأول ثم المخصص */
+      if (key === 'karat') {
+        const aInfo = getItemKaratInfo(a);
+        const bInfo = getItemKaratInfo(b);
+        const aScore = aInfo.is_custom ? (1000 + aInfo.custom_karat) : aInfo.karat;
+        const bScore = bInfo.is_custom ? (1000 + bInfo.custom_karat) : bInfo.karat;
+        return (aScore - bScore) * dir;
+      }
 
       if (av === undefined || av === null) av = '';
       if (bv === undefined || bv === null) bv = '';
@@ -277,10 +305,14 @@
 
     let totalPure = 0;
     let totalValue = 0;
+    let customKaratCount = 0;
 
     filtered.forEach(i => {
       totalPure += Number(i.pure_weight || 0);
       totalValue += Number(i.total_cost || 0);
+      if (i.is_custom_karat === true || i.custom_karat != null) {
+        customKaratCount++;
+      }
     });
 
     InvState.stats = {
@@ -291,6 +323,7 @@
       reserved: all.filter(i => i.status === 'RESERVED').length,
       totalPure: GMS.round(totalPure, 4),
       totalValue: GMS.round(totalValue, 2),
+      customKaratCount,
     };
   }
 
@@ -349,9 +382,41 @@
     `;
   }
 
+  /**
+   * ✅ v3: عرض شارة العيار — قياسي أو مخصص
+   */
+  function renderKaratBadge(item) {
+    const info = getItemKaratInfo(item);
+
+    if (info.is_custom) {
+      /* عيار مخصص — عرض مميّز */
+      const num = info.custom_karat;
+      const purity = Number(info.purity_ratio || 0);
+
+      return `
+        <span class="karat-badge custom-karat-badge"
+              data-k="custom"
+              data-custom="${num}"
+              title="عيار مخصص ${num} — نقاء ${purity.toFixed(4)}">
+          <i data-lucide="sliders-horizontal"
+             style="width:10px;height:10px;
+                    display:inline;vertical-align:-1px;
+                    margin-inline-end:2px"></i>
+          ${num}
+        </span>
+      `;
+    }
+
+    /* عيار قياسي */
+    return `
+      <span class="karat-badge" data-k="${info.karat}">${info.karat}K</span>
+    `;
+  }
+
   function renderRow(item, idx, globalIdx) {
     const isSelected = InvState.selected.has(item.sku);
     const status = GMS.getStatus(item.status);
+    const karatInfo = getItemKaratInfo(item);
 
     const branchName = item.branch_name
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
@@ -376,7 +441,7 @@
     if (InvState.columns.karat) {
       cells.push(`
         <td class="col-c">
-          <span class="karat-badge" data-k="${item.karat}">${item.karat}K</span>
+          ${renderKaratBadge(item)}
         </td>
       `);
     }
@@ -529,9 +594,9 @@
     const endIdx = Math.min(page * pageSize, filtered.length);
 
     const pageButtons = [];
-    const window = 2;
-    const from = Math.max(1, page - window);
-    const to = Math.min(totalPages, page + window);
+    const winSize = 2;
+    const from = Math.max(1, page - winSize);
+    const to = Math.min(totalPages, page + winSize);
 
     const btn = (p, label, opts = {}) => `
       <button class="pg-btn ${opts.active ? 'active' : ''}"
@@ -596,14 +661,28 @@
     const chips = [];
 
     if (f.search) chips.push({ key: 'search', label: 'بحث', value: f.search });
-    if (f.karat) chips.push({ key: 'karat', label: 'عيار', value: `${f.karat}K` });
+
+    /* ✅ v3: عرض الفلتر القياسي أو المخصص */
+    if (f.karat) {
+      let label = `${f.karat}K`;
+      if (f.karat === 'custom') label = 'مخصص فقط';
+      chips.push({ key: 'karat', label: 'عيار', value: label });
+    }
+
     if (f.status) chips.push({ key: 'status', label: 'حالة', value: GMS.getStatus(f.status).label });
+
     if (f.branch) {
       const b = GMS.Demo?.getBranches()?.find(x => x.id === f.branch);
       chips.push({ key: 'branch', label: 'فرع', value: b?.name || f.branch });
     }
+
     if (f.manufacturer) chips.push({ key: 'manufacturer', label: 'ماركة', value: f.manufacturer });
     if (f.category) chips.push({ key: 'category', label: 'تصنيف', value: f.category });
+
+    /* ✅ v3: شارة فلتر "مخصص فقط" */
+    if (f.onlyCustomKarat) {
+      chips.push({ key: 'onlyCustomKarat', label: 'عيار', value: 'مخصص فقط' });
+    }
 
     if (!chips.length) return '';
 
@@ -677,6 +756,12 @@
     const manufacturers = getManufacturers();
     const categories = GMS.CATEGORIES;
 
+    /* ✅ v3: قائمة العيارات في الفلتر — تشمل "مخصص" */
+    const karatOptions = [
+      ...GMS.KARAT_ORDER.map(k => ({ value: String(k), label: `${k}K` })),
+      { value: 'custom', label: '🔸 مخصص فقط' },
+    ];
+
     root.innerHTML = `
       <div class="page-header">
         <h2>
@@ -689,7 +774,10 @@
       <div class="kpi-row cols-4">
         ${renderKPI('gold', 'package', 'إجمالي الأصناف',
             GMS.intFmt(InvState.items.length), '',
-            `<b>${GMS.intFmt(InvState.stats.inStock)}</b> متوفر · <b>${GMS.intFmt(InvState.stats.sold)}</b> مباع`)}
+            `<b>${GMS.intFmt(InvState.stats.inStock)}</b> متوفر · <b>${GMS.intFmt(InvState.stats.sold)}</b> مباع` +
+            (InvState.stats.customKaratCount > 0
+              ? ` · <b style="color:var(--warn)">${GMS.intFmt(InvState.stats.customKaratCount)}</b> مخصص`
+              : ''))}
 
         ${renderKPI('info', 'filter', 'النتائج المُفلترة',
             GMS.intFmt(InvState.filtered.length), '',
@@ -721,10 +809,12 @@
             ` : ''}
           </div>
 
-          <select class="filter-select" id="inv-filter-karat" style="min-width:120px">
+          <select class="filter-select" id="inv-filter-karat" style="min-width:130px">
             <option value="">كل العيارات</option>
-            ${GMS.KARAT_ORDER.map(k => `
-              <option value="${k}" ${InvState.filters.karat == k ? 'selected' : ''}>${k}K</option>
+            ${karatOptions.map(opt => `
+              <option value="${opt.value}" ${InvState.filters.karat === opt.value ? 'selected' : ''}>
+                ${opt.label}
+              </option>
             `).join('')}
           </select>
 
@@ -813,7 +903,12 @@
     host.querySelectorAll('[data-clear-filter]').forEach(btn => {
       btn.onclick = () => {
         const key = btn.dataset.clearFilter;
-        InvState.filters[key] = '';
+        /* ✅ v3: معالجة خاصة لـ onlyCustomKarat (boolean) */
+        if (key === 'onlyCustomKarat') {
+          InvState.filters.onlyCustomKarat = false;
+        } else {
+          InvState.filters[key] = '';
+        }
         InvState.page = 1;
         applyFilters();
         syncFilterSelects();
@@ -828,6 +923,7 @@
         InvState.filters = {
           search: '', karat: '', status: '',
           branch: '', manufacturer: '', category: '',
+          onlyCustomKarat: false,
         };
         InvState.page = 1;
         applyFilters();
@@ -954,7 +1050,6 @@
       const el = document.getElementById(id);
       if (!el) return;
 
-      /* ✅ قفل التفاعل عند الفتح */
       el.onfocus = () => lockInteraction();
       el.onmousedown = () => lockInteraction();
 
@@ -971,7 +1066,11 @@
     document.querySelectorAll('[data-clear-filter]').forEach(btn => {
       btn.onclick = () => {
         const key = btn.dataset.clearFilter;
-        InvState.filters[key] = '';
+        if (key === 'onlyCustomKarat') {
+          InvState.filters.onlyCustomKarat = false;
+        } else {
+          InvState.filters[key] = '';
+        }
         InvState.page = 1;
         applyFilters();
         syncFilterSelects();
@@ -986,6 +1085,7 @@
         InvState.filters = {
           search: '', karat: '', status: '',
           branch: '', manufacturer: '', category: '',
+          onlyCustomKarat: false,
         };
         InvState.page = 1;
         applyFilters();
@@ -1144,6 +1244,7 @@
   function showItemDetails(item) {
     const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
     const status = GMS.getStatus(item.status);
+    const karatInfo = getItemKaratInfo(item);
 
     const branchName = item.branch_name
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
@@ -1164,10 +1265,14 @@
             <div style="font-size:10.5px;color:var(--muted);font-weight:800;
                         text-transform:uppercase">العيار</div>
             <div style="margin-top:4px">
-              <span class="karat-badge" data-k="${item.karat}"
-                    style="font-size:14px;padding:4px 10px">
-                ${item.karat}K
-              </span>
+              ${renderKaratBadge(item)}
+              ${karatInfo.is_custom ? `
+                <div class="mono" style="font-size:10.5px;
+                            color:var(--muted);font-weight:700;
+                            margin-top:5px">
+                  نقاء: ${Number(karatInfo.purity_ratio).toFixed(4)}
+                </div>
+              ` : ''}
             </div>
           </div>
 
@@ -1212,6 +1317,17 @@
             <span class="k"><i data-lucide="scale"></i> الوزن الصافي</span>
             <span class="v">${GMS.gramFmt(item.net_weight)} جم</span>
           </div>
+          ${karatInfo.is_custom ? `
+            <div class="cl-row">
+              <span class="k">
+                <i data-lucide="percent"></i>
+                نسبة النقاء (المخصصة)
+              </span>
+              <span class="v mono" style="color:var(--warn);font-weight:900">
+                ${Number(karatInfo.purity_ratio).toFixed(4)}
+              </span>
+            </div>
+          ` : ''}
           <div class="cl-row hi">
             <span class="k"><i data-lucide="sparkles"></i> البندق 24K</span>
             <span class="v">${GMS.gramFmt(item.pure_weight)} جم</span>
@@ -1307,7 +1423,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · ITEM MODAL (ADD / EDIT)
+     §9 · ITEM MODAL (ADD / EDIT) — v3 مع دعم العيار المخصص
      ═════════════════════════════════════════════════════════════════════ */
 
   function openItemModal(item = null) {
@@ -1327,11 +1443,24 @@
       saleRate: Number(item_.workmanship_per_gram || 0),
       stonesIncluded: Boolean(item_.stones_included) || false,
 
+      /* ✅ v3: حالة العيار المخصص */
+      karatMode: 'standard',        /* 'standard' | 'custom' */
+      standardKarat: Number(item_.karat) || 21,
+      customKarat: Number(item_.custom_karat) || 888,
+      customPurity: Number(item_.purity_ratio) || 0.8880,
+
       /* ✅ Quantity */
       quantity: 1,
       sameWeight: true,
-      individualWeights: [],  /* تُملأ إذا sameWeight=false */
+      individualWeights: [],
     };
+
+    /* ✅ v3: تحديد الحالة الابتدائية للعيار */
+    if (isEdit && (item_.is_custom_karat === true || item_.custom_karat != null)) {
+      mstate.karatMode = 'custom';
+      mstate.customKarat = Number(item_.custom_karat) || Math.round((Number(item_.purity_ratio) || 0.888) * 1000);
+      mstate.customPurity = Number(item_.purity_ratio) || (mstate.customKarat / 1000);
+    }
 
     const currentManu = manufacturers.find(m => m.code === item_.manufacturer_code);
     if (currentManu) {
@@ -1363,7 +1492,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.1 · Render Item Form
+     §9.1 · Render Item Form — v3 مع العيار المخصص
      ───────────────────────────────────────────────────────────────────── */
   function renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate) {
     const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
@@ -1423,19 +1552,121 @@
         </div>
       </div>
 
-      <!-- Section 2: Karat + Branch + Status -->
-      <div class="grid-form three" style="margin-top:13px">
-        <div class="field">
-          <label>العيار <span class="req">*</span></label>
-          <select id="f-karat">
-            ${GMS.KARAT_ORDER.map(k => `
-              <option value="${k}" ${Number(item_.karat) === k ? 'selected' : ''}>
-                ${k}K — نقاء ${GMS.karatRatio(k).toFixed(4)}
-              </option>
-            `).join('')}
-          </select>
+      <!-- ✅ v3: Section 2: Karat (Standard + Custom toggle) -->
+      <div style="margin-top:18px">
+        <div style="font-size:11px;font-weight:800;color:var(--muted);
+                    text-transform:uppercase;letter-spacing:.5px;
+                    margin-bottom:11px;display:flex;align-items:center;
+                    gap:8px">
+          <i data-lucide="gem" style="width:12px;height:12px"></i>
+          العيار
+          <span class="chip" style="font-size:9.5px;margin-inline-start:auto">
+            يدعم العيارات القياسية والمخصصة (سبائك، مستورد، كسر)
+          </span>
         </div>
 
+        <!-- Standard Karat Grid -->
+        <div class="karat-grid" id="f-karat-standard-grid">
+          ${GMS.KARAT_ORDER.map(k => `
+            <button type="button"
+                    class="karat-btn ${mstate.karatMode === 'standard' && mstate.standardKarat === k ? 'active' : ''}"
+                    data-karat-std="${k}">
+              <div class="kb-num">${k}K</div>
+              <div class="kb-ratio">${GMS.karatRatio(k).toFixed(4)}</div>
+            </button>
+          `).join('')}
+          <button type="button"
+                  class="karat-btn ${mstate.karatMode === 'custom' ? 'active' : ''} custom-karat-btn"
+                  data-karat-custom="1">
+            <div class="kb-num">
+              <i data-lucide="sliders-horizontal"
+                 style="width:20px;height:20px"></i>
+            </div>
+            <div class="kb-ratio">مخصص</div>
+          </button>
+        </div>
+
+        <!-- Hidden input للعيار القياسي -->
+        <input type="hidden" id="f-karat" value="${mstate.standardKarat}">
+
+        <!-- ✅ v3: Custom Karat Panel -->
+        <div id="f-custom-karat-panel"
+             style="margin-top:12px;padding:16px 18px;
+                    background:var(--warn-bg);
+                    border-radius:12px;
+                    border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
+                    ${mstate.karatMode === 'custom' ? '' : 'display:none'}">
+          <div style="font-size:11px;font-weight:800;color:var(--warn);
+                      text-transform:uppercase;letter-spacing:.5px;
+                      margin-bottom:12px;display:flex;align-items:center;gap:6px">
+            <i data-lucide="sliders-horizontal" style="width:12px;height:12px"></i>
+            عيار مخصص
+          </div>
+
+          <div class="grid-form" style="gap:12px">
+            <div class="field">
+              <label>العيار (لكل 1000)</label>
+              <input type="number" id="f-custom-karat"
+                     step="1" min="300" max="999"
+                     value="${mstate.customKarat}"
+                     class="mono"
+                     style="font-weight:900;text-align:center;font-size:16px">
+              <span class="hint">من 300 إلى 999 (مثال: 888 للسبائك المستوردة)</span>
+            </div>
+            <div class="field">
+              <label>أو نسبة النقاء مباشرة</label>
+              <input type="number" id="f-custom-purity"
+                     step="0.0001" min="0.3000" max="1.0000"
+                     value="${mstate.customPurity.toFixed(4)}"
+                     class="mono"
+                     style="font-weight:900;text-align:center;font-size:16px">
+              <span class="hint">من 0.3000 إلى 1.0000</span>
+            </div>
+          </div>
+
+          <!-- Quick presets للسبائك الشائعة -->
+          <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
+            <button type="button" class="btn btn-sm" data-custom-preset="999.9">
+              999.9 (سويسري)
+            </button>
+            <button type="button" class="btn btn-sm" data-custom-preset="999">
+              999
+            </button>
+            <button type="button" class="btn btn-sm" data-custom-preset="995">
+              995
+            </button>
+            <button type="button" class="btn btn-sm" data-custom-preset="916">
+              916
+            </button>
+            <button type="button" class="btn btn-sm" data-custom-preset="900">
+              900
+            </button>
+            <button type="button" class="btn btn-sm" data-custom-preset="888">
+              888
+            </button>
+          </div>
+
+          <div style="margin-top:12px;padding:10px 14px;
+                      background:var(--surface);border-radius:9px;
+                      font-size:11.5px;font-weight:700;
+                      color:var(--text-2);
+                      display:flex;align-items:center;gap:8px">
+            <i data-lucide="info" style="width:13px;height:13px;
+                       color:var(--warn);flex-shrink:0"></i>
+            <span>
+              سيتم استخدام النقاء
+              <b class="mono" id="f-purity-display"
+                 style="color:var(--warn);font-size:13px">
+                ${mstate.customPurity.toFixed(4)}
+              </b>
+              لحساب البندق 24K والقيمة السوقية.
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Branch + Status -->
+      <div class="grid-form" style="margin-top:18px;grid-template-columns:1fr 1fr">
         <div class="field">
           <label>الفرع</label>
           <select id="f-branch">
@@ -1457,15 +1688,15 @@
         </div>
       </div>
 
-      <!-- Section 3: Dynamic Pricing -->
+      <!-- Section 4: Dynamic Pricing -->
       <div id="f-pricing-section" style="margin-top:18px">
         ${renderPricingSection(mstate)}
       </div>
 
-      <!-- ✅ Section 4: Quantity & Weights (NEW) -->
+      <!-- Section 5: Quantity & Weights -->
       ${!isEdit ? renderQuantitySection(mstate) : renderSingleWeightSection(item_, mstate)}
 
-      <!-- Section 5: Notes -->
+      <!-- Section 6: Notes -->
       <div class="field" style="margin-top:13px">
         <label>ملاحظات</label>
         <input id="f-notes" value="${GMS.esc(item_.notes || '')}"
@@ -1478,7 +1709,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.2 · Render Quantity Section (لإضافة صنف جديد)
+     §9.2 · Quantity Section
      ───────────────────────────────────────────────────────────────────── */
   function renderQuantitySection(mstate) {
     return `
@@ -1495,7 +1726,6 @@
                   border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--info) 30%,var(--border))">
 
-        <!-- Quantity + Same weight toggle -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;
                     align-items:end">
           <div class="field">
@@ -1548,7 +1778,6 @@
           </div>
         </div>
 
-        <!-- Unified weight mode -->
         <div id="f-unified-weight-host"
              style="margin-top:14px;${mstate.sameWeight ? '' : 'display:none'}">
           <div class="grid-form three">
@@ -1587,7 +1816,6 @@
           </div>
         </div>
 
-        <!-- Individual weights mode -->
         <div id="f-individual-weight-host"
              style="margin-top:14px;${!mstate.sameWeight ? '' : 'display:none'}">
           <div class="field">
@@ -1620,7 +1848,6 @@
           </div>
         </div>
 
-        <!-- Computed output (for both modes) -->
         <div class="grid-form three" style="margin-top:14px">
           <div class="field">
             <label>الوزن الصافي (للوحدة)</label>
@@ -1648,7 +1875,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.3 · Render Single Weight Section (للتعديل)
+     §9.3 · Single Weight Section (Edit mode)
      ───────────────────────────────────────────────────────────────────── */
   function renderSingleWeightSection(item_, mstate) {
     return `
@@ -1724,7 +1951,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.4 · Render Pricing Section
+     §9.4 · Pricing Section
      ───────────────────────────────────────────────────────────────────── */
   function renderPricingSection(mstate) {
     const mode = mstate.pricingMode || 'fixed';
@@ -1918,7 +2145,7 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.5 · Bind Item Form
+     §9.5 · Bind Item Form — v3 مع ربط العيار المخصص
      ───────────────────────────────────────────────────────────────────── */
   function bindItemForm(el, closeFn, isEdit, item_, mstate, manufacturers, categories) {
     const $id = (id) => el.querySelector('#' + id);
@@ -1929,18 +2156,35 @@
       closeBtn.onclick = () => closeFn();
     }
 
+    /* ✅ v3: دوال مساعدة لقراءة العيار الحالي */
+    const getCurrentKarat = () => {
+      if (mstate.karatMode === 'custom') {
+        return {
+          karat: null,
+          custom_karat: mstate.customKarat,
+          purity_ratio: mstate.customPurity,
+          is_custom: true,
+        };
+      }
+      return {
+        karat: mstate.standardKarat,
+        custom_karat: null,
+        purity_ratio: GMS.karatRatio(mstate.standardKarat),
+        is_custom: false,
+      };
+    };
+
     /* ─── Recalc ─────────────────────────────────────────────────── */
     const recalc = () => {
-      const karat = Number($id('f-karat')?.value) || 21;
+      const karatInfo = getCurrentKarat();
+      const purityRatio = karatInfo.purity_ratio;
+
       const stonesIncluded = $id('f-stones-included')?.checked || false;
       const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
       const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
       const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
       const qty = isEdit ? 1 : (parseInt($id('f-quantity')?.value) || 1);
 
-      const ratio = GMS.karatRatio(karat);
-
-      /* حساب لكل وحدة */
       let netUnit = 0;
       let stoneUnit = 0;
 
@@ -1949,32 +2193,28 @@
         stoneUnit = stonesIncluded ? 0 : (parseFloat($id('f-stone')?.value) || 0);
         netUnit = GMS.round(Math.max(0, gross - stoneUnit), 3);
       } else {
-        /* أوزان متنوعة — نستخدم أول وزن للمعاينة */
         const weights = parseWeightsInput($id('f-weights-list')?.value);
         if (weights.length) {
           netUnit = GMS.round(weights[0], 3);
         }
       }
 
-      const pureUnit = GMS.round(netUnit * ratio, 4);
+      const pureUnit = GMS.round(netUnit * purityRatio, 4);
       const goldValueUnit = GMS.round(pureUnit * price24, 2);
       const purchaseMakeUnit = GMS.round(netUnit * purchaseRate, 2);
       const saleMakeUnit = GMS.round(netUnit * saleRate, 2);
       const totalUnit = GMS.round(goldValueUnit + saleMakeUnit, 2);
       const profitUnit = GMS.round(saleMakeUnit - purchaseMakeUnit, 2);
 
-      /* Update preview fields */
       if ($id('f-net')) $id('f-net').value = netUnit.toFixed(3);
       if ($id('f-pure')) $id('f-pure').value = pureUnit.toFixed(3);
       if ($id('f-total')) $id('f-total').value = GMS.moneyFmt(totalUnit);
 
-      /* Total weight */
       if ($id('f-total-weight')) {
         const gross = parseFloat($id('f-weight')?.value) || 0;
         $id('f-total-weight').value = `${GMS.gramFmt(gross * qty)} جم`;
       }
 
-      /* Margin indicator */
       const marginHost = $id('f-margin-indicator');
       if (marginHost) {
         mstate.purchaseRate = purchaseRate;
@@ -1983,12 +2223,148 @@
         window.lucide?.createIcons();
       }
 
-      /* Preview box */
       updatePreviewBox(el, {
         netUnit, pureUnit, goldValueUnit, purchaseMakeUnit,
         saleMakeUnit, totalUnit, profitUnit, qty,
+        purityRatio, karatInfo,
       });
     };
+
+    /* ─── ✅ v3: Standard Karat buttons ─────────────────────────────── */
+    el.querySelectorAll('[data-karat-std]').forEach(btn => {
+      btn.onclick = () => {
+        mstate.karatMode = 'standard';
+        mstate.standardKarat = Number(btn.dataset.karatStd);
+
+        /* Update UI */
+        el.querySelectorAll('[data-karat-std]').forEach(b => {
+          b.classList.toggle('active', b === btn);
+        });
+        const customBtn = el.querySelector('[data-karat-custom]');
+        if (customBtn) customBtn.classList.remove('active');
+
+        /* Hide custom panel */
+        const panel = $id('f-custom-karat-panel');
+        if (panel) panel.style.display = 'none';
+
+        /* Sync hidden karat input */
+        const karatInput = $id('f-karat');
+        if (karatInput) karatInput.value = mstate.standardKarat;
+
+        /* Recalc margin for standard karat */
+        if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
+          applyItemBasedRate(el, mstate, recalc);
+        }
+
+        recalc();
+      };
+    });
+
+    /* ─── ✅ v3: Custom Karat button ──────────────────────────────── */
+    const customBtn = el.querySelector('[data-karat-custom]');
+    if (customBtn) {
+      customBtn.onclick = () => {
+        mstate.karatMode = 'custom';
+
+        el.querySelectorAll('[data-karat-std]').forEach(b => {
+          b.classList.remove('active');
+        });
+        customBtn.classList.add('active');
+
+        /* Show custom panel */
+        const panel = $id('f-custom-karat-panel');
+        if (panel) panel.style.display = '';
+
+        /* Focus on custom karat input */
+        setTimeout(() => {
+          const input = $id('f-custom-karat');
+          if (input) {
+            try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+          }
+        }, 100);
+
+        recalc();
+      };
+    }
+
+    /* ─── ✅ v3: Custom karat input ───────────────────────────────── */
+    const customKaratInput = $id('f-custom-karat');
+    if (customKaratInput) {
+      customKaratInput.oninput = () => {
+        lockInteraction();
+        let v = parseInt(customKaratInput.value) || 888;
+        v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
+        mstate.customKarat = v;
+        mstate.customPurity = GMS.round(v / 1000, 4);
+
+        /* Sync purity input */
+        const purityInput = $id('f-custom-purity');
+        if (purityInput) purityInput.value = mstate.customPurity.toFixed(4);
+
+        /* Update display */
+        const disp = $id('f-purity-display');
+        if (disp) disp.textContent = mstate.customPurity.toFixed(4);
+
+        recalc();
+      };
+      customKaratInput.onblur = () => {
+        customKaratInput.value = mstate.customKarat;
+      };
+    }
+
+    /* ─── ✅ v3: Custom purity input ──────────────────────────────── */
+    const customPurityInput = $id('f-custom-purity');
+    if (customPurityInput) {
+      customPurityInput.oninput = () => {
+        lockInteraction();
+        let v = parseFloat(customPurityInput.value) || 0.8880;
+        v = Math.max(GMS.KARAT_LIMITS.minPurity,
+                     Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+        mstate.customPurity = GMS.round(v, 4);
+        mstate.customKarat = Math.round(mstate.customPurity * 1000);
+
+        /* Sync karat input */
+        const karatInput = $id('f-custom-karat');
+        if (karatInput) karatInput.value = mstate.customKarat;
+
+        /* Update display */
+        const disp = $id('f-purity-display');
+        if (disp) disp.textContent = mstate.customPurity.toFixed(4);
+
+        recalc();
+      };
+      customPurityInput.onblur = () => {
+        customPurityInput.value = mstate.customPurity.toFixed(4);
+      };
+    }
+
+    /* ─── ✅ v3: Custom karat presets ─────────────────────────────── */
+    el.querySelectorAll('[data-custom-preset]').forEach(btn => {
+      btn.onclick = () => {
+        const presetVal = parseFloat(btn.dataset.customPreset) || 888;
+
+        if (presetVal >= 300) {
+          /* قيمة عيار */
+          mstate.customKarat = Math.round(presetVal);
+          mstate.customPurity = GMS.round(mstate.customKarat / 1000, 4);
+        } else {
+          /* قيمة نقاء */
+          mstate.customPurity = GMS.round(presetVal, 4);
+          mstate.customKarat = Math.round(mstate.customPurity * 1000);
+        }
+
+        const karatInput = $id('f-custom-karat');
+        if (karatInput) karatInput.value = mstate.customKarat;
+
+        const purityInput = $id('f-custom-purity');
+        if (purityInput) purityInput.value = mstate.customPurity.toFixed(4);
+
+        const disp = $id('f-purity-display');
+        if (disp) disp.textContent = mstate.customPurity.toFixed(4);
+
+        recalc();
+      };
+    });
 
     /* ─── Manufacturer change ─────────────────────────────────────── */
     const manuSelect = $id('f-manufacturer');
@@ -2105,19 +2481,7 @@
       };
     }
 
-    /* ─── Karat / Category ────────────────────────────────────────── */
-    const karatSelect = $id('f-karat');
-    if (karatSelect) {
-      karatSelect.onfocus = () => lockInteraction();
-      karatSelect.onchange = () => {
-        lockInteraction();
-        recalc();
-        if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
-          applyItemBasedRate(el, mstate, recalc);
-        }
-      };
-    }
-
+    /* ─── Category ────────────────────────────────────────────────── */
     const categorySelect = $id('f-category');
     if (categorySelect) {
       categorySelect.onfocus = () => lockInteraction();
@@ -2132,11 +2496,11 @@
     /* ─── Pricing inputs ──────────────────────────────────────────── */
     bindPricingInputs(el, mstate, manufacturers, recalc);
 
-    /* ─── Generate SKU ────────────────────────────────────────────── */
+    /* ─── ✅ v3: Generate SKU — يدعم العيار المخصص ─────────────────── */
     const genBtn = $id('f-gen-sku');
     if (genBtn) {
       genBtn.onclick = () => {
-        const karat = Number($id('f-karat').value);
+        const karatInfo = getCurrentKarat();
         const manuCode = manuSelect?.value || 'X';
         const manu = manufacturers.find(m => m.code === manuCode);
         const letter = manu?.letter || manuCode;
@@ -2144,7 +2508,10 @@
         const sku = GMS.generateSKU({
           manufacturerCode: manuCode,
           letter,
-          karat,
+          /* ✅ v3: نمرر customKarat أو purityRatio */
+          karat: karatInfo.is_custom ? null : karatInfo.karat,
+          customKarat: karatInfo.is_custom ? karatInfo.custom_karat : null,
+          purityRatio: karatInfo.is_custom ? karatInfo.purity_ratio : null,
           seq: Math.floor(Math.random() * 10000),
         });
         $id('f-sku').value = sku;
@@ -2153,7 +2520,7 @@
 
     /* ─── Save ────────────────────────────────────────────────────── */
     $id('f-save').onclick = async () => {
-      await handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories);
+      await handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat);
     };
 
     /* ─── Initial recalc ─────────────────────────────────────────── */
@@ -2211,6 +2578,7 @@
     if (!preview) return;
 
     const qty = d.qty || 1;
+    const isCustom = d.karatInfo?.is_custom;
 
     preview.innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(5,1fr);
@@ -2256,6 +2624,13 @@
                       margin-top:3px;color:var(--primary)">
             ${d.pureUnit.toFixed(3)} جم
           </div>
+          ${isCustom ? `
+            <div class="mono" style="font-size:9.5px;
+                        color:var(--warn);font-weight:800;
+                        margin-top:2px">
+              نقاء ${Number(d.purityRatio).toFixed(4)}
+            </div>
+          ` : ''}
         </div>
         <div>
           <div style="font-size:10px;color:var(--primary);
@@ -2338,9 +2713,6 @@
     window.lucide?.createIcons();
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.7 · Bind Dynamic Pricing Inputs
-     ───────────────────────────────────────────────────────────────────── */
   function bindPricingInputs(el, mstate, manufacturers, recalc) {
     const $id = (id) => el.querySelector('#' + id);
 
@@ -2440,19 +2812,21 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
-     §9.8 · Save Handler (Single + Multi)
+     §9.7 · Save Handler — v3 مع دعم العيار المخصص
      ───────────────────────────────────────────────────────────────────── */
-  async function handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories) {
+  async function handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat) {
     const $id = (id) => el.querySelector('#' + id);
 
     const baseSku = ($id('f-sku').value || '').trim().toUpperCase();
-    const karat = Number($id('f-karat').value);
     const manuCode = $id('f-manufacturer')?.value || '';
     const qty = isEdit ? 1 : (parseInt($id('f-quantity')?.value) || 1);
     const stonesIncluded = $id('f-stones-included')?.checked || false;
     const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
     const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
     const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+
+    /* ✅ v3: الحصول على معلومات العيار الحالية */
+    const karatInfo = getCurrentKarat();
 
     /* Validation */
     if (!baseSku) {
@@ -2463,6 +2837,17 @@
     if (!manuCode) {
       GMS.Beep?.error?.();
       return GMS.Toast.err('المصنع مطلوب');
+    }
+
+    /* ✅ v3: Validation للعيار المخصص */
+    if (karatInfo.is_custom) {
+      if (!GMS.isValidPurity(karatInfo.purity_ratio)) {
+        GMS.Beep?.error?.();
+        return GMS.Toast.err(
+          'نقاء غير صالح',
+          `يجب أن يكون بين ${GMS.KARAT_LIMITS.minPurity} و ${GMS.KARAT_LIMITS.maxPurity}`
+        );
+      }
     }
 
     /* جمع الأوزان */
@@ -2492,10 +2877,18 @@
     const colorCode = $id('f-color')?.value || '';
     const now = new Date().toISOString();
 
+    /* ✅ v3: بناء payload العيار الموحّد */
+    const karatPayload = GMS.buildKaratPayload({
+      karat: karatInfo.is_custom ? null : karatInfo.karat,
+      customKarat: karatInfo.is_custom ? karatInfo.custom_karat : null,
+      purityRatio: karatInfo.purity_ratio,
+      isCustom: karatInfo.is_custom,
+    });
+
     /* بناء القطع */
     const items = weights.map((gross, idx) => {
       const net = GMS.round(Math.max(0, gross - stoneUnit), 3);
-      const pure = GMS.round(net * GMS.karatRatio(karat), 4);
+      const pure = GMS.round(net * karatInfo.purity_ratio, 4);
       const goldValue = GMS.round(pure * price24, 2);
       const makeValue = GMS.round(net * saleRate, 2);
       const purchaseMakeValue = GMS.round(net * purchaseRate, 2);
@@ -2509,8 +2902,13 @@
         parent_sku: qty > 1 ? baseSku : null,
         instance_number: qty > 1 ? (idx + 1) : null,
         category: $id('f-category').value,
-        karat,
-        purity_ratio: GMS.karatRatio(karat),
+
+        /* ✅ v3: حقول العيار الجديدة */
+        karat: karatPayload.karat,
+        custom_karat: karatPayload.custom_karat,
+        purity_ratio: karatPayload.purity_ratio,
+        is_custom_karat: karatPayload.is_custom_karat,
+
         weight_grams: GMS.round(gross, 3),
         stone_weight: stoneUnit,
         stones_included: stonesIncluded,
@@ -2545,7 +2943,6 @@
     });
 
     try {
-      /* Show loading */
       const saveBtn = $id('f-save');
       if (saveBtn) {
         saveBtn.disabled = true;
@@ -2570,7 +2967,6 @@
             .update(items[0])
             .eq('sku', items[0].sku);
         } else {
-          /* إدراج جماعي */
           await client
             .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
             .insert(items);
@@ -2597,21 +2993,27 @@
           {
             base_sku: baseSku,
             count: qty,
-            karat,
+            karat: karatInfo.is_custom ? `مخصص ${karatInfo.custom_karat}` : karatInfo.karat,
+            purity_ratio: karatInfo.purity_ratio,
+            is_custom_karat: karatInfo.is_custom,
             total_weight: GMS.round(weights.reduce((a, b) => a + b, 0), 3),
           }
         );
       }
 
       /* 5 · Success toast */
+      const karatLabel = karatInfo.is_custom
+        ? `مخصص ${karatInfo.custom_karat} (${karatInfo.purity_ratio.toFixed(4)})`
+        : `${karatInfo.karat}K`;
+
       if (isEdit) {
-        GMS.Toast.ok('تم حفظ التعديلات', `${items[0].sku}`);
+        GMS.Toast.ok('تم حفظ التعديلات', `${items[0].sku} · ${karatLabel}`);
       } else if (qty === 1) {
-        GMS.Toast.ok('تمت إضافة الصنف', `${items[0].sku}`);
+        GMS.Toast.ok('تمت إضافة الصنف', `${items[0].sku} · ${karatLabel}`);
       } else {
         GMS.Toast.ok(
           `تمت إضافة ${qty} قطعة`,
-          `${baseSku}-001 إلى ${baseSku}-${String(qty).padStart(3, '0')}`
+          `${baseSku}-001 إلى ${baseSku}-${String(qty).padStart(3, '0')} · ${karatLabel}`
         );
       }
 
@@ -2877,111 +3279,4 @@
       cb.onchange = () => {
         const key = cb.dataset.col;
         const visibleCount = Object.values(InvState.columns).filter(Boolean).length;
-        if (!cb.checked && visibleCount <= 2) {
-          cb.checked = true;
-          GMS.Toast.warn('يجب إبقاء عمودين على الأقل');
-          return;
-        }
-        InvState.columns[key] = cb.checked;
-        refreshTable();
-      };
-    });
-
-    el.querySelector('#inv-cols-reset').onclick = () => {
-      const defaults = {
-        sku: true, category: true, karat: true, weight_grams: true,
-        net_weight: true, pure_weight: true, workmanship_per_gram: true,
-        total_cost: true, branch: true, manufacturer: true,
-        status: true, created_at: false,
-      };
-      Object.assign(InvState.columns, defaults);
-      el.remove();
-      refreshTable();
-    };
-
-    const closeFn = (e) => {
-      if (!el.contains(e.target) && !anchorEl.contains(e.target)) {
-        el.remove();
-        document.removeEventListener('mousedown', closeFn);
-      }
-    };
-    setTimeout(() => document.addEventListener('mousedown', closeFn), 0);
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §14 · INIT & CLEANUP
-     ═════════════════════════════════════════════════════════════════════ */
-
-  async function init() {
-    try {
-      await loadInventory();
-      applyFilters();
-    } catch (e) {
-      console.error('[Inventory.init]', e);
-      GMS.Toast.err('فشل تحميل المخزون', e.message);
-    }
-  }
-
-  function cleanup() {
-    cleanupListeners();
-    InvState.selected.clear();
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §15 · VIEW REGISTRATION
-     ═════════════════════════════════════════════════════════════════════ */
-  GMS.Views = GMS.Views || {};
-
-  GMS.Views.inventory = {
-    render: async (root) => {
-      await init();
-      render(root);
-    },
-    cleanup,
-    state: InvState,
-
-    load: loadInventory,
-    applyFilters,
-
-    openItemModal,
-    showItemDetails,
-    deleteItem,
-    printTag,
-    export: exportFiltered,
-
-    bulkPrintTags,
-    bulkExport,
-    bulkDelete,
-
-    columns: COLUMNS,
-
-    /* ✅ API جديد */
-    buildUniqueSku,
-    lockInteraction,
-    isInteractionLocked,
-  };
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §16 · LOADED CONFIRMATION
-     ═════════════════════════════════════════════════════════════════════ */
-  console.log(
-    '%c📦 Inventory View v2.0 loaded · Quantity + Unique SKUs',
-    'color:#b8912f;font-weight:800;font-size:12px;padding:1px 5px;' +
-    'background:#fdf3e3;border-radius:4px;'
-  );
-
-  console.log(
-    `%c🎯 Multi-unit: same-weight OR individual-weights · SKU: BASE-001..BASE-NNN`,
-    'color:#0f7a43;font-weight:700;font-size:11px;'
-  );
-
-  console.log(
-    `%c🛡️  Interaction lock (10s) — dropdowns no longer close during rerenders`,
-    'color:#1c4fd8;font-weight:700;font-size:11px;'
-  );
-
-  /* ═════════════════════════════════════════════════════════════════════
-     ✅ js/14-views-inventory.js — نهاية الملف
-     ═════════════════════════════════════════════════════════════════════ */
-
-})();
+        if (!cb.checked && visibleCount <= 
