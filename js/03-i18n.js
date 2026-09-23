@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/03-i18n.js
    نظام الترجمة: عربي (مصري) + إنجليزي مع RTL/LTR والجمع
+   ✅ v2: إضافة nav.accounting · nav.repair · nav.wholesale
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -69,8 +70,12 @@
       'nav.melting':                 'سبك الكسر',
       'nav.assaying':                'الششني',
       'nav.polishing':               'التحميم والجلخ',
+      'nav.repair':                  'الصيانة والورشة',
       'nav.audit':                   'سجل الحركات',
       'nav.ledger':                  'دفتر الأستاذ',
+      'nav.accounting':              'المحاسبة والمالية',
+      'nav.wholesale':               'التوريد والجملة',
+      'nav.transfers':               'التحويلات بين الفروع',
       'nav.shifts':                  'الورديات',
       'nav.queue':                   'المزامنة',
       'nav.employees':               'الموظفون',
@@ -458,6 +463,25 @@
       'loss.certificateNo':          'رقم شهادة الفحص',
       'loss.assayerName':            'اسم الفاحص',
 
+      /* ─── Repair & Workshop ──────────────────────────────────────── */
+      'repair.title':                'الصيانة والورشة والتعديلات',
+      'repair.subtitle':             'تصليح · توسيع · تضييق · ركوب فصوص · تلميع',
+      'repair.intake':               'الاستلام',
+      'repair.workshop':             'الورشة',
+      'repair.delivery':             'التسليم',
+      'repair.ledger':               'دفتر الصيانة',
+      'repair.newIntake':            'استلام قطعة جديدة',
+      'repair.service.repair':       'تصليح عام / لحام',
+      'repair.service.expanding':    'توسيع مقاس',
+      'repair.service.shrinking':    'تضييق مقاس',
+      'repair.service.stoneSetting': 'ركوب فصوص',
+      'repair.service.polishing':    'تلميع وتحميم',
+      'repair.status.received':      'مستلم',
+      'repair.status.inProgress':    'قيد الصيانة',
+      'repair.status.ready':         'جاهز',
+      'repair.status.delivered':     'مُسلَّم',
+      'repair.status.cancelled':     'ملغى',
+
       /* ─── Audit ──────────────────────────────────────────────────── */
       'audit.title':                 'سجل الحركات',
       'audit.subtitle':              'سجل غير قابل للتعديل لكل العمليات الحساسة',
@@ -678,6 +702,28 @@
       'ph.selectCustomer':           'اختر العميل…',
       'ph.selectRole':               'اختر الدور…',
 
+      /* ─── Wholesale & Transfers ──────────────────────────────────── */
+      'wsl.title':                   'التوريد والجملة والتحويلات',
+      'wsl.subtitle':                'بيع بالجملة · تحويلات بين الفروع · مقايضة ذهب',
+      'wsl.tab.wholesale':           'فواتير الجملة',
+      'wsl.tab.transfers':           'التحويلات بين الفروع',
+      'wsl.mode.wholesale':          'بيع جملة (B2B)',
+      'wsl.mode.inter_branch':       'تحويل بين الفروع',
+      'wsl.mode.retail':             'بيع قطاعي',
+      'wsl.pay.cash':                'دفع نقدي',
+      'wsl.pay.goldExchange':        'مقايضة ذهب خام',
+      'wsl.pay.credit':              'على الحساب',
+      'wsl.pay.mixed':               'دفع مختلط',
+      'wsl.status.draft':            'مسودة',
+      'wsl.status.confirmed':        'مؤكدة',
+      'wsl.status.partial':          'مسددة جزئياً',
+      'wsl.status.paid':             'مسددة',
+      'wsl.status.cancelled':        'ملغاة',
+      'wsl.action.newInvoice':       'فاتورة توريد جديدة',
+      'wsl.action.newTransfer':      'أمر تحويل جديد',
+      'wsl.action.printInvoice':     'طباعة الفاتورة',
+      'wsl.action.printManifest':    'طباعة إذن التوريد',
+
       /* ─── Pluralization (6 Arabic forms) ─────────────────────────── */
       'plural.items.zero':           'لا توجد قطع',
       'plural.items.one':            'قطعة واحدة',
@@ -811,8 +857,12 @@
       'nav.melting':                 'Melting',
       'nav.assaying':                'Assaying',
       'nav.polishing':               'Polishing',
+      'nav.repair':                  'Repair & Workshop',
       'nav.audit':                   'Audit Log',
       'nav.ledger':                  'General Ledger',
+      'nav.accounting':              'Accounting',
+      'nav.wholesale':               'Wholesale & Supply',
+      'nav.transfers':               'Branch Transfers',
       'nav.shifts':                  'Shifts',
       'nav.queue':                   'Sync Queue',
       'nav.employees':               'Employees',
@@ -1200,6 +1250,25 @@
       'loss.certificateNo':          'Certificate No.',
       'loss.assayerName':            'Assayer Name',
 
+      /* ─── Repair & Workshop ──────────────────────────────────────── */
+      'repair.title':                'Repair & Workshop',
+      'repair.subtitle':             'Repair · Expanding · Shrinking · Stone Setting',
+      'repair.intake':               'Intake',
+      'repair.workshop':             'Workshop',
+      'repair.delivery':             'Delivery',
+      'repair.ledger':               'Repair Ledger',
+      'repair.newIntake':            'New Repair Intake',
+      'repair.service.repair':       'General Repair',
+      'repair.service.expanding':    'Expanding',
+      'repair.service.shrinking':    'Shrinking',
+      'repair.service.stoneSetting': 'Stone Setting',
+      'repair.service.polishing':    'Polishing',
+      'repair.status.received':      'Received',
+      'repair.status.inProgress':    'In Progress',
+      'repair.status.ready':         'Ready',
+      'repair.status.delivered':     'Delivered',
+      'repair.status.cancelled':     'Cancelled',
+
       /* ─── Audit ──────────────────────────────────────────────────── */
       'audit.title':                 'Audit Log',
       'audit.subtitle':              'Immutable trail of all sensitive operations',
@@ -1419,6 +1488,28 @@
       'ph.selectSupplier':           'Select supplier…',
       'ph.selectCustomer':           'Select customer…',
       'ph.selectRole':               'Select role…',
+
+      /* ─── Wholesale & Transfers ──────────────────────────────────── */
+      'wsl.title':                   'Wholesale & Branch Transfers',
+      'wsl.subtitle':                'B2B Sales · Inter-Branch Transfers · Gold Exchange',
+      'wsl.tab.wholesale':           'Wholesale Invoices',
+      'wsl.tab.transfers':           'Branch Transfers',
+      'wsl.mode.wholesale':          'Wholesale (B2B)',
+      'wsl.mode.inter_branch':       'Inter-Branch Transfer',
+      'wsl.mode.retail':             'Retail',
+      'wsl.pay.cash':                'Cash Payment',
+      'wsl.pay.goldExchange':        'Gold Exchange',
+      'wsl.pay.credit':              'On Credit',
+      'wsl.pay.mixed':               'Mixed Payment',
+      'wsl.status.draft':            'Draft',
+      'wsl.status.confirmed':        'Confirmed',
+      'wsl.status.partial':          'Partially Paid',
+      'wsl.status.paid':             'Paid',
+      'wsl.status.cancelled':        'Cancelled',
+      'wsl.action.newInvoice':       'New Wholesale Invoice',
+      'wsl.action.newTransfer':      'New Transfer Order',
+      'wsl.action.printInvoice':     'Print Invoice',
+      'wsl.action.printManifest':    'Print Manifest',
 
       /* ─── Pluralization (English) ────────────────────────────────── */
       'plural.items.zero':           'No items',
@@ -1912,6 +2003,11 @@
     `${Object.keys(TRANSLATIONS.en).length} EN keys · ` +
     `${LANG_META.ar.name} / ${LANG_META.en.name}`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c✅ v2: nav.accounting · nav.repair · nav.wholesale · wsl.* keys added`,
+    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
