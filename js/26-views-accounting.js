@@ -12,6 +12,11 @@
      • Realtime Integration — تحديث حي
      • Auto-redirect عبر window.App.navigateTo('accounting')
 
+   ✅ v3: دعم كامل للعيارات المخصصة (سبائك 888، 900، 916، إلخ)
+     - قسم تسوية الذهب فيه زرار "مخصص" + حقل نقاء مباشر
+     - عرض العيار المخصص في الجدول والتفاصيل
+     - KPI ذهب مقسّم للعيارات القياسية + المخصص
+
    Export:
      • GMS.Views.accounting
      • window.AccountingView
@@ -80,11 +85,6 @@
     _prefix: 'gms.acc.',
     _maxPerStore: MAX_ENTRIES,
 
-    /**
-     * قراءة كل عناصر متجر معين
-     * @param {string} store
-     * @returns {Promise<Array>}
-     */
     async getAll(store) {
       try {
         if (!store) return [];
@@ -96,7 +96,6 @@
           if (Array.isArray(parsed)) return parsed;
         }
 
-        /* fallback → IndexedDB metadata */
         if (GMS.IDB && GMS.IDB.isOpen) {
           try {
             const row = await GMS.IDB.metaGet(key);
@@ -111,12 +110,6 @@
       }
     },
 
-    /**
-     * حفظ / تحديث عنصر (upsert)
-     * @param {string} store
-     * @param {Object} entry
-     * @returns {Promise<boolean>}
-     */
     async save(store, entry) {
       try {
         if (!store || !entry || typeof entry !== 'object') return false;
@@ -136,7 +129,6 @@
 
         const trimmed = existing.slice(0, this._maxPerStore);
 
-        /* 1 · localStorage */
         try {
           localStorage.setItem(key, JSON.stringify(trimmed));
         } catch (e) {
@@ -146,7 +138,6 @@
           } catch (_) {}
         }
 
-        /* 2 · IndexedDB metadata */
         if (GMS.IDB && GMS.IDB.isOpen) {
           try {
             await GMS.IDB.metaSet(key, trimmed.slice(0, 500));
@@ -160,12 +151,6 @@
       }
     },
 
-    /**
-     * حذف عنصر
-     * @param {string} store
-     * @param {string} id
-     * @returns {Promise<boolean>}
-     */
     async delete(store, id) {
       try {
         const key = this._prefix + store;
@@ -179,11 +164,6 @@
       }
     },
 
-    /**
-     * تفريغ متجر كامل
-     * @param {string} store
-     * @returns {Promise<boolean>}
-     */
     async clear(store) {
       try {
         localStorage.removeItem(this._prefix + store);
@@ -198,10 +178,6 @@
      §3 · window.App — واجهة التوجيه الموحّدة
      ═════════════════════════════════════════════════════════════════════ */
   window.App = window.App || {
-    /**
-     * الانتقال لصفحة
-     * @param {string} route
-     */
     navigateTo(route) {
       try {
         if (GMS.Router && typeof GMS.Router.go === 'function') {
@@ -215,9 +191,6 @@
       }
     },
 
-    /**
-     * إعادة تحميل الصفحة الحالية
-     */
     reload() {
       try {
         if (GMS.Router && typeof GMS.Router.reload === 'function') {
@@ -235,14 +208,11 @@
      §4 · STATE
      ═════════════════════════════════════════════════════════════════════ */
   const State = {
-    /* البيانات الخام */
     ledger: [],
     filtered: [],
 
-    /* بيانات مساعدة */
     inventory: [],
 
-    /* الحسابات */
     kpis: {
       cashBalance: 0,
       cashRevenue: 0,
@@ -250,6 +220,7 @@
       cashPurchases: 0,
       cashSettlements: 0,
 
+      /* ✅ v3: العيارات القياسية */
       gold24Balance: 0,
       gold21Balance: 0,
       gold18Balance: 0,
@@ -257,17 +228,20 @@
       gold21Pure: 0,
       gold18Pure: 0,
 
+      /* ✅ v3: العيارات المخصصة — نُجمّعها معاً */
+      goldCustomBalance: 0,
+      goldCustomPure: 0,
+      customKaratCount: 0,
+
       totalNet: 0,
       totalPure: 0,
       totalEntries: 0,
     },
 
-    /* الترقيم */
     page: 1,
     pageSize: 25,
     totalPages: 1,
 
-    /* الفلاتر */
     filters: {
       search: '',
       type: '',
@@ -276,14 +250,11 @@
       entity: '',
     },
 
-    /* حالة داخلية */
     loading: false,
     initialized: false,
 
-    /* المستمعون */
     unsubscribers: [],
 
-    /* المؤقتات */
     timers: {
       search: null,
     },
@@ -402,28 +373,50 @@
     clearTimeout(State.timers.search);
   }
 
+  /**
+   * ✅ v3: قراءة معلومات العيار لحركة (قياسي أو مخصص)
+   * @param {Object} entry
+   * @returns {{karat, custom_karat, purity_ratio, is_custom, display}}
+   */
+  function getEntryKaratInfo(entry) {
+    if (!entry) return GMS.resolveKarat(21);
+
+    /* لو عنده is_custom_karat صريح */
+    if (entry.is_custom_karat === true || entry.custom_karat != null) {
+      return GMS.resolveKarat({
+        custom_karat: entry.custom_karat,
+        purity_ratio: entry.gold_purity_weight && entry.gold_net_weight
+          ? (Number(entry.gold_purity_weight) / Number(entry.gold_net_weight))
+          : entry.purity_ratio,
+        is_custom: true,
+      });
+    }
+
+    /* قياسي */
+    if (entry.gold_karat != null) {
+      return GMS.resolveKarat(entry.gold_karat);
+    }
+
+    /* fallback */
+    return GMS.resolveKarat(21);
+  }
+
   /* ═════════════════════════════════════════════════════════════════════
      §6 · DATA LOADING
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تحميل دفتر اليومية — المصدر: CacheDB + Supabase
-   * @returns {Promise<Array>}
-   */
   async function loadLedger() {
     try {
       State.loading = true;
 
       let rows = [];
 
-      /* 1 · CacheDB (المصدر الأساسي) */
       try {
         rows = await CacheDB.getAll(STORE_LEDGER);
       } catch (e) {
         console.warn('[Accounting] CacheDB read failed:', e);
       }
 
-      /* 2 · Supabase (إن متاح + الصلاحية موجودة) */
       if (GMS.Supabase && GMS.Supabase.isReady && GMS.Supabase.isReady()
           && (!GMS.Auth || !GMS.Auth.can || GMS.Auth.can('viewProfitReport'))) {
         try {
@@ -445,7 +438,6 @@
         }
       }
 
-      /* ترتيب تنازلي حسب التاريخ */
       rows.sort((a, b) => {
         const ta = new Date(a.entry_date || a.created_at || 0).getTime();
         const tb = new Date(b.entry_date || b.created_at || 0).getTime();
@@ -464,9 +456,6 @@
     }
   }
 
-  /**
-   * تحميل المخزون — لحساب أرصدة الذهب عند غياب قيود
-   */
   async function loadInventory() {
     try {
       let items = [];
@@ -491,12 +480,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · KPI COMPUTATION
+     §7 · KPI COMPUTATION — ✅ v3 مع دعم العيارات المخصصة
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * حساب كل المؤشرات المالية
-   */
   function computeKPIs() {
     const ledger = State.ledger;
     const inventory = State.inventory;
@@ -507,11 +493,17 @@
     let cashPurchases = 0;
     let cashSettlements = 0;
 
+    /* العيارات القياسية */
     const goldByKarat = {
       24: { net: 0, pure: 0 },
       21: { net: 0, pure: 0 },
       18: { net: 0, pure: 0 },
     };
+
+    /* ✅ v3: العيارات المخصصة */
+    let customNet = 0;
+    let customPure = 0;
+    let customKaratCount = 0;
 
     ledger.forEach(entry => {
       const cashDelta = Number(entry.cash_delta || 0);
@@ -520,8 +512,8 @@
       const netWeight = Number(entry.gold_net_weight || entry.net_weight || 0);
       const pureWeight = Number(entry.gold_pure_weight || entry.pure_weight || 0);
       const type = entry.entry_type || entry.type;
+      const isCustom = entry.is_custom_karat === true || entry.custom_karat != null;
 
-      /* النقدية */
       cashBalance += cashDelta;
 
       if (type === 'sale' || type === 'return_sale') {
@@ -534,8 +526,21 @@
         cashSettlements += cashDelta;
       }
 
-      /* الذهب — توزيع حسب العيار */
-      if (karat && goldByKarat[karat]) {
+      /* ✅ v3: توزيع الذهب — قياسي أو مخصص */
+      if (isCustom) {
+        /* عيار مخصص */
+        const customPurity = Number(entry.purity_ratio) ||
+          (Number(entry.custom_karat) / 1000) ||
+          0;
+
+        const net = netWeight || (customPurity > 0 ? goldDelta / customPurity : 0);
+        const pure = pureWeight || goldDelta;
+
+        customNet += net;
+        customPure += pure;
+        customKaratCount++;
+      } else if (karat && goldByKarat[karat]) {
+        /* عيار قياسي */
         const ratio = GMS.karatRatio ? GMS.karatRatio(karat) : 1;
         const net = netWeight || (ratio > 0 ? goldDelta / ratio : 0);
         const pure = pureWeight || goldDelta;
@@ -545,14 +550,23 @@
       }
     });
 
-    /* fallback — إذا كان الدفتر فارغاً، نستخدم المخزون */
+    /* fallback — من المخزون إذا كان الدفتر فارغاً */
     if (ledger.length === 0 && inventory.length > 0) {
       inventory.forEach(item => {
         if (item.status !== 'IN_STOCK') return;
-        const k = Number(item.karat);
-        if (goldByKarat[k]) {
-          goldByKarat[k].net += Number(item.net_weight || 0);
-          goldByKarat[k].pure += Number(item.pure_weight || 0);
+
+        const itemIsCustom = item.is_custom_karat === true || item.custom_karat != null;
+
+        if (itemIsCustom) {
+          customNet += Number(item.net_weight || 0);
+          customPure += Number(item.pure_weight || 0);
+          customKaratCount++;
+        } else {
+          const k = Number(item.karat);
+          if (goldByKarat[k]) {
+            goldByKarat[k].net += Number(item.net_weight || 0);
+            goldByKarat[k].pure += Number(item.pure_weight || 0);
+          }
         }
       });
     }
@@ -563,6 +577,10 @@
       totalNet += goldByKarat[k].net;
       totalPure += goldByKarat[k].pure;
     });
+
+    /* ✅ v3: نضيف المخصص على الإجمالي */
+    totalNet += customNet;
+    totalPure += customPure;
 
     State.kpis = {
       cashBalance: round(cashBalance, 2),
@@ -577,6 +595,11 @@
       gold24Pure: round(goldByKarat[24].pure, 4),
       gold21Pure: round(goldByKarat[21].pure, 4),
       gold18Pure: round(goldByKarat[18].pure, 4),
+
+      /* ✅ v3 */
+      goldCustomBalance: round(customNet, 3),
+      goldCustomPure: round(customPure, 4),
+      customKaratCount,
 
       totalNet: round(totalNet, 3),
       totalPure: round(totalPure, 4),
@@ -594,7 +617,6 @@
     const f = State.filters;
     let rows = State.ledger.slice();
 
-    /* البحث النصي */
     if (f.search) {
       const q = f.search.toLowerCase().trim();
       rows = rows.filter(r => {
@@ -606,12 +628,10 @@
       });
     }
 
-    /* نوع الحركة */
     if (f.type) {
       rows = rows.filter(r => (r.entry_type || r.type) === f.type);
     }
 
-    /* التاريخ — من */
     if (f.dateFrom) {
       rows = rows.filter(r => {
         const d = (r.entry_date || r.created_at || '').slice(0, 10);
@@ -619,7 +639,6 @@
       });
     }
 
-    /* التاريخ — إلى */
     if (f.dateTo) {
       rows = rows.filter(r => {
         const d = (r.entry_date || r.created_at || '').slice(0, 10);
@@ -627,7 +646,6 @@
       });
     }
 
-    /* الجهة */
     if (f.entity) {
       rows = rows.filter(r =>
         r.entity_type === f.entity || r.entity_id === f.entity
@@ -648,7 +666,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · HTML RENDERERS — KPI CARDS
+     §9 · HTML RENDERERS — KPI CARDS (v3 مع العيار المخصص)
      ═════════════════════════════════════════════════════════════════════ */
 
   function renderKPIs() {
@@ -656,6 +674,11 @@
     const price24 = getPrice24();
     const cashCls = k.cashBalance >= 0 ? 'success' : 'danger';
     const goldValue = round(k.totalPure * price24, 2);
+
+    /* ✅ v3: نص المخصص في meta */
+    const customMeta = k.customKaratCount > 0
+      ? ` · <b style="color:var(--warn)">${intFmt(k.customKaratCount)}</b> مخصص`
+      : '';
 
     return `
       <div class="kpi-row cols-4">
@@ -721,8 +744,26 @@
         </div>
       </div>
 
-      <!-- الصف الثانوي -->
-      <div class="kpi-row cols-3">
+      <!-- ✅ v3: صف ثانوي — مع ذهب مخصص -->
+      <div class="kpi-row cols-4">
+        <!-- ذهب مخصص -->
+        <div class="kpi ${k.customKaratCount > 0 ? 'warn' : 'teal'}">
+          <div class="kpi-label">
+            <i data-lucide="sliders-horizontal"></i>
+            ذهب عيار مخصص
+          </div>
+          <div class="kpi-value">
+            ${gramFmt(k.goldCustomBalance)}
+            <small>جم</small>
+          </div>
+          <div class="kpi-meta">
+            بندق: <b>${gramFmt(k.goldCustomPure)}</b> جم
+            ${k.customKaratCount > 0
+              ? ` · <b>${intFmt(k.customKaratCount)}</b> حركة`
+              : ' · لا يوجد'}
+          </div>
+        </div>
+
         <div class="kpi gold">
           <div class="kpi-label">
             <i data-lucide="scale"></i>
@@ -733,7 +774,7 @@
             <small>جم</small>
           </div>
           <div class="kpi-meta">
-            مجموع جميع العيارات
+            مجموع جميع العيارات${customMeta}
           </div>
         </div>
 
@@ -838,14 +879,42 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · HTML RENDERERS — LEDGER TABLE
+     §11 · HTML RENDERERS — LEDGER TABLE (v3 مع العيار المخصص)
      ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ✅ v3: عرض شارة العيار — قياسي أو مخصص
+   */
+  function renderEntryKaratBadge(entry) {
+    const info = getEntryKaratInfo(entry);
+
+    if (info.is_custom) {
+      const num = info.custom_karat;
+      const purity = Number(info.purity_ratio || 0);
+
+      return `
+        <span class="karat-badge custom-karat-badge"
+              data-k="custom"
+              data-custom="${num}"
+              title="عيار مخصص ${num} — نقاء ${purity.toFixed(4)}">
+          <i data-lucide="sliders-horizontal"
+             style="width:10px;height:10px;
+                    display:inline;vertical-align:-1px;
+                    margin-inline-end:2px"></i>
+          ${num}
+        </span>
+      `;
+    }
+
+    return `<span class="karat-badge" data-k="${info.karat}">${info.karat}K</span>`;
+  }
 
   function renderEntryRow(entry) {
     const type = getEntryType(entry.entry_type || entry.type);
     const cashDelta = Number(entry.cash_delta || 0);
     const goldDelta = Number(entry.gold_delta || 0);
-    const karat = Number(entry.gold_karat || entry.karat || 0);
+    const karatInfo = getEntryKaratInfo(entry);
+    const hasKarat = entry.gold_karat != null || entry.custom_karat != null || entry.is_custom_karat;
 
     const date = entry.entry_date || entry.created_at;
 
@@ -890,8 +959,8 @@
             : '<span style="color:var(--muted)">—</span>'}
         </td>
         <td class="col-c">
-          ${karat
-            ? `<span class="karat-badge" data-k="${karat}">${karat}K</span>`
+          ${hasKarat
+            ? renderEntryKaratBadge(entry)
             : '<span style="color:var(--muted)">—</span>'}
         </td>
         <td class="col-c">
@@ -935,7 +1004,7 @@
               <th>البيان</th>
               <th style="width:140px" class="col-num">المبلغ النقدي</th>
               <th style="width:130px" class="col-num">وزن الذهب</th>
-              <th style="width:70px"  class="col-c">العيار</th>
+              <th style="width:85px"  class="col-c">العيار</th>
               <th style="width:60px"  class="col-c">—</th>
             </tr>
           </thead>
@@ -1025,10 +1094,6 @@
      §12 · MAIN RENDER
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تصيير الصفحة الكاملة
-   * @param {Element} root
-   */
   async function render(root) {
     if (!root) {
       console.warn('[Accounting.render] No root element');
@@ -1036,7 +1101,6 @@
     }
 
     try {
-      /* حالة التحميل */
       root.innerHTML = `
         <div style="padding:60px;text-align:center">
           <div class="spinner" style="margin:0 auto 14px"></div>
@@ -1046,15 +1110,12 @@
         </div>
       `;
 
-      /* تحميل البيانات */
       await loadLedger();
       await loadInventory();
 
-      /* الحسابات */
       computeKPIs();
       applyFilters();
 
-      /* التصيير النهائي */
       root.innerHTML = `
         <div class="page-header">
           <h2>
@@ -1064,6 +1125,10 @@
           <p>
             دفتر اليومية المزدوج — متابعة السيولة النقدية وأرصدة الذهب
             حسب العيارات، مع إدارة المصروفات والتسويات.
+            <span class="chip warn" style="font-size:10px;margin-inline-start:6px">
+              <i data-lucide="sliders-horizontal" style="width:10px;height:10px"></i>
+              يدعم العيارات المخصصة
+            </span>
           </p>
         </div>
 
@@ -1092,7 +1157,6 @@
         </div>
       `;
 
-      /* الأيقونات + الأحداث */
       window.lucide?.createIcons();
 
       if (typeof afterRender === 'function') afterRender();
@@ -1293,9 +1357,6 @@
     }
   }
 
-  /**
-   * حفظ مصروف تشغيلي
-   */
   async function saveExpense(el, closeFn) {
     try {
       const $ = (id) => el.querySelector('#' + id);
@@ -1310,7 +1371,6 @@
       const costCenter = $('exp-cost-center')?.value || 'general';
       const description = $('exp-description')?.value.trim() || '';
 
-      /* التحقق */
       if (amount <= 0) {
         GMS.Beep?.error?.();
         return GMS.Toast.err('المبلغ مطلوب', 'يجب أن يكون أكبر من صفر');
@@ -1332,7 +1392,6 @@
       const categoryLabel = getExpenseCategory(category).label;
       const entryNo = generateEntryNo();
 
-      /* بناء القيد المحاسبي */
       const entry = {
         id: GMS.uid(),
         entry_no: entryNo,
@@ -1344,6 +1403,8 @@
         cash_delta: -amount,
         gold_delta: 0,
         gold_karat: null,
+        custom_karat: null,
+        is_custom_karat: false,
         gold_net_weight: null,
         gold_pure_weight: null,
 
@@ -1366,11 +1427,9 @@
         created_by_id: (GMS.Auth && GMS.Auth.user && GMS.Auth.user.id) || null,
       };
 
-      /* 1 · CacheDB */
       const saved = await CacheDB.save(STORE_LEDGER, entry);
       if (!saved) throw new Error('فشل الحفظ في الذاكرة المحلية');
 
-      /* 2 · Supabase */
       if (GMS.Supabase && GMS.Supabase.isReady && GMS.Supabase.isReady()) {
         try {
           await GMS.Supabase.get()
@@ -1403,7 +1462,6 @@
         }
       }
 
-      /* 3 · Audit */
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
@@ -1414,21 +1472,17 @@
         } catch (_) {}
       }
 
-      /* 4 · Realtime */
       if (GMS.Realtime) {
         try { GMS.Realtime.emit('general_ledger', 'INSERT', entry); } catch (_) {}
       }
 
-      /* 5 · تحديث الحالة */
       State.ledger.unshift(entry);
       computeKPIs();
       applyFilters();
 
-      /* 6 · Feedback */
       GMS.Beep?.success?.();
       GMS.Toast.ok('تم تسجيل المصروف', `${categoryLabel} · ${moneyFmt(amount)} ج.م`);
 
-      /* 7 · إغلاق + توجيه */
       if (typeof closeFn === 'function') closeFn();
       window.App.navigateTo('accounting');
 
@@ -1447,7 +1501,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · SETTLEMENT MODAL
+     §14 · SETTLEMENT MODAL — ✅ v3 مع العيار المخصص
      ═════════════════════════════════════════════════════════════════════ */
 
   function openSettlementModal() {
@@ -1542,19 +1596,90 @@
             </div>
           </div>
 
-          <!-- حقول الذهب -->
+          <!-- ✅ v3: حقول الذهب مع karat-grid -->
           <div id="set-gold-fields">
-            <div class="grid-form three" style="margin-bottom:12px">
-              <div class="field">
-                <label>العيار <span class="req">*</span></label>
-                <select id="set-karat">
-                  ${(GMS.KARAT_ORDER || [24, 21, 18]).map(k => `
-                    <option value="${k}" ${k === 21 ? 'selected' : ''}>
-                      عيار ${k} — نقاء ${(GMS.karatRatio ? GMS.karatRatio(k) : 1).toFixed(4)}
-                    </option>
-                  `).join('')}
-                </select>
+            <!-- Karat Selection Grid -->
+            <div style="margin-bottom:14px">
+              <div style="font-size:11px;font-weight:800;color:var(--muted);
+                          text-transform:uppercase;letter-spacing:.4px;
+                          margin-bottom:9px;display:flex;align-items:center;gap:8px">
+                <i data-lucide="gem" style="width:12px;height:12px"></i>
+                العيار
+                <span class="chip" style="font-size:9.5px;margin-inline-start:auto">
+                  يدعم القياسي والمخصص
+                </span>
               </div>
+
+              <div class="karat-grid" id="set-karat-grid">
+                ${GMS.KARAT_ORDER.map(k => `
+                  <button type="button"
+                          class="karat-btn ${k === 21 ? 'active' : ''}"
+                          data-set-karat-std="${k}">
+                    <div class="kb-num">${k}K</div>
+                    <div class="kb-ratio">${GMS.karatRatio(k).toFixed(4)}</div>
+                  </button>
+                `).join('')}
+                <button type="button"
+                        class="karat-btn custom-karat-btn"
+                        data-set-karat-custom="1">
+                  <div class="kb-num">
+                    <i data-lucide="sliders-horizontal"
+                       style="width:20px;height:20px"></i>
+                  </div>
+                  <div class="kb-ratio">مخصص</div>
+                </button>
+              </div>
+
+              <!-- Hidden input للعيار القياسي -->
+              <input type="hidden" id="set-karat" value="21">
+            </div>
+
+            <!-- ✅ v3: لوحة العيار المخصص -->
+            <div id="set-custom-karat-panel"
+                 style="margin-bottom:12px;padding:14px 16px;
+                        background:var(--warn-bg);
+                        border-radius:12px;
+                        border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
+                        display:none">
+              <div style="font-size:11px;font-weight:800;color:var(--warn);
+                          text-transform:uppercase;letter-spacing:.5px;
+                          margin-bottom:10px;display:flex;align-items:center;gap:6px">
+                <i data-lucide="sliders-horizontal" style="width:12px;height:12px"></i>
+                عيار مخصص
+              </div>
+
+              <div class="grid-form" style="gap:12px">
+                <div class="field">
+                  <label>العيار (لكل 1000)</label>
+                  <input type="number" id="set-custom-karat"
+                         step="1" min="300" max="999"
+                         value="888" class="mono"
+                         style="font-weight:900;text-align:center;font-size:15px">
+                  <span class="hint">300 - 999 (سبائك: 888, 900, 916, 995, 999)</span>
+                </div>
+                <div class="field">
+                  <label>نسبة النقاء</label>
+                  <input type="number" id="set-custom-purity"
+                         step="0.0001" min="0.3000" max="1.0000"
+                         value="0.8880" class="mono"
+                         style="font-weight:900;text-align:center;font-size:15px">
+                  <span class="hint">0.3000 - 1.0000</span>
+                </div>
+              </div>
+
+              <!-- Presets -->
+              <div style="margin-top:10px;display:flex;gap:5px;flex-wrap:wrap">
+                <button type="button" class="btn btn-sm" data-set-custom-preset="999.9">999.9</button>
+                <button type="button" class="btn btn-sm" data-set-custom-preset="999">999</button>
+                <button type="button" class="btn btn-sm" data-set-custom-preset="995">995</button>
+                <button type="button" class="btn btn-sm" data-set-custom-preset="916">916</button>
+                <button type="button" class="btn btn-sm" data-set-custom-preset="900">900</button>
+                <button type="button" class="btn btn-sm" data-set-custom-preset="888">888</button>
+              </div>
+            </div>
+
+            <!-- الأوزان -->
+            <div class="grid-form three">
               <div class="field">
                 <label>الوزن القائم (جم) <span class="req">*</span></label>
                 <input type="number" id="set-gross"
@@ -1567,15 +1692,15 @@
                        step="0.001" min="0" value="0"
                        class="mono" style="font-weight:800;text-align:center">
               </div>
-            </div>
-
-            <div class="grid-form three">
               <div class="field">
                 <label>الوزن الصافي</label>
                 <input id="set-net" readonly class="mono"
                        style="font-weight:800;text-align:center;
                               background:var(--surface-3)">
               </div>
+            </div>
+
+            <div class="grid-form" style="margin-top:12px;gap:12px">
               <div class="field">
                 <label>البندق 24K</label>
                 <input id="set-pure" readonly class="mono"
@@ -1704,6 +1829,12 @@
           const state = {
             entityType: 'supplier',
             settlementType: 'gold',
+
+            /* ✅ v3: حالة العيار */
+            karatMode: 'standard',
+            standardKarat: 21,
+            customKarat: 888,
+            customPurity: 0.8880,
           };
 
           /* نوع الجهة */
@@ -1748,15 +1879,140 @@
             };
           });
 
-          /* حساب الذهب */
+          /* ✅ v3: دوال مساعدة لقراءة العيار الحالي */
+          const getCurrentKarat = () => {
+            if (state.karatMode === 'custom') {
+              return {
+                karat: null,
+                custom_karat: state.customKarat,
+                purity_ratio: state.customPurity,
+                is_custom: true,
+              };
+            }
+            return {
+              karat: state.standardKarat,
+              custom_karat: null,
+              purity_ratio: GMS.karatRatio(state.standardKarat),
+              is_custom: false,
+            };
+          };
+
+          /* ✅ v3: Standard Karat buttons */
+          el.querySelectorAll('[data-set-karat-std]').forEach(btn => {
+            btn.onclick = () => {
+              state.karatMode = 'standard';
+              state.standardKarat = Number(btn.dataset.setKaratStd);
+
+              el.querySelectorAll('[data-set-karat-std]').forEach(b => {
+                b.classList.toggle('active', b === btn);
+              });
+              const customBtn = el.querySelector('[data-set-karat-custom]');
+              if (customBtn) customBtn.classList.remove('active');
+
+              const panel = $('set-custom-karat-panel');
+              if (panel) panel.style.display = 'none';
+
+              const karatInput = $('set-karat');
+              if (karatInput) karatInput.value = state.standardKarat;
+
+              recalcGold();
+            };
+          });
+
+          /* ✅ v3: Custom Karat button */
+          const customBtn = el.querySelector('[data-set-karat-custom]');
+          if (customBtn) {
+            customBtn.onclick = () => {
+              state.karatMode = 'custom';
+
+              el.querySelectorAll('[data-set-karat-std]').forEach(b => {
+                b.classList.remove('active');
+              });
+              customBtn.classList.add('active');
+
+              const panel = $('set-custom-karat-panel');
+              if (panel) panel.style.display = '';
+
+              setTimeout(() => {
+                const input = $('set-custom-karat');
+                if (input) {
+                  try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+                }
+              }, 100);
+
+              recalcGold();
+            };
+          }
+
+          /* ✅ v3: Custom karat inputs */
+          const customKaratInput = $('set-custom-karat');
+          if (customKaratInput) {
+            customKaratInput.oninput = () => {
+              let v = parseInt(customKaratInput.value) || 888;
+              v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
+              state.customKarat = v;
+              state.customPurity = GMS.round(v / 1000, 4);
+
+              const purityInput = $('set-custom-purity');
+              if (purityInput) purityInput.value = state.customPurity.toFixed(4);
+
+              recalcGold();
+            };
+            customKaratInput.onblur = () => {
+              customKaratInput.value = state.customKarat;
+            };
+          }
+
+          const customPurityInput = $('set-custom-purity');
+          if (customPurityInput) {
+            customPurityInput.oninput = () => {
+              let v = parseFloat(customPurityInput.value) || 0.8880;
+              v = Math.max(GMS.KARAT_LIMITS.minPurity,
+                           Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+              state.customPurity = GMS.round(v, 4);
+              state.customKarat = Math.round(state.customPurity * 1000);
+
+              const karatInput = $('set-custom-karat');
+              if (karatInput) karatInput.value = state.customKarat;
+
+              recalcGold();
+            };
+            customPurityInput.onblur = () => {
+              customPurityInput.value = state.customPurity.toFixed(4);
+            };
+          }
+
+          /* ✅ v3: Custom karat presets */
+          el.querySelectorAll('[data-set-custom-preset]').forEach(btn => {
+            btn.onclick = () => {
+              const presetVal = parseFloat(btn.dataset.setCustomPreset) || 888;
+
+              if (presetVal >= 300) {
+                state.customKarat = Math.round(presetVal);
+                state.customPurity = GMS.round(state.customKarat / 1000, 4);
+              } else {
+                state.customPurity = GMS.round(presetVal, 4);
+                state.customKarat = Math.round(state.customPurity * 1000);
+              }
+
+              const karatInput = $('set-custom-karat');
+              if (karatInput) karatInput.value = state.customKarat;
+
+              const purityInput = $('set-custom-purity');
+              if (purityInput) purityInput.value = state.customPurity.toFixed(4);
+
+              recalcGold();
+            };
+          });
+
+          /* حساب الذهب — ✅ v3 مع purity */
           const recalcGold = () => {
-            const karat = Number($('set-karat')?.value) || 21;
+            const karatInfo = getCurrentKarat();
             const gross = parseFloat($('set-gross')?.value) || 0;
             const stones = parseFloat($('set-stones')?.value) || 0;
 
             const net = Math.max(0, gross - stones);
-            const ratio = GMS.karatRatio ? GMS.karatRatio(karat) : 1;
-            const pure = net * ratio;
+            const pure = net * karatInfo.purity_ratio;
             const price24 = getPrice24();
             const value = pure * price24;
 
@@ -1767,7 +2023,7 @@
             updatePreview();
           };
 
-          ['set-gross', 'set-stones', 'set-karat'].forEach(id => {
+          ['set-gross', 'set-stones'].forEach(id => {
             const f = $(id);
             if (f) {
               f.addEventListener('input', recalcGold);
@@ -1778,7 +2034,7 @@
           const cashInput = $('set-cash-amount');
           if (cashInput) cashInput.addEventListener('input', updatePreview);
 
-          /* معاينة */
+          /* ✅ v3: تحديث المعاينة مع العيار المخصص */
           function updatePreview() {
             const preview = $('set-preview');
             if (!preview) return;
@@ -1787,7 +2043,7 @@
             const entityName = entitySelect?.selectedOptions?.[0]?.dataset?.name || '—';
 
             if (state.settlementType === 'gold') {
-              const karat = Number($('set-karat')?.value) || 21;
+              const karatInfo = getCurrentKarat();
               const direction = el.querySelector('input[name="set-direction"]:checked')?.value || 'in';
               const net = parseFloat($('set-net')?.value) || 0;
               const pure = parseFloat($('set-pure')?.value) || 0;
@@ -1795,6 +2051,14 @@
 
               const dirLabel = direction === 'in' ? 'استلام (يدخل للخزنة)' : 'تسليم (يخرج من الخزنة)';
               const dirColor = direction === 'in' ? 'var(--success)' : 'var(--danger)';
+
+              /* ✅ v3: عرض العيار بطريقة مناسبة */
+              const karatDisplay = karatInfo.is_custom
+                ? `<span style="color:var(--warn);font-weight:900">
+                     ${karatInfo.custom_karat} (مخصص)
+                     · نقاء ${Number(karatInfo.purity_ratio).toFixed(4)}
+                   </span>`
+                : `<b>${karatInfo.karat}K</b>`;
 
               preview.innerHTML = `
                 <div style="font-size:11px;font-weight:800;color:var(--info);
@@ -1805,7 +2069,7 @@
                             font-weight:700;color:var(--text-2);line-height:1.9">
                   <div>الجهة: <b>${esc(entityName)}</b></div>
                   <div>الاتجاه: <b style="color:${dirColor}">${dirLabel}</b></div>
-                  <div>العيار: <b>${karat}K</b></div>
+                  <div>العيار: ${karatDisplay}</div>
                   <div>الوزن الصافي: <b>${gramFmt(net)}</b> جم</div>
                   <div>البندق: <b style="color:var(--primary)">${gramFmt(pure)}</b> جم</div>
                   <div>القيمة التقديرية: <b>${moneyFmt(value)}</b> ج.م</div>
@@ -1845,7 +2109,7 @@
           /* حفظ */
           const saveBtn = $('set-save');
           if (saveBtn) {
-            saveBtn.onclick = () => saveSettlement(el, close, state);
+            saveBtn.onclick = () => saveSettlement(el, close, state, getCurrentKarat);
           }
 
           setTimeout(() => {
@@ -1862,10 +2126,7 @@
     }
   }
 
-  /**
-   * حفظ تسوية ذهب/نقد
-   */
-  async function saveSettlement(el, closeFn, state) {
+  async function saveSettlement(el, closeFn, state, getCurrentKarat) {
     try {
       const $ = (id) => el.querySelector('#' + id);
 
@@ -1885,7 +2146,7 @@
       let entry = null;
 
       if (state.settlementType === 'gold') {
-        const karat = Number($('set-karat')?.value) || 21;
+        const karatInfo = getCurrentKarat();
         const gross = parseFloat($('set-gross')?.value) || 0;
         const stones = parseFloat($('set-stones')?.value) || 0;
         const direction = el.querySelector('input[name="set-direction"]:checked')?.value || 'in';
@@ -1895,13 +2156,32 @@
           return GMS.Toast.err('الوزن مطلوب', 'أدخل الوزن القائم');
         }
 
+        if (karatInfo.is_custom && !GMS.isValidPurity(karatInfo.purity_ratio)) {
+          GMS.Beep?.error?.();
+          return GMS.Toast.err(
+            'نقاء غير صالح',
+            `يجب أن يكون بين ${GMS.KARAT_LIMITS.minPurity} و ${GMS.KARAT_LIMITS.maxPurity}`
+          );
+        }
+
         const net = Math.max(0, gross - stones);
-        const ratio = GMS.karatRatio ? GMS.karatRatio(karat) : 1;
-        const pure = net * ratio;
+        const pure = net * karatInfo.purity_ratio;
         const price24 = getPrice24();
         const value = pure * price24;
         const sign = direction === 'in' ? +1 : -1;
         const entryNo = generateEntryNo();
+
+        /* ✅ v3: بناء payload موحّد */
+        const karatPayload = GMS.buildKaratPayload({
+          karat: karatInfo.is_custom ? null : karatInfo.karat,
+          customKarat: karatInfo.is_custom ? karatInfo.custom_karat : null,
+          purityRatio: karatInfo.purity_ratio,
+          isCustom: karatInfo.is_custom,
+        });
+
+        const karatLabel = karatInfo.is_custom
+          ? `مخصص ${karatInfo.custom_karat}`
+          : `${karatInfo.karat}K`;
 
         entry = {
           id: GMS.uid(),
@@ -1913,12 +2193,19 @@
 
           cash_delta: 0,
           gold_delta: sign * pure,
-          gold_karat: karat,
+
+          /* ✅ v3: حقول العيار الجديدة */
+          gold_karat: karatPayload.karat,
+          custom_karat: karatPayload.custom_karat,
+          is_custom_karat: karatPayload.is_custom_karat,
+          purity_ratio: karatPayload.purity_ratio,
+
           gold_net_weight: sign * net,
           gold_pure_weight: sign * pure,
           gold_value_egp: sign * value,
 
-          description: description || `تسوية ذهب — ${entityName} (${direction === 'in' ? 'استلام' : 'تسليم'})`,
+          description: description ||
+            `تسوية ذهب ${karatLabel} — ${entityName} (${direction === 'in' ? 'استلام' : 'تسليم'})`,
           reference_no: reference || entryNo,
           settlement_direction: direction,
 
@@ -1953,6 +2240,8 @@
           cash_delta: sign * amount,
           gold_delta: 0,
           gold_karat: null,
+          custom_karat: null,
+          is_custom_karat: false,
           gold_net_weight: null,
           gold_pure_weight: null,
 
@@ -1977,11 +2266,9 @@
         window.lucide?.createIcons();
       }
 
-      /* 1 · CacheDB */
       const saved = await CacheDB.save(STORE_LEDGER, entry);
       if (!saved) throw new Error('فشل الحفظ المحلي');
 
-      /* 2 · Supabase */
       if (GMS.Supabase && GMS.Supabase.isReady && GMS.Supabase.isReady()) {
         try {
           await GMS.Supabase.get()
@@ -1993,6 +2280,9 @@
               cash_delta: entry.cash_delta,
               gold_delta: entry.gold_delta,
               gold_karat: entry.gold_karat,
+              custom_karat: entry.custom_karat,
+              is_custom_karat: entry.is_custom_karat,
+              purity_ratio: entry.purity_ratio,
               gold_net_weight: entry.gold_net_weight,
               gold_pure_weight: entry.gold_pure_weight,
               description: entry.description,
@@ -2017,7 +2307,6 @@
         }
       }
 
-      /* 3 · Audit */
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
@@ -2027,27 +2316,33 @@
               entry_no: entry.entry_no,
               cash_delta: entry.cash_delta,
               gold_delta: entry.gold_delta,
+              is_custom_karat: entry.is_custom_karat,
+              custom_karat: entry.custom_karat,
               entity_type: entityType,
             }
           );
         } catch (_) {}
       }
 
-      /* 4 · Realtime */
       if (GMS.Realtime) {
         try { GMS.Realtime.emit('general_ledger', 'INSERT', entry); } catch (_) {}
       }
 
-      /* 5 · تحديث الحالة */
       State.ledger.unshift(entry);
       computeKPIs();
       applyFilters();
 
-      /* 6 · Feedback */
       GMS.Beep?.success?.();
-      GMS.Toast.ok('تم حفظ التسوية', `${entityName} · ${entry.entry_no}`);
 
-      /* 7 · إغلاق + توجيه */
+      /* ✅ v3: نص النجاح مع العيار */
+      const successDesc = state.settlementType === 'gold'
+        ? (entry.is_custom_karat
+            ? `${entityName} · مخصص ${entry.custom_karat}`
+            : `${entityName} · ${entry.gold_karat}K`)
+        : `${entityName} · ${moneyFmt(Math.abs(entry.cash_delta))} ج.م`;
+
+      GMS.Toast.ok('تم حفظ التسوية', successDesc);
+
       if (typeof closeFn === 'function') closeFn();
       window.App.navigateTo('accounting');
 
@@ -2066,7 +2361,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · ENTRY DETAILS MODAL
+     §15 · ENTRY DETAILS MODAL — ✅ v3 مع العيار المخصص
      ═════════════════════════════════════════════════════════════════════ */
 
   function openEntryDetails(entryId) {
@@ -2079,6 +2374,7 @@
       const type = getEntryType(entry.entry_type || entry.type);
       const cashDelta = Number(entry.cash_delta || 0);
       const goldDelta = Number(entry.gold_delta || 0);
+      const karatInfo = getEntryKaratInfo(entry);
 
       GMS.Modal.open({
         title: `تفاصيل الحركة — ${entry.entry_no || entry.id}`,
@@ -2179,13 +2475,24 @@
                           color:var(--primary);letter-spacing:-.5px">
                 ${goldDelta > 0 ? '+' : '−'}${gramFmt(Math.abs(goldDelta))} جم بندق
               </div>
-              ${entry.gold_karat ? `
-                <div style="font-size:12px;color:var(--text-2);
-                            margin-top:6px;font-weight:700">
-                  العيار: <b>${entry.gold_karat}K</b>
-                  ${entry.gold_net_weight ? ` · الصافي: <b>${gramFmt(entry.gold_net_weight)}</b> جم` : ''}
-                </div>
-              ` : ''}
+
+              <!-- ✅ v3: عرض العيار (قياسي أو مخصص) -->
+              <div style="font-size:12px;color:var(--text-2);
+                          margin-top:6px;font-weight:700">
+                ${karatInfo.is_custom ? `
+                  العيار:
+                  <span style="color:var(--warn);font-weight:900">
+                    ${karatInfo.custom_karat} (مخصص)
+                  </span>
+                  · النقاء:
+                  <span class="mono" style="color:var(--warn);font-weight:900">
+                    ${Number(karatInfo.purity_ratio).toFixed(4)}
+                  </span>
+                ` : `
+                  العيار: <b>${karatInfo.karat}K</b>
+                `}
+                ${entry.gold_net_weight ? ` · الصافي: <b>${gramFmt(entry.gold_net_weight)}</b> جم` : ''}
+              </div>
             </div>
           ` : ''}
         `,
@@ -2198,7 +2505,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · EXPORT TO EXCEL
+     §16 · EXPORT TO EXCEL — ✅ v3 مع عمود العيار المخصص
      ═════════════════════════════════════════════════════════════════════ */
 
   function exportLedger() {
@@ -2214,6 +2521,8 @@
 
       const data = rows.map(e => {
         const type = getEntryType(e.entry_type || e.type);
+        const karatInfo = getEntryKaratInfo(e);
+
         return {
           'رقم الحركة': e.entry_no || e.id,
           'التاريخ': dateAr(e.entry_date || e.created_at),
@@ -2223,7 +2532,13 @@
           'المبلغ النقدي (ج.م)': Number(e.cash_delta || 0),
           'الوزن الصافي (جم)': Number(e.gold_net_weight || 0),
           'البندق 24K (جم)': Number(e.gold_pure_weight || e.gold_delta || 0),
-          'العيار': e.gold_karat || '',
+          /* ✅ v3: عمود العيار */
+          'العيار': karatInfo.is_custom
+            ? `${karatInfo.custom_karat} (مخصص)`
+            : (karatInfo.karat ? `${karatInfo.karat}K` : ''),
+          'النقاء': karatInfo.is_custom
+            ? Number(karatInfo.purity_ratio).toFixed(4)
+            : '',
           'المرجع': e.reference_no || '',
           'الفرع': e.branch_name || '',
           'المستخدم': e.created_by || '',
@@ -2234,7 +2549,7 @@
       ws['!cols'] = [
         { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 40 },
         { wch: 22 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
-        { wch: 8 }, { wch: 18 }, { wch: 20 }, { wch: 18 },
+        { wch: 16 }, { wch: 10 }, { wch: 18 }, { wch: 20 }, { wch: 18 },
       ];
 
       /* ورقة الملخص */
@@ -2253,6 +2568,8 @@
         ['ذهب عيار 24 (جم)', k.gold24Balance],
         ['ذهب عيار 21 (جم)', k.gold21Balance],
         ['ذهب عيار 18 (جم)', k.gold18Balance],
+        ['ذهب عيار مخصص (جم)', k.goldCustomBalance],
+        ['عدد حركات المخصص', k.customKaratCount],
         [''],
         ['إجمالي البندق 24K (جم)', k.totalPure],
         ['إجمالي الوزن الصافي (جم)', k.totalNet],
@@ -2290,9 +2607,6 @@
      §17 · afterRender + initEvents
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * يُنفَّذ بعد كل عملية تصيير للصفحة
-   */
   function afterRender() {
     try {
       window.lucide?.createIcons();
@@ -2301,12 +2615,9 @@
     }
   }
 
-  /**
-   * ربط كل الأحداث التفاعلية للصفحة
-   */
   function initEvents() {
     try {
-      /* ─── البحث ─── */
+      /* البحث */
       const searchInput = document.getElementById('acc-search-input');
       if (searchInput) {
         searchInput.oninput = (e) => {
@@ -2320,7 +2631,7 @@
         };
       }
 
-      /* ─── فلتر النوع ─── */
+      /* فلتر النوع */
       const typeFilter = document.getElementById('acc-filter-type');
       if (typeFilter) {
         typeFilter.onchange = () => {
@@ -2331,7 +2642,7 @@
         };
       }
 
-      /* ─── فلتر التاريخ ─── */
+      /* فلتر التاريخ */
       const fromFilter = document.getElementById('acc-filter-from');
       if (fromFilter) {
         fromFilter.onchange = () => {
@@ -2352,7 +2663,7 @@
         };
       }
 
-      /* ─── حجم الصفحة ─── */
+      /* حجم الصفحة */
       const pageSize = document.getElementById('acc-page-size');
       if (pageSize) {
         pageSize.onchange = () => {
@@ -2363,13 +2674,10 @@
         };
       }
 
-      /* ─── أزرار الترقيم ─── */
       bindPaginationEvents();
-
-      /* ─── أزرار الصفوف ─── */
       bindRowEvents();
 
-      /* ─── الأزرار العلوية ─── */
+      /* الأزرار العلوية */
       const expenseBtn = document.getElementById('acc-new-expense');
       if (expenseBtn) expenseBtn.onclick = openExpenseModal;
 
@@ -2400,11 +2708,11 @@
         };
       }
 
-      /* ─── زر empty state ─── */
+      /* زر empty state */
       const emptyExpense = document.getElementById('acc-empty-expense');
       if (emptyExpense) emptyExpense.onclick = openExpenseModal;
 
-      /* ─── Realtime ─── */
+      /* Realtime */
       bindRealtimeUpdates();
 
     } catch (e) {
@@ -2512,7 +2820,6 @@
     afterRender,
     initEvents,
 
-    /* Data */
     load: loadLedger,
     reload: async () => {
       await loadLedger();
@@ -2522,30 +2829,24 @@
       await render(document.getElementById('page'));
     },
 
-    /* Actions */
     openExpenseModal,
     openSettlementModal,
     openEntryDetails,
     export: exportLedger,
 
-    /* CacheDB — مُصدَّر للاستخدام الخارجي */
     CacheDB,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §20 · GLOBAL EXPORT — window.AccountingView
+     §20 · GLOBAL EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   const AccountingView = {
-    /* Core */
     render,
     cleanup,
     afterRender,
     initEvents,
-
-    /* State */
     state: State,
 
-    /* Data */
     load: loadLedger,
     reload: async () => {
       await loadLedger();
@@ -2555,16 +2856,13 @@
       await render(document.getElementById('page'));
     },
 
-    /* Actions */
     openExpenseModal,
     openSettlementModal,
     openEntryDetails,
     exportLedger,
 
-    /* Storage — مُصدَّر للاستخدام الخارجي */
     CacheDB,
 
-    /* Constants */
     ENTRY_TYPES,
     EXPENSE_CATEGORIES,
     ENTITY_TYPES,
@@ -2576,20 +2874,19 @@
      §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c💰 Accounting View loaded · Double-Entry Ledger (Cash + Gold)',
+    '%c💰 Accounting View v3 loaded · Double-Entry Ledger + Custom Karat',
     'color:#0f7a43;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#a8dfc4,#0f7a43);border-radius:4px;'
   );
 
   console.log(
-    `%c📊 KPIs · Ledger Table · Expense Modal · Settlement Modal · Excel Export · Realtime`,
+    `%c📊 KPIs (incl. custom karat) · Ledger · Expense · Settlement · Excel Export`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🗄️  CacheDB.getAll('ledger') / CacheDB.save('ledger', entry) · ` +
-    `window.App.navigateTo('accounting') · afterRender() + initEvents()`,
-    'color:#0f7a43;font-weight:700;font-size:11px;'
+    `%c🆕 v3: Custom Karat in Settlement · Purity Ratio · 6 presets (999.9, 995, 916, 888...)`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
