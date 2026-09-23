@@ -8,6 +8,12 @@
      - كشف حساب مزدوج مع مخطط تطور الرصيد
      - بحث وفلترة
      - تصدير Excel
+
+   ✅ v3: دعم كامل للعيارات المخصصة في حركات الذهب
+     - karat-grid فيه 4 أزرار (3 قياسي + مخصص)
+     - حقل نقاء مباشر (purity_ratio)
+     - presets جاهزة للسبائك
+     - عرض العيار المخصص في كشف الحساب
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -19,40 +25,31 @@
      §1 · SUPPLIERS STATE
      ═════════════════════════════════════════════════════════════════════ */
   const SupState = {
-    /* البيانات */
     suppliers: [],
     filtered: [],
     ledgerEntries: [],
 
-    /* حسابات محسوبة: supplierId → { gold, cash, entryCount, lastActivity } */
     balances: new Map(),
 
-    /* Filters */
     filters: {
       search: '',
-      balanceFilter: '',   // '' | 'owed_to_supplier' | 'owed_to_us' | 'settled'
+      balanceFilter: '',
       active: true,
     },
 
-    /* Stats */
     stats: {
       total: 0,
       totalGold: 0,
       totalCash: 0,
-      creditors: 0,        // عدد من لهم رصيد موجب
-      debtors: 0,          // عدد من لهم رصيد سالب
+      creditors: 0,
+      debtors: 0,
     },
 
-    /* Loading */
     loading: false,
-
-    /* Charts */
     statementChart: null,
 
-    /* المستمعون */
     unsubscribers: [],
 
-    /* مؤقتات */
     timers: {
       search: null,
     },
@@ -170,6 +167,10 @@
     }
   }
 
+  function esc(v) {
+    return GMS.esc ? GMS.esc(v) : String(v == null ? '' : v);
+  }
+
   function cleanupListeners() {
     SupState.unsubscribers.forEach(fn => {
       try { fn(); } catch (_) {}
@@ -178,7 +179,6 @@
 
     clearTimeout(SupState.timers.search);
 
-    /* تدمير المخطط */
     if (SupState.statementChart) {
       try {
         SupState.statementChart.destroy();
@@ -187,15 +187,35 @@
     }
   }
 
+  /**
+   * ✅ v3: قراءة معلومات العيار لحركة مورد (قياسي أو مخصص)
+   */
+  function getEntryKaratInfo(entry) {
+    if (!entry) return GMS.resolveKarat(21);
+
+    if (entry.is_custom_karat === true || entry.custom_karat != null) {
+      return GMS.resolveKarat({
+        custom_karat: entry.custom_karat,
+        purity_ratio: entry.purity_ratio,
+        is_custom: true,
+      });
+    }
+
+    if (entry.gold_karat != null) {
+      return GMS.resolveKarat(entry.gold_karat);
+    }
+
+    return GMS.resolveKarat(21);
+  }
+
   /* ═════════════════════════════════════════════════════════════════════
      §3 · DATA LOADING
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function loadSuppliers() {
     try {
       SupState.loading = true;
 
-      /* 1 · IndexedDB / Supabase */
       if (GMS.Supabase?.isReady()) {
         try {
           const client = GMS.Supabase.get();
@@ -214,7 +234,6 @@
         }
       }
 
-      /* 2 · Demo fallback */
       if (GMS.Demo) {
         SupState.suppliers = GMS.Demo.getSuppliers();
         return SupState.suppliers;
@@ -230,7 +249,6 @@
 
   async function loadLedgerEntries() {
     try {
-      /* 1 · Supabase */
       if (GMS.Supabase?.isReady()) {
         try {
           const client = GMS.Supabase.get();
@@ -250,7 +268,6 @@
         }
       }
 
-      /* 2 · Demo fallback */
       if (GMS.Demo) {
         SupState.ledgerEntries = GMS.Demo.getLedgerEntries();
         return SupState.ledgerEntries;
@@ -266,9 +283,6 @@
     }
   }
 
-  /**
-   * حساب أرصدة كل مورد من دفتر الأستاذ
-   */
   function computeBalances() {
     SupState.balances.clear();
 
@@ -281,6 +295,7 @@
         entryCount: 0,
         lastActivity: null,
         lastEntry: null,
+        customKaratCount: 0,   /* ✅ v3 */
       });
     });
 
@@ -295,6 +310,7 @@
           entryCount: 0,
           lastActivity: null,
           lastEntry: null,
+          customKaratCount: 0,
         });
       }
 
@@ -303,6 +319,11 @@
       b.cash += Number(entry.cash_delta || 0);
       b.entryCount++;
 
+      /* ✅ v3 */
+      if (entry.is_custom_karat === true || entry.custom_karat != null) {
+        b.customKaratCount++;
+      }
+
       const ts = new Date(entry.created_at).getTime();
       if (!b.lastActivity || ts > new Date(b.lastActivity).getTime()) {
         b.lastActivity = entry.created_at;
@@ -310,7 +331,6 @@
       }
     });
 
-    /* تقريب الأرقام */
     map.forEach((v, k) => {
       v.gold = GMS.round(v.gold, 4);
       v.cash = GMS.round(v.cash, 2);
@@ -344,14 +364,10 @@
     };
   }
 
-  /**
-   * تطبيق الفلاتر
-   */
   function applyFilters() {
     const f = SupState.filters;
     let rows = SupState.suppliers.slice();
 
-    /* البحث */
     if (f.search) {
       const q = f.search.toLowerCase();
       rows = rows.filter(s => {
@@ -363,7 +379,6 @@
       });
     }
 
-    /* فلتر الرصيد */
     if (f.balanceFilter) {
       rows = rows.filter(s => {
         const b = SupState.balances.get(s.id) || { gold: 0, cash: 0 };
@@ -385,12 +400,10 @@
       });
     }
 
-    /* الفرز: من له أكبر مبلغ مستحق أولاً */
     rows.sort((a, b) => {
       const ba = SupState.balances.get(a.id) || { gold: 0, cash: 0 };
       const bb = SupState.balances.get(b.id) || { gold: 0, cash: 0 };
 
-      /* قيمة مطلقة للرصيد الذهبي + النقدي */
       const scoreA = Math.abs(ba.gold) * 1000 + Math.abs(ba.cash);
       const scoreB = Math.abs(bb.gold) * 1000 + Math.abs(bb.cash);
 
@@ -410,11 +423,11 @@
       <div class="kpi ${cls}">
         <div class="kpi-label">
           <i data-lucide="${icon}"></i>
-          ${GMS.esc(label)}
+          ${esc(label)}
         </div>
         <div class="kpi-value">
           ${value}
-          ${unit ? `<small>${GMS.esc(unit)}</small>` : ''}
+          ${unit ? `<small>${esc(unit)}</small>` : ''}
         </div>
         <div class="kpi-meta">
           ${metaIcon ? `<i data-lucide="${metaIcon}" style="width:11px;height:11px;display:inline;vertical-align:-1px"></i> ` : ''}
@@ -424,11 +437,8 @@
     `;
   }
 
-  /**
-   * صف مورد
-   */
   function renderSupplierRow(sup) {
-    const b = SupState.balances.get(sup.id) || { gold: 0, cash: 0 };
+    const b = SupState.balances.get(sup.id) || { gold: 0, cash: 0, customKaratCount: 0 };
     const goldCls = b.gold > 0.0005 ? 'bal-positive'
                    : b.gold < -0.0005 ? 'bal-negative'
                    : 'bal-zero';
@@ -436,17 +446,15 @@
                    : b.cash < -0.005 ? 'bal-negative'
                    : 'bal-zero';
 
-    const isSettled = Math.abs(b.gold) < 0.0005 && Math.abs(b.cash) < 0.005;
-
     return `
-      <tr data-supplier-id="${GMS.esc(sup.id)}">
+      <tr data-supplier-id="${esc(sup.id)}">
         <td>
           <div class="cell-sku">
-            <span class="sku-code">${GMS.esc(sup.name)}</span>
+            <span class="sku-code">${esc(sup.name)}</span>
             <span class="sku-meta">
-              <span class="mono">${GMS.esc(sup.code || '—')}</span>
-              ${sup.phone ? ` · <span class="mono">${GMS.esc(sup.phone)}</span>` : ''}
-              ${sup.contact_person ? ` · ${GMS.esc(sup.contact_person)}` : ''}
+              <span class="mono">${esc(sup.code || '—')}</span>
+              ${sup.phone ? ` · <span class="mono">${esc(sup.phone)}</span>` : ''}
+              ${sup.contact_person ? ` · ${esc(sup.contact_person)}` : ''}
             </span>
           </div>
         </td>
@@ -460,6 +468,7 @@
             <span class="tag">
               ${Math.abs(b.gold) < 0.0005 ? 'مُسوّى'
                 : b.gold > 0 ? 'مستحق للمورد' : 'مستحق لنا'}
+              ${b.customKaratCount > 0 ? ` · <span style="color:var(--warn)">${b.customKaratCount} مخصص</span>` : ''}
             </span>
           </div>
         </td>
@@ -492,25 +501,25 @@
           <div style="display:flex;gap:4px;justify-content:flex-end;flex-wrap:nowrap">
             <button class="icon-action gold"
                     data-sup-action="transaction"
-                    data-sup-id="${GMS.esc(sup.id)}"
+                    data-sup-id="${esc(sup.id)}"
                     title="حركة جديدة">
               <i data-lucide="plus-circle"></i>
             </button>
             <button class="icon-action blue"
                     data-sup-action="statement"
-                    data-sup-id="${GMS.esc(sup.id)}"
+                    data-sup-id="${esc(sup.id)}"
                     title="كشف حساب">
               <i data-lucide="file-text"></i>
             </button>
             <button class="icon-action"
                     data-sup-action="payment"
-                    data-sup-id="${GMS.esc(sup.id)}"
+                    data-sup-id="${esc(sup.id)}"
                     title="تسجيل سداد">
               <i data-lucide="banknote"></i>
             </button>
             <button class="icon-action"
                     data-sup-action="edit"
-                    data-sup-id="${GMS.esc(sup.id)}"
+                    data-sup-id="${esc(sup.id)}"
                     title="تعديل">
               <i data-lucide="pencil"></i>
             </button>
@@ -613,7 +622,7 @@
         </span>
         ${chips.map(c => `
           <span class="filter-chip">
-            <span>${GMS.esc(c.label)}: <b>${GMS.esc(c.value)}</b></span>
+            <span>${esc(c.label)}: <b>${esc(c.value)}</b></span>
             <button class="chip-x" data-clear-filter="${c.key}" type="button">
               <i data-lucide="x"></i>
             </button>
@@ -629,7 +638,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · MAIN RENDER
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function render(root) {
     const stats = SupState.stats;
@@ -640,10 +649,14 @@
           <i data-lucide="factory"></i>
           ${GMS.t('sup.title')}
         </h2>
-        <p>${GMS.t('sup.subtitle')}</p>
+        <p>${GMS.t('sup.subtitle')}
+          <span class="chip warn" style="font-size:10px;margin-inline-start:6px">
+            <i data-lucide="sliders-horizontal" style="width:10px;height:10px"></i>
+            يدعم العيارات المخصصة
+          </span>
+        </p>
       </div>
 
-      <!-- KPIs -->
       <div class="kpi-row cols-4">
         ${renderKPI('gold', 'scale', 'إجمالي ذهب الموردين',
             GMS.gramFmt(stats.totalGold), 'جم',
@@ -666,14 +679,13 @@
             'refresh-cw')}
       </div>
 
-      <!-- Toolbar -->
       <div class="card" style="margin-bottom:16px">
         <div class="toolbar-row">
           <div class="search-wrap" style="flex:1;min-width:240px;max-width:420px">
             <i data-lucide="search"></i>
             <input id="sup-search-input"
                    placeholder="بحث بالاسم، الكود، الهاتف…"
-                   value="${GMS.esc(SupState.filters.search)}"
+                   value="${esc(SupState.filters.search)}"
                    autocomplete="off">
             ${SupState.filters.search ? `
               <button class="search-clear" id="sup-search-clear">
@@ -703,7 +715,6 @@
         ${renderActiveFilters()}
       </div>
 
-      <!-- Table -->
       <div class="card">
         <div id="sup-table-host">
           ${renderTable()}
@@ -726,10 +737,9 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §6 · CONTROLS BINDING
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
-    /* Search */
     const searchInput = document.getElementById('sup-search-input');
     if (searchInput) {
       searchInput.oninput = (e) => {
@@ -742,7 +752,6 @@
       };
     }
 
-    /* Clear search */
     const clearBtn = document.getElementById('sup-search-clear');
     if (clearBtn) {
       clearBtn.onclick = () => {
@@ -752,7 +761,6 @@
       };
     }
 
-    /* Balance filter */
     const balanceFilter = document.getElementById('sup-filter-balance');
     if (balanceFilter) {
       balanceFilter.onchange = () => {
@@ -762,7 +770,6 @@
       };
     }
 
-    /* Clear individual filters */
     document.querySelectorAll('[data-clear-filter]').forEach(btn => {
       btn.onclick = () => {
         const key = btn.dataset.clearFilter;
@@ -772,7 +779,6 @@
       };
     });
 
-    /* Clear all */
     const clearAllBtn = document.getElementById('sup-clear-all-filters');
     if (clearAllBtn) {
       clearAllBtn.onclick = () => {
@@ -782,22 +788,18 @@
       };
     }
 
-    /* Add supplier */
     const addBtn = document.getElementById('sup-add-btn');
     if (addBtn) addBtn.onclick = () => openSupplierModal();
 
-    /* Export */
     const exportBtn = document.getElementById('sup-export-btn');
     if (exportBtn) {
       exportBtn.onclick = () => exportSuppliers();
     }
 
-    /* Bind table */
     bindTableEvents();
   }
 
   function bindTableEvents() {
-    /* أزرار الإجراءات */
     document.querySelectorAll('[data-sup-action]').forEach(btn => {
       btn.onclick = (e) => {
         e.stopPropagation();
@@ -827,7 +829,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §7 · SUPPLIER MODAL (ADD / EDIT)
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openSupplierModal(sup = null) {
     const isEdit = Boolean(sup);
@@ -841,39 +843,39 @@
         <div class="grid-form">
           <div class="field">
             <label>الكود</label>
-            <input id="sf-code" value="${GMS.esc(s.code || '')}"
+            <input id="sf-code" value="${esc(s.code || '')}"
                    class="mono" dir="ltr"
                    placeholder="SUP-001">
           </div>
 
           <div class="field">
             <label>الاسم <span class="req">*</span></label>
-            <input id="sf-name" value="${GMS.esc(s.name || '')}"
+            <input id="sf-name" value="${esc(s.name || '')}"
                    placeholder="اسم المورد">
           </div>
 
           <div class="field">
             <label>الشخص المسؤول</label>
-            <input id="sf-contact" value="${GMS.esc(s.contact_person || '')}"
+            <input id="sf-contact" value="${esc(s.contact_person || '')}"
                    placeholder="اسم جهة الاتصال">
           </div>
 
           <div class="field">
             <label>الهاتف</label>
-            <input id="sf-phone" value="${GMS.esc(s.phone || '')}"
+            <input id="sf-phone" value="${esc(s.phone || '')}"
                    class="mono" dir="ltr"
                    placeholder="01xxxxxxxxx">
           </div>
 
           <div class="field field-full">
             <label>العنوان</label>
-            <input id="sf-address" value="${GMS.esc(s.address || '')}"
+            <input id="sf-address" value="${esc(s.address || '')}"
                    placeholder="العنوان الكامل">
           </div>
 
           <div class="field field-full">
             <label>السجل الضريبي</label>
-            <input id="sf-tax" value="${GMS.esc(s.tax_id || '')}"
+            <input id="sf-tax" value="${esc(s.tax_id || '')}"
                    class="mono" dir="ltr"
                    placeholder="000-000-000">
           </div>
@@ -930,13 +932,11 @@
 
           try {
             if (isEdit) {
-              /* Update local */
               const idx = SupState.suppliers.findIndex(x => x.id === sup.id);
               if (idx >= 0) {
                 SupState.suppliers[idx] = { ...SupState.suppliers[idx], ...payload };
               }
 
-              /* Supabase */
               if (GMS.Supabase?.isReady()) {
                 await GMS.Supabase.get()
                   .from(GMS.SUPABASE_CONFIG.TABLES.SUPPLIERS)
@@ -944,7 +944,6 @@
                   .eq('id', sup.id);
               }
 
-              /* Audit */
               if (GMS.Audit) {
                 await GMS.Audit.log('UPDATE', 'supplier', sup.id,
                   `عدّل بيانات المورد ${name}`, { changes: Object.keys(payload) });
@@ -953,17 +952,14 @@
               GMS.Toast.ok('تم حفظ التعديلات');
 
             } else {
-              /* Opening balances */
               payload.opening_gold = parseFloat($f('sf-opening-gold').value) || 0;
               payload.opening_cash = parseFloat($f('sf-opening-cash').value) || 0;
               payload.is_active = true;
               payload.created_at = new Date().toISOString();
 
-              /* Add local */
               const newId = 'sup-' + GMS.uid();
               SupState.suppliers.push({ id: newId, ...payload });
 
-              /* Supabase */
               if (GMS.Supabase?.isReady()) {
                 const { data } = await GMS.Supabase.get()
                   .from(GMS.SUPABASE_CONFIG.TABLES.SUPPLIERS)
@@ -976,7 +972,6 @@
                 }
               }
 
-              /* Audit */
               if (GMS.Audit) {
                 await GMS.Audit.log('CREATE', 'supplier', newId,
                   `أضاف مورد جديد: ${name}`, payload);
@@ -985,7 +980,6 @@
               GMS.Toast.ok('تمت إضافة المورد');
             }
 
-            /* Recompute */
             computeBalances();
             applyFilters();
             render(document.getElementById('page'));
@@ -1001,8 +995,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · TRANSACTION MODAL
-     ───────────────────────────────────────────────────────────────────── */
+     §8 · TRANSACTION MODAL — ✅ v3 مع العيار المخصص
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openTransactionModal(sup) {
     const b = SupState.balances.get(sup.id) || { gold: 0, cash: 0 };
@@ -1088,6 +1082,31 @@
       onMount: (el, close) => {
         const $q = (sel) => el.querySelector(sel);
 
+        /* ─── local state for karat ─── */
+        const kState = {
+          mode: 'standard',
+          standard: 21,
+          custom: 888,
+          purity: 0.8880,
+        };
+
+        const getCurrentKarat = () => {
+          if (kState.mode === 'custom') {
+            return {
+              karat: null,
+              custom_karat: kState.custom,
+              purity_ratio: kState.purity,
+              is_custom: true,
+            };
+          }
+          return {
+            karat: kState.standard,
+            custom_karat: null,
+            purity_ratio: GMS.karatRatio(kState.standard),
+            is_custom: false,
+          };
+        };
+
         /* ─── Render fields ───────────────────────────────── */
         const renderFields = () => {
           const t = TX_TYPES[selectedType];
@@ -1109,19 +1128,69 @@
                   تفاصيل الذهب
                 </div>
 
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);
-                            gap:11px">
-                  <div class="field">
-                    <label>العيار <span class="req">*</span></label>
-                    <select id="tx-karat">
-                      ${GMS.KARAT_ORDER.map(k => `
-                        <option value="${k}" ${k === 21 ? 'selected' : ''}>
-                          عيار ${k} — نقاء ${GMS.karatRatio(k).toFixed(4)}
-                        </option>
-                      `).join('')}
-                    </select>
-                  </div>
+                <!-- ✅ v3: Karat grid -->
+                <div class="karat-grid" id="tx-karat-grid" style="margin-bottom:12px">
+                  ${GMS.KARAT_ORDER.map(k => `
+                    <button type="button"
+                            class="karat-btn ${k === 21 && kState.mode === 'standard' ? 'active' : ''}"
+                            data-tx-karat-std="${k}">
+                      <div class="kb-num">${k}K</div>
+                      <div class="kb-ratio">${GMS.karatRatio(k).toFixed(4)}</div>
+                    </button>
+                  `).join('')}
+                  <button type="button"
+                          class="karat-btn custom-karat-btn"
+                          data-tx-karat-custom="1">
+                    <div class="kb-num">
+                      <i data-lucide="sliders-horizontal"
+                         style="width:20px;height:20px"></i>
+                    </div>
+                    <div class="kb-ratio">مخصص</div>
+                  </button>
+                </div>
 
+                <input type="hidden" id="tx-karat" value="21">
+
+                <!-- ✅ v3: Custom karat panel -->
+                <div id="tx-custom-panel"
+                     style="margin-bottom:12px;padding:12px 14px;
+                            background:var(--warn-bg);
+                            border-radius:10px;
+                            border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
+                            display:none">
+                  <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                              text-transform:uppercase;letter-spacing:.4px;
+                              margin-bottom:8px">
+                    عيار مخصص
+                  </div>
+                  <div class="grid-form" style="gap:10px">
+                    <div class="field">
+                      <label style="font-size:10.5px">العيار</label>
+                      <input type="number" id="tx-custom-karat"
+                             step="1" min="300" max="999"
+                             value="888" class="mono"
+                             style="font-weight:900;text-align:center;font-size:14px">
+                    </div>
+                    <div class="field">
+                      <label style="font-size:10.5px">النقاء</label>
+                      <input type="number" id="tx-custom-purity"
+                             step="0.0001" min="0.3000" max="1.0000"
+                             value="0.8880" class="mono"
+                             style="font-weight:900;text-align:center;font-size:14px">
+                    </div>
+                  </div>
+                  <div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">
+                    <button type="button" class="btn btn-sm" data-tx-preset="999.9">999.9</button>
+                    <button type="button" class="btn btn-sm" data-tx-preset="999">999</button>
+                    <button type="button" class="btn btn-sm" data-tx-preset="995">995</button>
+                    <button type="button" class="btn btn-sm" data-tx-preset="916">916</button>
+                    <button type="button" class="btn btn-sm" data-tx-preset="900">900</button>
+                    <button type="button" class="btn btn-sm" data-tx-preset="888">888</button>
+                  </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);
+                            gap:11px">
                   <div class="field">
                     <label>الوزن القائم (جم) <span class="req">*</span></label>
                     <input type="number" id="tx-gross"
@@ -1218,7 +1287,7 @@
               <div class="field">
                 <label>البيان</label>
                 <input id="tx-desc" placeholder="وصف مختصر…"
-                       value="${t.label} — ${GMS.esc(sup.name)}">
+                       value="${t.label} — ${esc(sup.name)}">
               </div>
             </div>
           `;
@@ -1230,6 +1299,97 @@
 
         /* ─── Bind field events ──────────────────────────── */
         const bindFieldEvents = () => {
+          /* ✅ v3: Karat buttons */
+          el.querySelectorAll('[data-tx-karat-std]').forEach(btn => {
+            btn.onclick = () => {
+              kState.mode = 'standard';
+              kState.standard = Number(btn.dataset.txKaratStd);
+
+              el.querySelectorAll('[data-tx-karat-std]').forEach(b => {
+                b.classList.toggle('active', b === btn);
+              });
+              const cb = el.querySelector('[data-tx-karat-custom]');
+              if (cb) cb.classList.remove('active');
+
+              const panel = $q('#tx-custom-panel');
+              if (panel) panel.style.display = 'none';
+
+              const ki = $q('#tx-karat');
+              if (ki) ki.value = kState.standard;
+
+              recalcPreview();
+            };
+          });
+
+          const customBtn = el.querySelector('[data-tx-karat-custom]');
+          if (customBtn) {
+            customBtn.onclick = () => {
+              kState.mode = 'custom';
+
+              el.querySelectorAll('[data-tx-karat-std]').forEach(b => {
+                b.classList.remove('active');
+              });
+              customBtn.classList.add('active');
+
+              const panel = $q('#tx-custom-panel');
+              if (panel) panel.style.display = '';
+
+              recalcPreview();
+            };
+          }
+
+          const ckInput = $q('#tx-custom-karat');
+          if (ckInput) {
+            ckInput.oninput = () => {
+              let v = parseInt(ckInput.value) || 888;
+              v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
+              kState.custom = v;
+              kState.purity = GMS.round(v / 1000, 4);
+
+              const p = $q('#tx-custom-purity');
+              if (p) p.value = kState.purity.toFixed(4);
+
+              recalcPreview();
+            };
+          }
+
+          const cpInput = $q('#tx-custom-purity');
+          if (cpInput) {
+            cpInput.oninput = () => {
+              let v = parseFloat(cpInput.value) || 0.8880;
+              v = Math.max(GMS.KARAT_LIMITS.minPurity,
+                           Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+              kState.purity = GMS.round(v, 4);
+              kState.custom = Math.round(kState.purity * 1000);
+
+              const k = $q('#tx-custom-karat');
+              if (k) k.value = kState.custom;
+
+              recalcPreview();
+            };
+          }
+
+          el.querySelectorAll('[data-tx-preset]').forEach(btn => {
+            btn.onclick = () => {
+              const pv = parseFloat(btn.dataset.txPreset) || 888;
+              if (pv >= 300) {
+                kState.custom = Math.round(pv);
+                kState.purity = GMS.round(kState.custom / 1000, 4);
+              } else {
+                kState.purity = GMS.round(pv, 4);
+                kState.custom = Math.round(kState.purity * 1000);
+              }
+
+              const k = $q('#tx-custom-karat');
+              if (k) k.value = kState.custom;
+
+              const p = $q('#tx-custom-purity');
+              if (p) p.value = kState.purity.toFixed(4);
+
+              recalcPreview();
+            };
+          });
+
           ['tx-gross', 'tx-stones'].forEach(id => {
             const inp = $q('#' + id);
             if (inp) inp.oninput = recalcPreview;
@@ -1243,15 +1403,13 @@
 
           const cashDir = $q('#tx-cash-dir');
           if (cashDir) cashDir.onchange = recalcPreview;
-
-          const karatSel = $q('#tx-karat');
-          if (karatSel) karatSel.onchange = recalcPreview;
         };
 
         /* ─── Recalculate + preview ──────────────────────── */
         const recalcPreview = () => {
           const t = TX_TYPES[selectedType];
           const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+          const karatInfo = getCurrentKarat();
 
           let goldDelta = 0;
           let cashDelta = 0;
@@ -1259,12 +1417,11 @@
           let net = 0;
 
           if (t.needsGold) {
-            const karat = Number($q('#tx-karat')?.value) || 21;
             const gross = parseFloat($q('#tx-gross')?.value) || 0;
             const stones = parseFloat($q('#tx-stones')?.value) || 0;
 
             net = GMS.round(Math.max(0, gross - stones), 3);
-            pure = GMS.round(net * GMS.karatRatio(karat), 4);
+            pure = GMS.round(net * karatInfo.purity_ratio, 4);
 
             if ($q('#tx-net')) $q('#tx-net').value = net.toFixed(3);
             if ($q('#tx-pure')) $q('#tx-pure').value = pure.toFixed(3);
@@ -1280,7 +1437,6 @@
             cashDelta = GMS.round(cash * sign, 2);
           }
 
-          /* Preview */
           const newGold = GMS.round(b.gold + goldDelta, 4);
           const newCash = GMS.round(b.cash + cashDelta, 2);
 
@@ -1289,6 +1445,21 @@
 
           const previewHost = $q('#tx-preview');
           if (previewHost) {
+            /* ✅ v3: عرض العيار */
+            const karatDisplay = karatInfo.is_custom
+              ? `<span class="karat-badge custom-karat-badge"
+                       style="font-size:10px">
+                   ${karatInfo.custom_karat} (مخصص)
+                 </span>
+                 <span style="font-family:var(--font-mono);font-size:10px;
+                              color:var(--muted);margin-inline-start:4px">
+                   ${Number(karatInfo.purity_ratio).toFixed(4)}
+                 </span>`
+              : `<span class="karat-badge" data-k="${karatInfo.karat}"
+                       style="font-size:10px">
+                   ${karatInfo.karat}K
+                 </span>`;
+
             previewHost.innerHTML = `
               <div style="padding:14px;background:var(--surface-2);
                           border-radius:11px;border:1px solid var(--border)">
@@ -1298,6 +1469,18 @@
                   <i data-lucide="eye" style="width:12px;height:12px"></i>
                   المعاينة قبل الحفظ
                 </div>
+
+                ${t.needsGold && pure > 0 ? `
+                  <div style="display:flex;justify-content:space-between;
+                              align-items:center;padding:7px 0;
+                              font-size:12.5px;
+                              border-bottom:1px dashed var(--border)">
+                    <span style="color:var(--muted);font-weight:700">
+                      العيار المستخدم
+                    </span>
+                    <span>${karatDisplay}</span>
+                  </div>
+                ` : ''}
 
                 <div style="display:flex;justify-content:space-between;
                             padding:7px 0;font-size:12.5px;
@@ -1315,8 +1498,7 @@
                 </div>
 
                 <div style="display:flex;justify-content:space-between;
-                            padding:7px 0;font-size:12.5px;
-                            border-bottom:1px dashed var(--border)">
+                            padding:7px 0;font-size:12.5px">
                   <span style="color:var(--muted);font-weight:700">الرصيد النقدي</span>
                   <span>
                     <span class="mono" style="font-weight:800">${GMS.moneyFmt(b.cash)} ج.م</span>
@@ -1333,7 +1515,6 @@
             window.lucide?.createIcons();
           }
 
-          /* Enable/disable save */
           const saveBtn = $q('#tx-save');
           if (saveBtn) {
             const valid =
@@ -1349,7 +1530,6 @@
           btn.onclick = () => {
             selectedType = btn.dataset.tx;
 
-            /* Update active states */
             $q('#tx-type-grid').querySelectorAll('[data-tx]').forEach(b => {
               const isActive = b.dataset.tx === selectedType;
               b.style.borderColor = isActive ? 'var(--primary)' : 'var(--border)';
@@ -1370,22 +1550,29 @@
         /* ─── Save ──────────────────────────────────────── */
         $q('#tx-save').onclick = async () => {
           const t = TX_TYPES[selectedType];
+          const karatInfo = getCurrentKarat();
 
-          /* جمع القيم */
           let goldDelta = 0;
           let cashDelta = 0;
           let karat = null;
+          let customKarat = null;
+          let isCustom = false;
+          let purity = null;
           let gross = null;
           let stones = null;
           let net = null;
           let pure = null;
 
           if (t.needsGold) {
-            karat = Number($q('#tx-karat')?.value) || 21;
+            karat = karatInfo.karat;
+            customKarat = karatInfo.custom_karat;
+            isCustom = karatInfo.is_custom;
+            purity = karatInfo.purity_ratio;
+
             gross = parseFloat($q('#tx-gross')?.value) || 0;
             stones = parseFloat($q('#tx-stones')?.value) || 0;
             net = GMS.round(Math.max(0, gross - stones), 3);
-            pure = GMS.round(net * GMS.karatRatio(karat), 4);
+            pure = GMS.round(net * karatInfo.purity_ratio, 4);
 
             const sign = t.manual ? Number($q('#tx-gold-dir')?.value) || +1 : t.goldSign;
             goldDelta = GMS.round(pure * sign, 4);
@@ -1397,6 +1584,11 @@
             cashDelta = GMS.round(cash * sign, 2);
           }
 
+          const now = new Date().toISOString();
+          const karatLabel = isCustom
+            ? `مخصص ${customKarat}`
+            : (karat ? `${karat}K` : '');
+
           const entry = {
             id: GMS.uid(),
             entity_type: 'supplier',
@@ -1405,24 +1597,25 @@
             gold_delta: goldDelta,
             cash_delta: cashDelta,
             gold_karat: karat,
+            custom_karat: customKarat,
+            is_custom_karat: isCustom,
+            purity_ratio: purity,
             gold_gross_weight: gross,
             gold_stone_weight: stones,
             gold_net_weight: net,
             gold_purity_weight: pure,
             gold_price_24: GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24,
             reference_no: $q('#tx-ref').value.trim() || null,
-            description: $q('#tx-desc').value.trim() || t.label,
+            description: $q('#tx-desc').value.trim() || `${t.label}${karatLabel ? ' · ' + karatLabel : ''}`,
             branch_id: GMS.Auth?.profile?.branch_id || null,
-            created_at: new Date().toISOString(),
+            created_at: now,
           };
 
           try {
             GMS.Loading.show('جارٍ الحفظ…');
 
-            /* 1 · Local */
             SupState.ledgerEntries.unshift(entry);
 
-            /* 2 · Supabase */
             if (GMS.Supabase?.isReady()) {
               const client = GMS.Supabase.get();
               await client
@@ -1430,7 +1623,6 @@
                 .insert(entry);
             }
 
-            /* 3 · IndexedDB (للأوفلاين) */
             if (GMS.IDB) {
               try {
                 await GMS.IDB._req('metadata', 'readwrite', os => 
@@ -1439,26 +1631,40 @@
               } catch (_) {}
             }
 
-            /* 4 · Recompute */
             computeBalances();
             applyFilters();
             render(document.getElementById('page'));
 
-            /* 5 · Audit */
             if (GMS.Audit) {
-              await GMS.Audit.log(selectedType.toUpperCase(), 'supplier', sup.id,
-                `${t.label}: ${t.needsGold ? GMS.gramFmt(Math.abs(goldDelta)) + ' جم · ' : ''}${t.needsCash ? GMS.moneyFmt(Math.abs(cashDelta)) + ' ج.م' : ''}`,
-                { entry_type: selectedType, gold_delta: goldDelta, cash_delta: cashDelta });
+              await GMS.Audit.log(
+                selectedType.toUpperCase(),
+                'supplier',
+                sup.id,
+                `${t.label}${karatLabel ? ' · ' + karatLabel : ''}: ` +
+                `${t.needsGold ? GMS.gramFmt(Math.abs(goldDelta)) + ' جم · ' : ''}` +
+                `${t.needsCash ? GMS.moneyFmt(Math.abs(cashDelta)) + ' ج.م' : ''}`,
+                {
+                  entry_type: selectedType,
+                  gold_delta: goldDelta,
+                  cash_delta: cashDelta,
+                  is_custom_karat: isCustom,
+                  custom_karat: customKarat,
+                }
+              );
             }
 
-            /* 6 · Realtime event */
             if (GMS.Realtime) {
               GMS.Realtime.emit('entity_ledger', 'INSERT', entry);
             }
 
             GMS.Loading.hide();
             GMS.Beep?.success();
-            GMS.Toast.ok('تم تسجيل الحركة', `${t.label} — ${sup.name}`);
+
+            const successDesc = isCustom
+              ? `${t.label} · مخصص ${customKarat} · ${esc(sup.name)}`
+              : `${t.label}${karatLabel ? ' · ' + karatLabel : ''} — ${esc(sup.name)}`;
+
+            GMS.Toast.ok('تم تسجيل الحركة', successDesc);
             close();
 
           } catch (e) {
@@ -1468,7 +1674,6 @@
           }
         };
 
-        /* Render initial fields */
         renderFields();
       },
     });
@@ -1476,7 +1681,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §9 · PAYMENT MODAL
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openPaymentModal(sup) {
     const b = SupState.balances.get(sup.id) || { gold: 0, cash: 0 };
@@ -1565,6 +1770,7 @@
             entry_type: 'payment',
             gold_delta: GMS.round(-gold, 4),
             cash_delta: GMS.round(-cash, 2),
+            is_custom_karat: false,
             description: $q('pay-notes').value.trim() || 'سداد',
             branch_id: GMS.Auth?.profile?.branch_id || null,
             created_at: new Date().toISOString(),
@@ -1602,15 +1808,14 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · STATEMENT MODAL
-     ───────────────────────────────────────────────────────────────────── */
+     §10 · STATEMENT MODAL — ✅ v3 مع العيار المخصص
+     ═════════════════════════════════════════════════════════════════════ */
 
   function openStatementModal(sup) {
     const entries = SupState.ledgerEntries
       .filter(e => e.entity_id === sup.id)
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-    /* حساب الأرصدة التراكمية */
     let runGold = Number(sup.opening_gold || 0);
     let runCash = Number(sup.opening_cash || 0);
 
@@ -1624,7 +1829,6 @@
       };
     });
 
-    /* إضافة رصيد افتتاحي كصف أول */
     const openRow = {
       _isOpening: true,
       created_at: sup.created_at || new Date().toISOString(),
@@ -1647,12 +1851,12 @@
         }
       : { gold: 0, cash: 0 };
 
-    /* الإجماليات */
     const totals = {
       goldIn: rows.filter(r => Number(r.gold_delta) > 0).reduce((s, r) => s + Number(r.gold_delta), 0),
       goldOut: rows.filter(r => Number(r.gold_delta) < 0).reduce((s, r) => s + Math.abs(Number(r.gold_delta)), 0),
       cashIn: rows.filter(r => Number(r.cash_delta) > 0).reduce((s, r) => s + Number(r.cash_delta), 0),
       cashOut: rows.filter(r => Number(r.cash_delta) < 0).reduce((s, r) => s + Math.abs(Number(r.cash_delta)), 0),
+      customKaratCount: entries.filter(e => e.is_custom_karat === true || e.custom_karat != null).length,
     };
 
     GMS.Modal.open({
@@ -1670,19 +1874,23 @@
           </div>
 
           <div class="sh-entity">
-            <h3>${GMS.esc(sup.name)}</h3>
+            <h3>${esc(sup.name)}</h3>
             <p>
-              ${sup.code ? `كود: ${GMS.esc(sup.code)} · ` : ''}
-              ${sup.phone ? `${GMS.esc(sup.phone)} · ` : ''}
+              ${sup.code ? `كود: ${esc(sup.code)} · ` : ''}
+              ${sup.phone ? `${esc(sup.phone)} · ` : ''}
               مورد
             </p>
             <p style="margin-top:5px">
               عدد الحركات: <b>${rows.length}</b>
+              ${totals.customKaratCount > 0 ? `
+                · <span style="color:var(--warn)">
+                  <b>${totals.customKaratCount}</b> بعيار مخصص
+                </span>
+              ` : ''}
             </p>
           </div>
         </div>
 
-        <!-- Summary -->
         <div class="stmt-summary">
           <div class="stmt-box">
             <div class="sb-k">
@@ -1741,7 +1949,6 @@
           </div>
         </div>
 
-        <!-- Chart -->
         <div class="card" style="margin-bottom:16px">
           <div class="card-head" style="padding:11px 16px">
             <h3 style="font-size:12.5px">
@@ -1756,7 +1963,6 @@
           </div>
         </div>
 
-        <!-- Ledger table -->
         <div style="max-height:420px;overflow:auto;
                     border:1px solid var(--border);border-radius:11px">
           <table class="tbl" style="font-size:11.5px">
@@ -1777,6 +1983,17 @@
                 const t = TX_TYPES[r.entry_type] || {};
                 const gold = Number(r.gold_delta || 0);
                 const cash = Number(r.cash_delta || 0);
+                const karatInfo = getEntryKaratInfo(r);
+
+                /* ✅ v3: عرض العيار */
+                const karatText = karatInfo.is_custom
+                  ? `<span class="custom-karat-badge karat-badge"
+                           style="font-size:9px;padding:1px 5px">
+                       ${karatInfo.custom_karat}
+                     </span>`
+                  : (karatInfo.karat
+                      ? `<span style="color:var(--muted);font-size:9.5px"> (${karatInfo.karat}K)</span>`
+                      : '');
 
                 return `
                   <tr>
@@ -1786,20 +2003,20 @@
                     <td>
                       <span class="entry-type-pill ${t.color || 'et-neutral'}"
                             style="font-size:9.5px;padding:2px 7px">
-                        ${GMS.esc(t.label || r.entry_type)}
+                        ${esc(t.label || r.entry_type)}
                       </span>
                     </td>
                     <td style="font-weight:600">
-                      ${GMS.esc(r.description || '—')}
+                      ${esc(r.description || '—')}
                       ${r.reference_no ? `
                         <span style="color:var(--muted);font-size:10px;display:block">
-                          ${GMS.esc(r.reference_no)}
+                          ${esc(r.reference_no)}
                         </span>
                       ` : ''}
                     </td>
                     <td class="col-num">
                       ${r.gold_gross_weight ? GMS.gramFmt(r.gold_gross_weight) : (gold !== 0 ? '—' : '')}
-                      ${r.gold_karat ? `<span style="color:var(--muted);font-size:9.5px"> (${r.gold_karat}K)</span>` : ''}
+                      ${karatText}
                     </td>
                     <td class="col-num" style="font-weight:800;
                         color:${gold > 0 ? 'var(--warn)' : gold < 0 ? 'var(--success)' : 'var(--muted)'}">
@@ -1849,17 +2066,14 @@
         <button class="btn btn-primary" data-close>إغلاق</button>
       `,
       onMount: (el, close) => {
-        /* Chart */
         setTimeout(() => {
           drawStatementChart(fullRows);
         }, 100);
 
-        /* Print */
         el.querySelector('#stmt-print').onclick = () => {
           printStatement(sup, fullRows, finalBalance, totals);
         };
 
-        /* Export */
         el.querySelector('#stmt-export').onclick = () => {
           exportStatement(sup, fullRows);
         };
@@ -1963,13 +2177,12 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §11 · PRINT STATEMENT
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function printStatement(sup, rows, finalBalance, totals) {
     const root = document.getElementById('print-root');
     if (!root) return;
 
-    /* نستخدم A4 للكشف بدل الإيصال الحراري */
     const pageStyle = document.getElementById('gms-page-size-style');
     const original = pageStyle?.textContent || '';
     if (pageStyle) {
@@ -1982,12 +2195,11 @@
 
     root.innerHTML = `
       <div style="font-family:'Cairo',sans-serif;direction:rtl;color:#000">
-        <!-- Header -->
         <div style="display:flex;justify-content:space-between;align-items:flex-start;
                     border-bottom:2px solid #000;padding-bottom:9mm;margin-bottom:7mm">
           <div>
             <h1 style="font-size:18pt;font-weight:900;margin:0 0 2mm">
-              ${GMS.esc(GMS.APP_CONFIG.NAME_AR)}
+              ${esc(GMS.APP_CONFIG.NAME_AR)}
             </h1>
             <p style="margin:0;font-size:9.5pt;color:#333">
               كشف حساب مزدوج — مورد
@@ -1995,22 +2207,20 @@
           </div>
           <div style="text-align:left;font-size:10pt">
             <h2 style="margin:0 0 2mm;font-size:14pt;font-weight:900">
-              ${GMS.esc(sup.name)}
+              ${esc(sup.name)}
             </h2>
-            ${sup.code ? `<p style="margin:1mm 0;color:#333">الكود: ${GMS.esc(sup.code)}</p>` : ''}
-            ${sup.phone ? `<p style="margin:1mm 0;color:#333">الهاتف: ${GMS.esc(sup.phone)}</p>` : ''}
+            ${sup.code ? `<p style="margin:1mm 0;color:#333">الكود: ${esc(sup.code)}</p>` : ''}
+            ${sup.phone ? `<p style="margin:1mm 0;color:#333">الهاتف: ${esc(sup.phone)}</p>` : ''}
             <p style="margin:1mm 0;color:#333">التاريخ: ${GMS.dateAr(new Date())}</p>
           </div>
         </div>
 
-        <!-- Title -->
         <div style="text-align:center;font-size:14pt;font-weight:900;
                     background:#f1e8d0;padding:3mm;border:1.5px solid #000;
                     margin-bottom:6mm">
           كشف حساب مزدوج — ذهب ونقد
         </div>
 
-        <!-- Summary -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4mm;
                     margin-bottom:6mm">
           <div style="border:1.5px solid #000;padding:3mm 4mm;border-radius:2mm">
@@ -2055,7 +2265,6 @@
           </div>
         </div>
 
-        <!-- Table -->
         <table style="width:100%;border-collapse:collapse;font-size:9pt">
           <thead>
             <tr>
@@ -2092,16 +2301,21 @@
           <tbody>
             ${rows.slice().reverse().map(r => {
               const t = TX_TYPES[r.entry_type] || {};
+              const karatInfo = getEntryKaratInfo(r);
+              const karatSuffix = karatInfo.is_custom
+                ? ` (${karatInfo.custom_karat})`
+                : (karatInfo.karat ? ` (${karatInfo.karat}K)` : '');
+
               return `
                 <tr>
                   <td style="padding:2mm;border:1px solid #666;vertical-align:top">
                     ${GMS.dateAr(r.created_at)}
                   </td>
                   <td style="padding:2mm;border:1px solid #666;vertical-align:top">
-                    ${GMS.esc(t.label || r.entry_type)}
+                    ${esc(t.label || r.entry_type)}${karatSuffix}
                   </td>
                   <td style="padding:2mm;border:1px solid #666;vertical-align:top">
-                    ${GMS.esc(r.description || '—')}
+                    ${esc(r.description || '—')}
                   </td>
                   <td style="padding:2mm;border:1px solid #666;text-align:left;vertical-align:top;
                              font-variant-numeric:tabular-nums">
@@ -2129,7 +2343,6 @@
           </tbody>
         </table>
 
-        <!-- Footer -->
         <div style="margin-top:8mm;padding:3mm 4mm;border:1px dashed #666;
                     font-size:9pt;background:#fafafa">
           <b>ملاحظة:</b> إشارة الرصيد الموجبة (+) تعني مستحق للمورد،
@@ -2157,7 +2370,6 @@
 
     setTimeout(() => {
       window.print();
-      /* استعادة الإعدادات */
       setTimeout(() => {
         if (pageStyle && original) pageStyle.textContent = original;
       }, 1000);
@@ -2166,7 +2378,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §12 · EXPORT
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function exportSuppliers() {
     if (!SupState.filtered.length) {
@@ -2204,21 +2416,31 @@
       return;
     }
 
-    const data = rows.slice().reverse().map(r => ({
-      'التاريخ': GMS.dateTimeAr(r.created_at),
-      'النوع': TX_TYPES[r.entry_type]?.label || r.entry_type,
-      'البيان': r.description || '',
-      'المرجع': r.reference_no || '',
-      'ذهب (جم)': Number(r.gold_delta) || 0,
-      'نقد (ج.م)': Number(r.cash_delta) || 0,
-      'رصيد الذهب بعد': r.balance_gold_after || 0,
-      'رصيد النقد بعد': r.balance_cash_after || 0,
-    }));
+    const data = rows.slice().reverse().map(r => {
+      const karatInfo = getEntryKaratInfo(r);
+      return {
+        'التاريخ': GMS.dateTimeAr(r.created_at),
+        'النوع': TX_TYPES[r.entry_type]?.label || r.entry_type,
+        'البيان': r.description || '',
+        'المرجع': r.reference_no || '',
+        'ذهب (جم)': Number(r.gold_delta) || 0,
+        'نقد (ج.م)': Number(r.cash_delta) || 0,
+        'العيار': karatInfo.is_custom
+          ? `${karatInfo.custom_karat} (مخصص)`
+          : (karatInfo.karat ? `${karatInfo.karat}K` : ''),
+        'النقاء': karatInfo.is_custom
+          ? Number(karatInfo.purity_ratio).toFixed(4)
+          : '',
+        'رصيد الذهب بعد': r.balance_gold_after || 0,
+        'رصيد النقد بعد': r.balance_cash_after || 0,
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(data);
     ws['!cols'] = [
       { wch: 20 }, { wch: 18 }, { wch: 30 }, { wch: 14 },
-      { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 16 },
+      { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 10 },
+      { wch: 16 }, { wch: 16 },
     ];
 
     const wb = XLSX.utils.book_new();
@@ -2230,7 +2452,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §13 · INITIALIZATION
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function init() {
     try {
@@ -2248,17 +2470,13 @@
     }
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §14 · CLEANUP
-     ───────────────────────────────────────────────────────────────────── */
-
   function cleanup() {
     cleanupListeners();
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · REALTIME HOOKS
-     ───────────────────────────────────────────────────────────────────── */
+     §14 · REALTIME HOOKS
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindRealtimeUpdates() {
     if (!GMS.Realtime) return;
@@ -2267,7 +2485,6 @@
       if (GMS.Router?.current() !== 'suppliers') return;
 
       if (event.table === 'entity_ledger' || event.table === 'suppliers') {
-        /* إعادة تحميل خفيفة */
         setTimeout(async () => {
           await loadLedgerEntries();
           computeBalances();
@@ -2281,7 +2498,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · VIEW REGISTRATION
+     §15 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
@@ -2294,38 +2511,39 @@
     cleanup,
     state: SupState,
 
-    /* Data */
     load: loadSuppliers,
     reload: loadLedgerEntries,
     computeBalances,
     applyFilters,
 
-    /* Actions */
     openSupplierModal,
     openTransactionModal,
     openPaymentModal,
     openStatementModal,
 
-    /* Export */
     export: exportSuppliers,
     exportStatement,
 
-    /* Constants */
     TX_TYPES,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · LOADED CONFIRMATION
+     §16 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏭 Suppliers View loaded · Dual balances + Statements',
+    '%c🏭 Suppliers View v3 loaded · Dual balances + Custom Karat',
     'color:#6b3fa0;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#f0e9fa;border-radius:4px;'
   );
 
   console.log(
-    `%c💰 8 transaction types · Dual ledger · Statement with chart · Realtime sync`,
+    `%c💰 8 transaction types · Dual ledger · Statement with chart · Custom karat support`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v3: Custom Karat in transactions · Purity Ratio · 6 presets · Statement shows custom karat`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
