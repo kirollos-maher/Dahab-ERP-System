@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/02-utils.js
    الأدوات المساعدة: DOM، التنسيق، الأمان، التحقق، حسابات الذهب
+   ✅ v4: دعم كامل للعيارات المخصصة في كل الدوال الحسابية
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -82,17 +83,17 @@
   }
 
   function stripTags(value) {
-    return String(value ?? '').replace(/<[^>]*>/g, '');
+    return String(value == null ? '' : value).replace(/<[^>]*>/g, '');
   }
 
   function stripControl(value) {
-    return String(value ?? '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+    return String(value == null ? '' : value).replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
   }
 
   function detectAttack(value) {
-    const s = String(value ?? '');
+    const s = String(value == null ? '' : value);
     return {
-      xss: /<script|javascript:|onerror\s*=|onload\s*=|onclick\s*=|onfocus\s*=|onblur\s*=|onchange\s*=|onsubmit\s*=|onkeydown\s*=|onkeyup\s*=|onmouseover\s*=|onmouseout\s*=|onmousedown\s*=|onmouseup\s*=|onmousemove\s*=|onmouseenter\s*=|onmouseleave\s*=|ondblclick\s*=|oninput\s*=|onscroll\s*=|onwheel\s*=|ondrag\s*=|ondrop\s*=|onpaste\s*=|oncopy\s*=|oncut\s*=|oncontextmenu\s*=|onplay\s*=|onpause\s*=|onended\s*=|onabort\s*=|oncanplay\s*=|oncanplaythrough\s*=|ondurationchange\s*=|onemptied\s*=|onerror\s*=|onloadeddata\s*=|onloadedmetadata\s*=|onloadstart\s*=|onpause\s*=|onplay\s*=|onplaying\s*=|onprogress\s*=|onratechange\s*=|onseeked\s*=|onseeking\s*=|onstalled\s*=|onsuspend\s*=|ontimeupdate\s*=|onvolumechange\s*=|onwaiting\s*=|onloadstart\s*=|onanimationstart\s*=|onanimationend\s*=|onanimationiteration\s*=|ontransitionend\s*=|onbeforeunload\s*=|onunload\s*=|onhashchange\s*=|onpopstate\s*=|onstorage\s*=|onmessage\s*=|ononline\s*=|onoffline\s*=|onresize\s*=|ondeviceorientation\s*=|ondevicemotion\s*=|onbeforeinstallprompt\s*=|onappinstalled\s*=|onpointerdown\s*=|onpointerup\s*=|onpointermove\s*=|onpointerover\s*=|onpointerout\s*=|onpointerenter\s*=|onpointerleave\s*=|onpointercancel\s*=|onpointerlockchange\s*=|onpointerlockerror\s*=|onselectionchange\s*=|onselectstart\s*=|ontouchstart\s*=|ontouchend\s*=|ontouchmove\s*=|ontouchcancel\s*=|onfocusin\s*=|onfocusout\s*=|onauxclick\s*=|ongotpointercapture\s*=|onlostpointercapture\s*=|onbeforematch\s*=|onformdata\s*=|oninvalid\s*=|onreset\s*=|onsearch\s*=|onslotchange\s*=|ontoggle\s*=|onbeforeinput\s*=|oncompositionstart\s*=|oncompositionupdate\s*=|oncompositionend\s*=|onload\s*=|onerror\s*=|onmessage\s*=|onmessageerror\s*=|onreadystatechange\s*=|onrejectionhandled\s*=|onunhandledrejection\s*=|ontouchstart\s*=|ontouchend\s*=|ontouchmove\s*=|ontouchcancel\s*=|onwheel\s*=|onmousewheel\s*=|onunload\s*=|onerror\s*=|onselect\s*=|onselectstart\s*=|onstart\s*=|onbounce\s*=|onfinish\s*=|onrepeat\s*=|onshow\s*=|onbeforeprint\s*=|onafterprint\s*=|onbeforecopy\s*=|onbeforecut\s*=|onbeforepaste\s*=|oncopy\s*=|oncut\s*=|onpaste\s*=|javascript:|data:text\/html|data:application\/xhtml|vbscript:|livescript:|mocha:|vbs:|jar:|<iframe|<object|<embed|<applet|<meta|<link|<style|<base|<form|<frame|<frameset|<script|<svg|<math|<template|<noscript|<base64/i.test(s),
+      xss: /<script|javascript:|onerror\s*=|onload\s*=|onclick\s*=|onfocus\s*=|onblur\s*=|onchange\s*=|onsubmit\s*=|onkeydown\s*=|onkeyup\s*=|onmouseover\s*=|onmouseout\s*=|onmousedown\s*=|onmouseup\s*=|onmousemove\s*=|onmouseenter\s*=|onmouseleave\s*=|ondblclick\s*=|oninput\s*=|onscroll\s*=|onwheel\s*=|ondrag\s*=|ondrop\s*=|onpaste\s*=|oncopy\s*=|oncut\s*=|oncontextmenu\s*=|onplay\s*=|onpause\s*=|onended\s*=|onabort\s*=|oncanplay\s*=|oncanplaythrough\s*=|ondurationchange\s*=|onemptied\s*=|onerror\s*=|onloadeddata\s*=|onloadedmetadata\s*=|onloadstart\s*=|onpause\s*=|onplay\s*=|onplaying\s*=|onprogress\s*=|onratechange\s*=|onseeked\s*=|onseeking\s*=|onstalled\s*=|onsuspend\s*=|ontimeupdate\s*=|onvolumechange\s*=|onwaiting\s*=|onloadstart\s*=|onanimationstart\s*=|onanimationend\s*=|onanimationiteration\s*=|ontransitionend\s*=|onbeforeunload\s*=|onunload\s*=|onhashchange\s*=|onpopstate\s*=|onstorage\s*=|onmessage\s*=|ononline\s*=|onoffline\s*=|onresize\s*=|ondeviceorientation\s*=|ondevicemotion\s*=|onbeforeinstallprompt\s*=|onappinstalled\s*=|onpointerdown\s*=|onpointerup\s*=|onpointermove\s*=|onpointerover\s*=|onpointerout\s*=|onpointerenter\s*=|onpointerleave\s*=|onpointercancel\s*=|onpointerlockchange\s*=|onpointerlockerror\s*=|onselectionchange\s*=|onselectstart\s*=|ontouchstart\s*=|ontouchend\s*=|ontouchmove\s*=|ontouchcancel\s*=|onfocusin\s*=|onfocusout\s*=|onauxclick\s*=|ongotpointercapture\s*=|onlostpointercapture\s*=|onbeforematch\s*=|onformdata\s*=|oninvalid\s*=|onreset\s*=|onsearch\s*=|onslotchange\s*=|ontoggle\s*=|onbeforeinput\s*=|oncompositionstart\s*=|oncompositionupdate\s*=|oncompositionend\s*=|javascript:|data:text\/html|data:application\/xhtml|vbscript:|livescript:|mocha:|vbs:|jar:|<iframe|<object|<embed|<applet|<meta|<link|<style|<base|<form|<frame|<frameset|<script|<svg|<math|<template|<noscript|<base64/i.test(s),
       sqlInjection: /('\s*(or|and)\s*'?\d)|(\bunion\b\s+\bselect\b)|(\bdrop\b\s+\btable\b)|(--\s)|(;--)|xp_cmdshell|information_schema|sys\.tables|sp_executesql|execute\s*\(|bulk\s+insert|waitfor\s+delay|benchmark\s*\(|sleep\s*\(|load_file\s*\(|into\s+outfile|into\s+dumpfile/i.test(s),
       pathTraversal: /\.\.\/|\.\.\\/i.test(s),
       nullByte: /\x00/.test(s),
@@ -106,7 +107,7 @@
       trim = true,
     } = opts;
 
-    let s = String(input ?? '');
+    let s = String(input == null ? '' : input);
 
     s = stripControl(s);
 
@@ -318,6 +319,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §6 · GOLD CALCULATIONS (Domain Math)
+     ✅ v4: يدعم العيارات المخصصة عبر purity_ratio مباشر
      ═════════════════════════════════════════════════════════════════════ */
 
   const Gold = {
@@ -338,7 +340,18 @@
       return round(toNumber(netWeight) * toNumber(perGram), 2);
     },
 
+    /**
+     * ✅ v4: سعر الجرام لأي عيار (قياسي أو مخصص)
+     * @param {number} price24 — سعر 24K
+     * @param {number} karat   — العيار (21 أو 888 أو 0.8880)
+     * @returns {number}
+     */
     priceForKarat(price24, karat) {
+      /* لو جاله purity مباشر */
+      if (typeof karat === 'number' && karat < 1 && karat > 0) {
+        return round(toNumber(price24) * karat, 2);
+      }
+      /* وإلا استخدم karatRatio اللي بيدعم القياسي والمخصص */
       return round(toNumber(price24) * GMS.karatRatio(karat), 2);
     },
 
@@ -348,20 +361,31 @@
       return round(toNumber(lossGrams) / base * 100, 4);
     },
 
+    /**
+     * ✅ v4: حساب سطر كامل — يدعم العيار القياسي والمخصص
+     * @param {Object} params
+     * @param {number} [params.purityRatio] — أولوية على karat
+     * @param {number} [params.karat] — عيار قياسي أو مخصص
+     */
     line(params) {
       const {
         gross = 0,
         stone = 0,
         karat = 21,
+        purityRatio = null,
         workmanshipPerGram = 0,
         stoneValue = 0,
         price24 = 0,
         qty = 1,
       } = params || {};
 
-      const purityRatio = GMS.karatRatio(karat);
+      /* ✅ الأولوية: purityRatio المباشر > karat */
+      const purity = purityRatio != null
+        ? toNumber(purityRatio)
+        : GMS.karatRatio(karat);
+
       const net = Gold.netWeight(gross, stone);
-      const pure = Gold.pureWeight(net, purityRatio);
+      const pure = Gold.pureWeight(net, purity);
       const gold = Gold.goldValue(pure, price24);
       const making = Gold.workmanship(net, workmanshipPerGram);
       const sv = toNumber(stoneValue);
@@ -371,6 +395,7 @@
       return {
         net,
         pure,
+        purity_ratio: purity,
         goldValue: gold,
         making,
         stoneValue: sv,
@@ -379,6 +404,9 @@
       };
     },
 
+    /**
+     * ✅ v4: مجاميع قائمة أصناف — يدعم العيار القياسي والمخصص
+     */
     totals(items, price24) {
       let count = 0;
       let gross = 0;
@@ -392,7 +420,17 @@
         const q = toNumber(it.qty, 1);
         const w = toNumber(it.weight_grams || it.gross);
         const n = toNumber(it.net_weight || it.net);
-        const p = toNumber(it.pure_weight || it.pure);
+
+        /* ✅ أولوية: purity_ratio من العنصر */
+        const itemPurity = it.purity_ratio != null
+          ? toNumber(it.purity_ratio)
+          : GMS.karatRatio(it.karat);
+
+        /* pure_weight المباشر > الحساب */
+        const p = it.pure_weight != null
+          ? toNumber(it.pure_weight)
+          : Gold.pureWeight(n, itemPurity);
+
         const mp = toNumber(it.workmanship_per_gram || it.workmanshipPerGram);
 
         count += q;
@@ -414,6 +452,25 @@
         making: round(making, 2),
         total,
       };
+    },
+
+    /**
+     * ✅ v4: تحويل كائن عنصر إلى karat info موحّد
+     * يفيد في العروض
+     */
+    karatInfo(item) {
+      if (!item) return GMS.resolveKarat(21);
+      if (item.is_custom != null || item.custom_karat != null) {
+        return GMS.resolveKarat({
+          karat: item.karat,
+          custom_karat: item.custom_karat,
+          purity_ratio: item.purity_ratio,
+          is_custom: item.is_custom,
+        });
+      }
+      if (item.karat != null) return GMS.resolveKarat(item.karat);
+      if (item.purity_ratio != null) return GMS.karatFromPurity(item.purity_ratio);
+      return GMS.resolveKarat(21);
     },
   };
 
@@ -474,6 +531,11 @@
       const p = Number(price);
       return isFinite(p) && p >= GMS.LIMITS.MIN_PRICE_24 && p <= GMS.LIMITS.MAX_PRICE_24;
     },
+
+    /* ✅ v4: عيار قياسي أو مخصص */
+    karat(karat) {
+      return GMS.isValidKarat(karat);
+    },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -527,6 +589,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §9 · ID GENERATION
+     ✅ v4: generateSKU يدعم العيار المخصص
      ═════════════════════════════════════════════════════════════════════ */
 
   function uid() {
@@ -564,14 +627,41 @@
     return `${prefix}-${stamp}-${rand}`;
   }
 
+  /**
+   * ✅ v4: توليد SKU فريد يدعم العيار القياسي والمخصص
+   * @param {Object} params
+   * @param {string} [params.manufacturerCode='X']
+   * @param {number} [params.karat=21]
+   * @param {number} [params.customKarat] — للعيارات المخصصة
+   * @param {number} [params.purityRatio] — بديل عن karat
+   * @param {string} [params.letter='']
+   * @param {Date}   [params.date=new Date()]
+   * @param {number} [params.seq=1]
+   * @returns {string}
+   */
   function generateSKU(params = {}) {
     const {
       manufacturerCode = 'X',
-      karat = 21,
+      karat = null,
+      customKarat = null,
+      purityRatio = null,
       letter = '',
       date = new Date(),
       seq = 1,
     } = params;
+
+    /* أولوية: customKarat > purityRatio > karat */
+    let karatCode;
+
+    if (customKarat != null) {
+      karatCode = String(customKarat);
+    } else if (purityRatio != null) {
+      karatCode = String(Math.round(Number(purityRatio) * 1000));
+    } else if (karat != null) {
+      karatCode = String(karat);
+    } else {
+      karatCode = '21';
+    }
 
     const prefix = (letter || manufacturerCode || 'X').toUpperCase();
     const stamp = String(date.getFullYear()).slice(2) +
@@ -579,7 +669,7 @@
       String(date.getDate()).padStart(2, '0');
     const seqStr = String(seq).padStart(5, '0');
 
-    return `${prefix}${karat}-${stamp}-${seqStr}`;
+    return `${prefix}${karatCode}-${stamp}-${seqStr}`;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -676,7 +766,7 @@
   }
 
   function omit(obj, keys) {
-    const out = { ...(obj || {}) };
+    const out = Object.assign({}, obj || {});
     (keys || []).forEach((k) => delete out[k]);
     return out;
   }
@@ -835,7 +925,7 @@
   }
 
   function downloadCSV(filename, rows, headers) {
-    const escapeCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const escapeCell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
     const lines = [];
 
     if (headers && headers.length) {
@@ -969,7 +1059,110 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · EXPORT
+     §19 · KARAT UTILITIES (v4)
+     ═════════════════════════════════════════════════════════════════════
+     دوال مساعدة للتعامل مع العيارات القياسية والمخصصة
+     ملاحظة: الدوال الأساسية موجودة في 01-config.js
+     هنا نضيف aliases وأدوات مساعدة للعرض
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ✅ v4: قراءة karat info من عنصر (item) بشكل آمن
+   * @param {Object} item
+   * @returns {{karat, custom_karat, purity_ratio, is_custom, display}}
+   */
+  function getItemKarat(item) {
+    if (!item) return GMS.resolveKarat(21);
+
+    /* لو عنده purity_ratio → استخدمه كأولوية */
+    if (item.purity_ratio != null) {
+      const info = GMS.karatFromPurity(item.purity_ratio);
+      /* لو عنده karat مخصص محدد نستخدمه للعرض */
+      if (item.custom_karat != null) {
+        info.custom_karat = item.custom_karat;
+        info.display = String(item.custom_karat);
+      }
+      return info;
+    }
+
+    /* karat مخصص */
+    if (item.custom_karat != null || item.is_custom) {
+      return GMS.resolveKarat({
+        custom_karat: item.custom_karat,
+        purity_ratio: item.purity_ratio,
+        is_custom: true,
+      });
+    }
+
+    /* karat قياسي */
+    if (item.karat != null) {
+      return GMS.resolveKarat(item.karat);
+    }
+
+    return GMS.resolveKarat(21);
+  }
+
+  /**
+   * ✅ v4: بناء payload موحّد للعيار عند الحفظ
+   * يُستخدم في كل المودالات (inventory, suppliers, accounting, repair...)
+   * @param {Object} params
+   * @param {number} [params.karat]
+   * @param {number} [params.customKarat]
+   * @param {number} [params.purityRatio]
+   * @param {boolean} [params.isCustom]
+   * @returns {Object} — { karat, custom_karat, purity_ratio, is_custom_karat }
+   */
+  function buildKaratPayload(params) {
+    const {
+      karat = null,
+      customKarat = null,
+      purityRatio = null,
+      isCustom = false,
+    } = params || {};
+
+    /* مخصص */
+    if (isCustom || customKarat != null) {
+      const num = Number(customKarat) || Math.round(Number(purityRatio) * 1000);
+      const purity = Number(purityRatio) || (num / 1000);
+      return {
+        karat: null,
+        custom_karat: num,
+        purity_ratio: round(purity, 4),
+        is_custom_karat: true,
+      };
+    }
+
+    /* قياسي */
+    if (karat != null) {
+      return {
+        karat: Number(karat),
+        custom_karat: null,
+        purity_ratio: GMS.karatRatio(karat),
+        is_custom_karat: false,
+      };
+    }
+
+    /* fallback */
+    return {
+      karat: 21,
+      custom_karat: null,
+      purity_ratio: 0.8750,
+      is_custom_karat: false,
+    };
+  }
+
+  /**
+   * ✅ v4: تحويل نص عرض العيار إلى karat code للاستخدام في CSS classes
+   * مثال: "21K" → "k21" · "888 (مخصص)" → "custom-888"
+   */
+  function karatCode(item) {
+    const info = getItemKarat(item);
+    if (info.is_custom) return `custom-${info.custom_karat}`;
+    return `k${info.karat}`;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §20 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
 
   GMS.$ = $;
@@ -1014,7 +1207,7 @@
   GMS.Gold = Gold;
   GMS.Validate = Validate;
 
-  /* ✅ Aliases مباشرة لدوال حسابات الذهب (للتوافق مع كل الموديولات) */
+  /* ✅ Aliases مباشرة لدوال حسابات الذهب */
   GMS.lossPct = Gold.lossPct.bind(Gold);
   GMS.netWeight = Gold.netWeight.bind(Gold);
   GMS.pureWeight = Gold.pureWeight.bind(Gold);
@@ -1074,23 +1267,33 @@
   GMS.getHash = getHash;
   GMS.setHash = setHash;
 
+  /* ✅ v4: Karat utilities */
+  GMS.getItemKarat = getItemKarat;
+  GMS.buildKaratPayload = buildKaratPayload;
+  GMS.karatCode = karatCode;
+
   /* ═════════════════════════════════════════════════════════════════════
-     §20 · LOADED CONFIRMATION
+     §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🔧 Utils loaded · 19 modules exposed',
+    '%c🔧 Utils loaded · 20 modules exposed',
     'color:#1c4fd8;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e9efff;border-radius:4px;'
   );
 
   console.log(
-    `%c⚙️  DOM · Format · Sanitize · Validate · Gold · Timers · Storage · Files · Events`,
+    '%c⚙️  DOM · Format · Sanitize · Validate · Gold · Timers · Storage · Files · Events',
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c✅ Gold aliases exposed: lossPct, netWeight, pureWeight, goldValue, workmanship, priceForKarat`,
+    '%c✅ Gold aliases: lossPct, netWeight, pureWeight, goldValue, workmanship, priceForKarat',
     'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🆕 v4: getItemKarat() · buildKaratPayload() · karatCode() — دعم العيار المخصص',
+    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
