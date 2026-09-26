@@ -2,6 +2,7 @@
    GOLD MS ENTERPRISE — js/03-i18n.js
    نظام الترجمة: عربي (مصري) + إنجليزي مع RTL/LTR والجمع
    ✅ v2: إضافة nav.accounting · nav.repair · nav.wholesale
+   ✅ v3: تحصين setLang + applyTo ضد أخطاء الشاشة البيضاء
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -1661,22 +1662,31 @@
 
     /**
      * ترجمة مفتاح
+     * ✅ مُحصَّن: يرجع المفتاح أو العربي دائماً — لا undefined
      * @param {string} key
      * @param {Object} [params]
      * @returns {string}
      */
     t(key, params) {
-      if (!key) return '';
+      try {
+        if (!key) return '';
 
-      let str = TRANSLATIONS[STATE.lang]?.[key];
+        let str = TRANSLATIONS[STATE.lang]?.[key];
 
-      // fallback إلى الإنجليزية
-      if (str === undefined) str = TRANSLATIONS.en?.[key];
+        /* fallback → الإنجليزية */
+        if (str === undefined) str = TRANSLATIONS.en?.[key];
 
-      // fallback للمفتاح نفسه
-      if (str === undefined) str = key;
+        /* fallback → العربية (لأن المستخدم عربي غالباً) */
+        if (str === undefined) str = TRANSLATIONS.ar?.[key];
 
-      return interpolate(str, params);
+        /* fallback نهائي → المفتاح نفسه */
+        if (str === undefined) str = key;
+
+        return interpolate(str, params);
+      } catch (e) {
+        console.warn('[I18n.t] error for key:', key, e);
+        return String(key || '');
+      }
     },
 
     /**
@@ -1687,26 +1697,33 @@
      * @returns {string}
      */
     tn(baseKey, count, extraParams) {
-      const n = Number(count) || 0;
-      const form = STATE.lang === 'ar'
-        ? arabicPluralForm(n)
-        : englishPluralForm(n);
+      try {
+        const n = Number(count) || 0;
+        const form = STATE.lang === 'ar'
+          ? arabicPluralForm(n)
+          : englishPluralForm(n);
 
-      let key = `${baseKey}.${form}`;
-      let str = TRANSLATIONS[STATE.lang]?.[key];
+        let key = `${baseKey}.${form}`;
+        let str = TRANSLATIONS[STATE.lang]?.[key];
 
-      // fallback
-      if (str === undefined) str = TRANSLATIONS[STATE.lang]?.[`${baseKey}.other`];
-      if (str === undefined) str = TRANSLATIONS[STATE.lang]?.[baseKey];
-      if (str === undefined) str = TRANSLATIONS.en?.[key];
-      if (str === undefined) str = TRANSLATIONS.en?.[`${baseKey}.other`];
-      if (str === undefined) str = baseKey;
+        /* fallback سلسلة كاملة */
+        if (str === undefined) str = TRANSLATIONS[STATE.lang]?.[`${baseKey}.other`];
+        if (str === undefined) str = TRANSLATIONS[STATE.lang]?.[baseKey];
+        if (str === undefined) str = TRANSLATIONS.en?.[key];
+        if (str === undefined) str = TRANSLATIONS.en?.[`${baseKey}.other`];
+        if (str === undefined) str = TRANSLATIONS.ar?.[key];
+        if (str === undefined) str = TRANSLATIONS.ar?.[`${baseKey}.other`];
+        if (str === undefined) str = baseKey;
 
-      return interpolate(str, { count: n, n, ...(extraParams || {}) });
+        return interpolate(str, { count: n, n, ...(extraParams || {}) });
+      } catch (e) {
+        console.warn('[I18n.tn] error for key:', baseKey, e);
+        return String(baseKey || '');
+      }
     },
 
     /**
-     * تبديل اللغة
+     * ✅ تبديل اللغة — النسخة المُحصَّنة
      * @param {'ar'|'en'} lang
      * @param {Object} [opts]
      * @param {boolean} [opts.silent=false]
@@ -1718,27 +1735,56 @@
       if (lang === STATE.lang && !silent) return;
 
       const meta = LANG_META[lang];
+      const prevLang = STATE.lang;
+      const prevDir = STATE.dir;
+
       STATE.lang = lang;
       STATE.dir = meta.dir;
       STATE.locale = meta.locale;
 
-      // حفظ
+      /* الحفظ */
       try {
         localStorage.setItem(GMS.LS_KEYS.LANG, lang);
       } catch (_) {}
 
-      // تحديث HTML
-      const html = document.documentElement;
-      html.setAttribute('lang', lang);
-      html.setAttribute('dir', STATE.dir);
-      html.setAttribute('data-lang', lang);
+      /* 1 · تحديث <html> أولاً — قبل أي شيء آخر */
+      try {
+        const html = document.documentElement;
+        html.setAttribute('lang', lang);
+        html.setAttribute('dir', STATE.dir);
+        html.setAttribute('data-lang', lang);
+      } catch (e) {
+        console.error('[I18n.setLang] <html> update failed:', e);
+      }
 
-      // ترجمة الصفحة
-      I18n.applyTo(document);
+      /* 2 · تطبيق الترجمة — بمحاولة آمنة مع rollback */
+      try {
+        I18n.applyTo(document);
+      } catch (e) {
+        console.error('[I18n.setLang] applyTo failed:', e);
 
-      // إبلاغ المستمعين
+        /* rollback فوري */
+        STATE.lang = prevLang;
+        STATE.dir = prevDir;
+        STATE.locale = LANG_META[prevLang].locale;
+
+        try {
+          const html = document.documentElement;
+          html.setAttribute('lang', prevLang);
+          html.setAttribute('dir', prevDir);
+          html.setAttribute('data-lang', prevLang);
+        } catch (_) {}
+
+        throw e;
+      }
+
+      /* 3 · إبلاغ المستمعين — كل واحد بمحاولة مستقلة */
       STATE.listeners.forEach(fn => {
-        try { fn(lang, STATE.dir); } catch (e) { console.error('[I18n]', e); }
+        try {
+          fn(lang, STATE.dir);
+        } catch (e) {
+          console.error('[I18n.listener] error:', e);
+        }
       });
     },
 
@@ -1764,57 +1810,88 @@
     },
 
     /**
-     * ترجمة DOM subtree
+     * ✅ ترجمة DOM subtree — النسخة المُحصَّنة
+     * لا تُوقف التنفيذ لو عنصر واحد فشل
      * @param {Element|Document} [root=document]
      */
     applyTo(root) {
       root = root || document;
+      if (!root) return;
 
-      // 1 · data-i18n
-      GMS.$$('[data-i18n]', root).forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (key) el.textContent = I18n.t(key);
+      /* حماية — لو GMS.$$ غير متاح */
+      if (typeof GMS.$$ !== 'function') {
+        console.warn('[I18n.applyTo] GMS.$$ غير متاح — تم التخطي');
+        return;
+      }
+
+      const safeQuery = (sel) => {
+        try {
+          return GMS.$$(sel, root);
+        } catch (e) {
+          console.warn('[I18n.applyTo] query failed for:', sel, e);
+          return [];
+        }
+      };
+
+      /* 1 · data-i18n */
+      safeQuery('[data-i18n]').forEach(el => {
+        try {
+          const key = el.getAttribute('data-i18n');
+          if (key) el.textContent = I18n.t(key);
+        } catch (_) { /* تجاهل العنصر التالف */ }
       });
 
-      // 2 · data-i18n-html
-      GMS.$$('[data-i18n-html]', root).forEach(el => {
-        const key = el.getAttribute('data-i18n-html');
-        if (key) el.innerHTML = I18n.t(key);
+      /* 2 · data-i18n-html */
+      safeQuery('[data-i18n-html]').forEach(el => {
+        try {
+          const key = el.getAttribute('data-i18n-html');
+          if (key) el.innerHTML = I18n.t(key);
+        } catch (_) {}
       });
 
-      // 3 · data-i18n-attr="placeholder:key,title:key"
-      GMS.$$('[data-i18n-attr]', root).forEach(el => {
-        const spec = el.getAttribute('data-i18n-attr');
-        if (!spec) return;
-        spec.split(',').forEach(pair => {
-          const [attr, key] = pair.split(':').map(s => s.trim());
-          if (attr && key) el.setAttribute(attr, I18n.t(key));
-        });
+      /* 3 · data-i18n-attr="placeholder:key,title:key" */
+      safeQuery('[data-i18n-attr]').forEach(el => {
+        try {
+          const spec = el.getAttribute('data-i18n-attr');
+          if (!spec) return;
+          spec.split(',').forEach(pair => {
+            const [attr, key] = pair.split(':').map(s => s.trim());
+            if (attr && key) el.setAttribute(attr, I18n.t(key));
+          });
+        } catch (_) {}
       });
 
-      // 4 · data-i18n-placeholder
-      GMS.$$('[data-i18n-placeholder]', root).forEach(el => {
-        const key = el.getAttribute('data-i18n-placeholder');
-        if (key) el.setAttribute('placeholder', I18n.t(key));
+      /* 4 · data-i18n-placeholder */
+      safeQuery('[data-i18n-placeholder]').forEach(el => {
+        try {
+          const key = el.getAttribute('data-i18n-placeholder');
+          if (key) el.setAttribute('placeholder', I18n.t(key));
+        } catch (_) {}
       });
 
-      // 5 · data-i18n-title
-      GMS.$$('[data-i18n-title]', root).forEach(el => {
-        const key = el.getAttribute('data-i18n-title');
-        if (key) el.setAttribute('title', I18n.t(key));
+      /* 5 · data-i18n-title */
+      safeQuery('[data-i18n-title]').forEach(el => {
+        try {
+          const key = el.getAttribute('data-i18n-title');
+          if (key) el.setAttribute('title', I18n.t(key));
+        } catch (_) {}
       });
 
-      // 6 · data-i18n-aria
-      GMS.$$('[data-i18n-aria]', root).forEach(el => {
-        const key = el.getAttribute('data-i18n-aria');
-        if (key) el.setAttribute('aria-label', I18n.t(key));
+      /* 6 · data-i18n-aria */
+      safeQuery('[data-i18n-aria]').forEach(el => {
+        try {
+          const key = el.getAttribute('data-i18n-aria');
+          if (key) el.setAttribute('aria-label', I18n.t(key));
+        } catch (_) {}
       });
 
-      // 7 · data-i18n-plural
-      GMS.$$('[data-i18n-plural]', root).forEach(el => {
-        const base = el.getAttribute('data-i18n-plural');
-        const count = Number(el.getAttribute('data-i18n-count')) || 0;
-        if (base) el.textContent = I18n.tn(base, count);
+      /* 7 · data-i18n-plural */
+      safeQuery('[data-i18n-plural]').forEach(el => {
+        try {
+          const base = el.getAttribute('data-i18n-plural');
+          const count = Number(el.getAttribute('data-i18n-count')) || 0;
+          if (base) el.textContent = I18n.tn(base, count);
+        } catch (_) {}
       });
     },
 
@@ -1960,8 +2037,17 @@
         saved = browser.startsWith('ar') ? 'ar' : 'en';
       }
 
-      I18n.setLang(saved, { silent: true });
-      I18n.applyTo(document);
+      try {
+        I18n.setLang(saved, { silent: true });
+        I18n.applyTo(document);
+      } catch (e) {
+        console.error('[I18n.init] failed:', e);
+        /* fallback: على الأقل عيّن <html> */
+        try {
+          document.documentElement.setAttribute('lang', 'ar');
+          document.documentElement.setAttribute('dir', 'rtl');
+        } catch (_) {}
+      }
 
       return I18n;
     },
@@ -1985,9 +2071,24 @@
   GMS.I18n = I18n;
   GMS.TRANSLATIONS = TRANSLATIONS;
 
-  /* اختصارات سريعة */
-  GMS.t = (key, params) => I18n.t(key, params);
-  GMS.tn = (base, count, params) => I18n.tn(base, count, params);
+  /* اختصارات سريعة — مُحصَّنة */
+  GMS.t = (key, params) => {
+    try {
+      return I18n.t(key, params);
+    } catch (e) {
+      console.warn('[GMS.t] error:', e);
+      return String(key || '');
+    }
+  };
+
+  GMS.tn = (base, count, params) => {
+    try {
+      return I18n.tn(base, count, params);
+    } catch (e) {
+      console.warn('[GMS.tn] error:', e);
+      return String(base || '');
+    }
+  };
 
   /* ═════════════════════════════════════════════════════════════════════
      §7 · LOADED CONFIRMATION
@@ -2006,7 +2107,7 @@
   );
 
   console.log(
-    `%c✅ v2: nav.accounting · nav.repair · nav.wholesale · wsl.* keys added`,
+    `%c✅ v3: Hardened setLang (rollback) · Safe applyTo · t/tn fallback`,
     'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
