@@ -2,6 +2,7 @@
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
    ✅ v2: تفويض تبديل اللغة إلى GMS.switchLanguage() الآمن
+   ✅ v3: bindLoginForm محصَّن — ربط مزدوج (submit + click) + diagnostics
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -151,7 +152,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · AUTH UI BINDING
+     §5 · ✅ AUTH UI BINDING — v3 محصَّن بالكامل
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLoginForm() {
@@ -159,53 +160,108 @@
     const errEl = document.getElementById('login-error');
     const submitBtn = document.getElementById('login-submit');
 
-    if (!form) return;
+    if (!form) {
+      console.warn('[Boot.bindLoginForm] ❌ #login-form غير موجود');
+      return;
+    }
 
-    form.onsubmit = async (e) => {
-      e.preventDefault();
+    /* منع إعادة الربط المتكرر */
+    if (form._gmsLoginBound) {
+      console.log('[Boot.bindLoginForm] ℹ️ مُربط مسبقاً — تم التخطي');
+      return;
+    }
+    form._gmsLoginBound = true;
 
-      const email = document.getElementById('login-email')?.value.trim();
-      const password = document.getElementById('login-password')?.value;
+    console.log('[Boot.bindLoginForm] 🔗 بدء ربط نموذج الدخول…');
 
-      if (!email || !password) return;
+    let submitting = false;
 
+    /* ─── دالة الدخول الرئيسية ─── */
+    const doLogin = async (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      if (submitting) {
+        console.log('[Boot.login] ⏳ طلب جارٍ بالفعل — تم التخطي');
+        return;
+      }
+
+      const emailEl = document.getElementById('login-email');
+      const passEl = document.getElementById('login-password');
+      const email = emailEl?.value.trim();
+      const password = passEl?.value;
+
+      console.log('[Boot.login] 📤 محاولة دخول:', email);
+
+      /* ─── فحوصات أولية ─── */
+      if (!email || !password) {
+        if (errEl) {
+          errEl.textContent = 'البريد الإلكتروني وكلمة المرور مطلوبان';
+          errEl.classList.remove('hidden');
+        }
+        return;
+      }
+
+      if (!GMS.Auth || typeof GMS.Auth.signIn !== 'function') {
+        console.error('[Boot.login] ❌ GMS.Auth.signIn غير متاح');
+        if (errEl) {
+          errEl.textContent = 'خطأ في النظام — Auth غير مُهيّأ';
+          errEl.classList.remove('hidden');
+        }
+        return;
+      }
+
+      /* ─── وضع التحميل ─── */
+      submitting = true;
       const originalHTML = submitBtn?.innerHTML;
+
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.innerHTML = `
-          <i data-lucide="loader-circle"></i>
-          جارٍ التحقق…
-        `;
+        submitBtn.innerHTML = '<i data-lucide="loader-circle"></i> جارٍ التحقق…';
         window.lucide?.createIcons();
       }
 
       if (errEl) errEl.classList.add('hidden');
 
+      /* ─── محاولة الدخول ─── */
       try {
         const profile = await GMS.Auth.signIn(email, password);
 
+        console.log('[Boot.login] ✅ نجح الدخول:', profile?.full_name);
+
+        /* إخفاء شاشة الدخول + إظهار التطبيق */
         const loginScreen = document.getElementById('login-screen');
         if (loginScreen) loginScreen.style.display = 'none';
 
         const app = document.getElementById('app');
         if (app) app.classList.add('visible');
 
-        if (GMS.Audit) {
-          await GMS.Audit.log(
-            'LOGIN',
-            'session',
-            profile.id,
-            `تسجيل دخول — ${profile.full_name}`,
-            { email: profile.email, role: profile.role }
-          );
+        /* سجل التدقيق */
+        if (GMS.Audit && profile) {
+          try {
+            await GMS.Audit.log(
+              'LOGIN',
+              'session',
+              profile.id,
+              `تسجيل دخول — ${profile.full_name}`,
+              { email: profile.email, role: profile.role }
+            );
+          } catch (auditErr) {
+            console.warn('[Boot.login] Audit log failed:', auditErr);
+          }
         }
 
         GMS.Beep?.success?.();
 
+        /* بدء التطبيق */
         await startApp();
 
       } catch (err) {
-        console.error('[Boot] Login failed:', err);
+        console.error('[Boot.login] ❌ فشل الدخول:', err);
+
+        submitting = false;
 
         if (errEl) {
           errEl.textContent = err.message || 'فشل تسجيل الدخول';
@@ -216,14 +272,44 @@
 
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.innerHTML = originalHTML;
+          submitBtn.innerHTML = originalHTML || '<i data-lucide="log-in"></i> تسجيل الدخول';
           window.lucide?.createIcons();
         }
       }
     };
 
+    /* ─── ربط مزدوج (form + button) ─── */
+    form.onsubmit = doLogin;
+
+    if (submitBtn) {
+      submitBtn.onclick = (e) => {
+        console.log('[Boot.login] 🖱️ نقرة على زر الدخول');
+        doLogin(e);
+      };
+    }
+
+    /* ─── Enter على حقل كلمة المرور ─── */
+    const passEl = document.getElementById('login-password');
+    if (passEl) {
+      passEl.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doLogin(e);
+        }
+      };
+    }
+
+    console.log('[Boot.bindLoginForm] ✅ تم الربط بنجاح', {
+      form: Boolean(form),
+      button: Boolean(submitBtn),
+      errEl: Boolean(errEl),
+    });
+
+    /* ─── تركيز أولي ─── */
     setTimeout(() => {
-      document.getElementById('login-email')?.focus();
+      try {
+        document.getElementById('login-email')?.focus();
+      } catch (_) {}
     }, 400);
   }
 
@@ -317,13 +403,13 @@
         const lang = btn.dataset.lang;
         if (!lang) return;
 
-        /* ✅ المسار المُفضّل: switchLanguage الآمن */
+        /* المسار المُفضّل: switchLanguage الآمن */
         if (typeof GMS.switchLanguage === 'function') {
           GMS.switchLanguage(lang);
           return;
         }
 
-        /* fallback بسيط لو LangSwitcher لم يُحمَّل بعد */
+        /* fallback بسيط */
         if (GMS.I18n?.setLang) {
           GMS.I18n.setLang(lang);
           document.querySelectorAll('.lang-btn').forEach(b => {
@@ -441,60 +527,42 @@
       body: `
         <div class="calc-list">
           <div class="cl-row">
-            <span class="k">
-              <i data-lucide="globe"></i>
-              الشبكة
-            </span>
+            <span class="k"><i data-lucide="globe"></i> الشبكة</span>
             <span class="v" style="color:${online ? 'var(--success)' : 'var(--warn)'}">
               ${online ? 'متصل' : 'غير متصل'}
             </span>
           </div>
 
           <div class="cl-row">
-            <span class="k">
-              <i data-lucide="database"></i>
-              Supabase
-            </span>
+            <span class="k"><i data-lucide="database"></i> Supabase</span>
             <span class="v" style="color:${sbReady ? 'var(--success)' : 'var(--muted)'}">
               ${sbReady ? 'متصل' : 'غير مُهيّأ'}
             </span>
           </div>
 
           <div class="cl-row">
-            <span class="k">
-              <i data-lucide="radio"></i>
-              Realtime
-            </span>
+            <span class="k"><i data-lucide="radio"></i> Realtime</span>
             <span class="v" style="color:${rtStatus === 'connected' ? 'var(--success)' : 'var(--warn)'}">
               ${rtLabels[rtStatus] || rtStatus}
             </span>
           </div>
 
           <div class="cl-row">
-            <span class="k">
-              <i data-lucide="package"></i>
-              طابور المزامنة
-            </span>
+            <span class="k"><i data-lucide="package"></i> طابور المزامنة</span>
             <span class="v" style="color:${queueCount > 0 ? 'var(--warn)' : 'var(--muted)'}">
               ${GMS.intFmt(queueCount)} فاتورة
             </span>
           </div>
 
           <div class="cl-row">
-            <span class="k">
-              <i data-lucide="clock"></i>
-              آخر مزامنة
-            </span>
+            <span class="k"><i data-lucide="clock"></i> آخر مزامنة</span>
             <span class="v" style="font-size:12px">
               ${GMS.timeAgo(GMS.Sync?.state?.stats?.lastSync)}
             </span>
           </div>
 
           <div class="cl-row">
-            <span class="k">
-              <i data-lucide="activity"></i>
-              الأحداث المستقبلة
-            </span>
+            <span class="k"><i data-lucide="activity"></i> الأحداث المستقبلة</span>
             <span class="v">
               ${GMS.intFmt(GMS.Realtime?.state?.stats?.totalEvents || 0)}
             </span>
@@ -502,10 +570,7 @@
 
           <div class="cl-row" style="border-top:1.5px solid var(--border);
                        padding-top:14px;margin-top:8px">
-            <span class="k">
-              <i data-lucide="smartphone"></i>
-              PWA
-            </span>
+            <span class="k"><i data-lucide="smartphone"></i> PWA</span>
             <span class="v" style="color:${pwaStandalone ? 'var(--success)' : 'var(--muted)'}">
               ${pwaStandalone ? 'مثبَّت (Standalone)' : 'متصفح عادي'}
             </span>
@@ -517,7 +582,7 @@
                         font-weight:700;color:var(--warn)">
               <i data-lucide="download" style="width:12px;height:12px;
                  display:inline;vertical-align:-2px"></i>
-              التطبيق قابل للتثبيت — اضغط أيقونة التحميل في الشريط العلوي
+              التطبيق قابل للتثبيت
             </div>
           ` : ''}
         </div>
@@ -525,8 +590,7 @@
       footer: `
         <button class="btn" data-close>إغلاق</button>
         <button class="btn btn-primary" id="conn-reconnect">
-          <i data-lucide="refresh-cw"></i>
-          إعادة الاتصال
+          <i data-lucide="refresh-cw"></i> إعادة الاتصال
         </button>
       `,
       onMount: (el, close) => {
@@ -729,7 +793,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §10 · VISIBILITY HANDLER
-     ✅ مُصلَح: لا نعمل rerender على visibilitychange
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindVisibilityHandler() {
@@ -741,7 +804,6 @@
 
       console.log('[Boot] Tab visible');
 
-      /* ✅ لا نعمل rerender على visibilitychange */
       /* مزامنة تفاضلية فقط (بدون rerender) */
       if (GMS.Sync?.state?.online) {
         setTimeout(() => {
@@ -751,7 +813,7 @@
         }, 1500);
       }
 
-      /* تحديث الـ Badge بس — بدون rerender */
+      /* تحديث الـ Badge بس */
       if (GMS.PWA?.updateBadge) {
         setTimeout(() => {
           if (!document.hidden) GMS.PWA.updateBadge();
@@ -1052,6 +1114,7 @@
     boot,
     state: BootState,
     startApp,
+    bindLoginForm,
 
     getState: () => ({ ...BootState }),
 
@@ -1086,7 +1149,7 @@
      §18 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · Ready to start',
+    '%c⚡ Boot loaded · v3 (Login hardened)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
   );
