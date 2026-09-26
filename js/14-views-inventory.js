@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة — النسخة v3.0
+   صفحة المخزون الشاملة — النسخة v5.0
      - جدول أصناف مع pagination
      - بحث فوري + فلاتر (عيار، حالة، فرع، ماركة، تصنيف)
      - CRUD كامل + تحديد متعدد + تصدير Excel + QR Tags
@@ -14,6 +14,8 @@
      - ✅ زر الإلغاء يعمل
      - 🆕 v3: دعم العيارات المخصصة (سبائك 888، 900، 916، إلخ)
      - 🆕 v3: حقل نقاء مباشر (purity_ratio) من 0.3000 إلى 1.0000
+     - 🆕 v4: PriceManager integration — القيم تتحدث لحظياً
+     - 🆕 v5: liveValue ديناميكي لكل صنف، يعكس سعر 24K الحالي
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -111,8 +113,10 @@
       sold: 0,
       reserved: 0,
       totalPure: 0,
-      totalValue: 0,
-      customKaratCount: 0,   /* ✅ v3 */
+      totalValue: 0,          /* ✅ v4: القيمة السوقية الحالية */
+      totalStoredCost: 0,     /* ✅ v4: التكلفة المخزّنة (للمقارنة) */
+      customKaratCount: 0,    /* ✅ v3 */
+      price24: 0,             /* ✅ v4: سعر 24K الحالي */
     },
 
     loading: false,
@@ -191,6 +195,64 @@
   function getItemKaratInfo(item) {
     if (!item) return GMS.resolveKarat(21);
     return GMS.getItemKarat(item);
+  }
+
+  /**
+   * ✅ v5: قراءة سعر 24K الحالي من PriceManager
+   * @returns {number}
+   */
+  function getCurrentPrice24() {
+    try {
+      if (GMS.PriceManager?.current) {
+        const p = GMS.PriceManager.current();
+        if (p > 0) return p;
+      }
+      if (GMS.Cache?.getPrice) {
+        const p = GMS.Cache.getPrice();
+        if (p && p.price_24) return Number(p.price_24);
+      }
+    } catch (_) {}
+    return Number(GMS.APP_CONFIG?.DEFAULT_PRICE_24) || 4500;
+  }
+
+  /**
+   * ✅ v5: حساب القيمة السوقية الحالية لصنف (ديناميكي)
+   * @param {Object} item
+   * @param {number} [price24]
+   * @returns {number}
+   */
+  function computeLiveValue(item, price24) {
+    if (!item) return 0;
+    const p24 = price24 || getCurrentPrice24();
+
+    const pure = Number(item.pure_weight || 0);
+    const net = Number(item.net_weight || 0);
+    const saleMake = Number(item.workmanship_per_gram || 0);
+
+    return GMS.round((pure * p24) + (net * saleMake), 2);
+  }
+
+  /**
+   * ✅ v5: حساب مجموع القيم السوقية لمصفوفة أصناف
+   * @param {Array} items
+   * @param {number} [price24]
+   * @returns {{total: number, stored: number, diff: number}}
+   */
+  function computeAggregateValues(items, price24) {
+    const p24 = price24 || getCurrentPrice24();
+    let total = 0;
+    let stored = 0;
+
+    (items || []).forEach(item => {
+      total += computeLiveValue(item, p24);
+      stored += Number(item.total_cost || 0);
+    });
+
+    return {
+      total: GMS.round(total, 2),
+      stored: GMS.round(stored, 2),
+      diff: GMS.round(total - stored, 2),
+    };
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -281,6 +343,13 @@
         return (aScore - bScore) * dir;
       }
 
+      /* ✅ v5: الفرز حسب total_cost → استخدم live value */
+      if (key === 'total_cost') {
+        const aVal = computeLiveValue(a);
+        const bVal = computeLiveValue(b);
+        return (aVal - bVal) * dir;
+      }
+
       if (av === undefined || av === null) av = '';
       if (bv === undefined || bv === null) bv = '';
 
@@ -299,17 +368,32 @@
     return rows;
   }
 
+  /**
+   * ✅ v5: تحديث الإحصائيات — القيم ديناميكية من PriceManager
+   */
   function updateStats() {
     const all = InvState.items;
     const filtered = InvState.filtered;
 
+    /* ✅ v5: السعر الحالي من PriceManager */
+    const price24 = getCurrentPrice24();
+
     let totalPure = 0;
     let totalValue = 0;
+    let totalStoredCost = 0;
     let customKaratCount = 0;
 
     filtered.forEach(i => {
-      totalPure += Number(i.pure_weight || 0);
-      totalValue += Number(i.total_cost || 0);
+      const pure = Number(i.pure_weight || 0);
+      totalPure += pure;
+
+      /* ✅ v5: قيمة سوقية ديناميكية */
+      const liveValue = computeLiveValue(i, price24);
+      totalValue += liveValue;
+
+      /* التكلفة المخزّنة للمقارنة */
+      totalStoredCost += Number(i.total_cost || 0);
+
       if (i.is_custom_karat === true || i.custom_karat != null) {
         customKaratCount++;
       }
@@ -323,7 +407,9 @@
       reserved: all.filter(i => i.status === 'RESERVED').length,
       totalPure: GMS.round(totalPure, 4),
       totalValue: GMS.round(totalValue, 2),
+      totalStoredCost: GMS.round(totalStoredCost, 2),
       customKaratCount,
+      price24: Number(price24),
     };
   }
 
@@ -466,8 +552,25 @@
       cells.push(`<td class="col-num">${GMS.moneyFmt(item.workmanship_per_gram)}</td>`);
     }
 
+    /* ✅ v5: عمود الإجمالي — ديناميكي من PriceManager */
     if (InvState.columns.total_cost) {
-      cells.push(`<td class="col-num" style="font-weight:900">${GMS.moneyFmt(item.total_cost)}</td>`);
+      const price24 = getCurrentPrice24();
+      const liveValue = computeLiveValue(item, price24);
+      const storedCost = Number(item.total_cost || 0);
+      const diff = GMS.round(liveValue - storedCost, 2);
+
+      cells.push(`
+        <td class="col-num" style="font-weight:900">
+          ${GMS.moneyFmt(liveValue)}
+          ${Math.abs(diff) > 0.5 ? `
+            <div style="font-size:9px;font-weight:700;
+                        color:${diff > 0 ? 'var(--success)' : 'var(--danger)'};
+                        margin-top:1px;opacity:.85">
+              ${diff > 0 ? '+' : ''}${GMS.moneyFmt(diff)}
+            </div>
+          ` : ''}
+        </td>
+      `);
     }
 
     if (InvState.columns.branch) {
@@ -551,6 +654,9 @@
       `;
     }
 
+    /* ✅ v5: حساب إجمالي الصفحة ديناميكياً */
+    const pageAggregate = computeAggregateValues(pageItems);
+
     return `
       <div class="table-wrap" style="border:none;border-radius:0;max-height:64vh">
         <table class="tbl" style="table-layout:fixed">
@@ -575,7 +681,7 @@
               </td>
               <td class="col-num">
                 <span class="mono" style="color:var(--primary)">
-                  ${GMS.moneyFmt(pageItems.reduce((s, i) => s + Number(i.total_cost || 0), 0))} ج.م
+                  ${GMS.moneyFmt(pageAggregate.total)} ج.م
                 </span>
               </td>
             </tr>
@@ -762,13 +868,25 @@
       { value: 'custom', label: '🔸 مخصص فقط' },
     ];
 
+    /* ✅ v5: السعر الحالي لعرضه في KPI */
+    const price24 = getCurrentPrice24();
+    const avgLive = InvState.filtered.length
+      ? InvState.stats.totalValue / InvState.filtered.length
+      : 0;
+    const valueDiff = InvState.stats.totalValue - InvState.stats.totalStoredCost;
+
     root.innerHTML = `
       <div class="page-header">
         <h2>
           <i data-lucide="gem"></i>
           ${GMS.t('inv.title')}
         </h2>
-        <p>${GMS.t('inv.subtitle')}</p>
+        <p>${GMS.t('inv.subtitle')}
+          <span class="chip success" style="font-size:10px;margin-inline-start:6px">
+            <i data-lucide="zap" style="width:10px;height:10px"></i>
+            سعر 24K لحظي: ${GMS.moneyFmt(price24)} ج.م
+          </span>
+        </p>
       </div>
 
       <div class="kpi-row cols-4">
@@ -785,14 +903,17 @@
 
         ${renderKPI('success', 'scale', 'إجمالي البندق المُفلتر',
             GMS.gramFmt(InvState.stats.totalPure), 'جم',
-            `القيمة: <b>${GMS.moneyFmt(InvState.stats.totalValue)}</b> ج.م`)}
+            `القيمة السوقية: <b>${GMS.moneyFmt(InvState.stats.totalValue)}</b> ج.م` +
+            (Math.abs(valueDiff) > 0.5
+              ? ` · <span style="color:${valueDiff > 0 ? 'var(--success)' : 'var(--danger)'}">${valueDiff > 0 ? '+' : ''}${GMS.moneyFmt(valueDiff)}</span>`
+              : ''))}
 
         ${renderKPI('violet', 'trending-up', 'متوسط القيمة',
             InvState.filtered.length
-              ? GMS.moneyFmt(InvState.stats.totalValue / InvState.filtered.length)
+              ? GMS.moneyFmt(avgLive)
               : '0.00',
             'ج.م',
-            `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف`)}
+            `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`)}
       </div>
 
       <div class="card" style="margin-bottom:16px">
@@ -979,17 +1100,74 @@
       bindPaginationEvents();
     }
 
+    /* ✅ v5: تحديث KPI بعد refresh */
+    refreshKPIs();
+  }
+
+  /**
+   * ✅ v5: تحديث بطاقات KPI فقط بدون إعادة تصيير كاملة
+   */
+  function refreshKPIs() {
     const kpiHost = document.querySelector('.kpi-row');
-    if (kpiHost) {
-      const kpis = kpiHost.querySelectorAll('.kpi .kpi-value');
-      if (kpis[1]) kpis[1].innerHTML = `${GMS.intFmt(InvState.filtered.length)}`;
-      if (kpis[2]) kpis[2].innerHTML = `${GMS.gramFmt(InvState.stats.totalPure)} <small>جم</small>`;
-      if (kpis[3]) {
-        const avg = InvState.filtered.length
-          ? InvState.stats.totalValue / InvState.filtered.length
-          : 0;
-        kpis[3].innerHTML = `${GMS.moneyFmt(avg)} <small>ج.م</small>`;
+    if (!kpiHost) return;
+
+    const price24 = getCurrentPrice24();
+    const avgLive = InvState.filtered.length
+      ? InvState.stats.totalValue / InvState.filtered.length
+      : 0;
+    const valueDiff = InvState.stats.totalValue - InvState.stats.totalStoredCost;
+
+    const kpis = kpiHost.querySelectorAll('.kpi');
+    if (kpis[0]) {
+      const val = kpis[0].querySelector('.kpi-value');
+      const meta = kpis[0].querySelector('.kpi-meta');
+      if (val) val.innerHTML = GMS.intFmt(InvState.items.length);
+      if (meta) {
+        meta.innerHTML = `<b>${GMS.intFmt(InvState.stats.inStock)}</b> متوفر · ` +
+          `<b>${GMS.intFmt(InvState.stats.sold)}</b> مباع` +
+          (InvState.stats.customKaratCount > 0
+            ? ` · <b style="color:var(--warn)">${GMS.intFmt(InvState.stats.customKaratCount)}</b> مخصص`
+            : '');
       }
+    }
+
+    if (kpis[1]) {
+      const val = kpis[1].querySelector('.kpi-value');
+      const meta = kpis[1].querySelector('.kpi-meta');
+      if (val) val.innerHTML = GMS.intFmt(InvState.filtered.length);
+      if (meta) meta.innerHTML = `من إجمالي <b>${GMS.intFmt(InvState.items.length)}</b> صنف`;
+    }
+
+    if (kpis[2]) {
+      const val = kpis[2].querySelector('.kpi-value');
+      const meta = kpis[2].querySelector('.kpi-meta');
+      if (val) val.innerHTML = `${GMS.gramFmt(InvState.stats.totalPure)} <small>جم</small>`;
+      if (meta) {
+        meta.innerHTML = `القيمة السوقية: <b>${GMS.moneyFmt(InvState.stats.totalValue)}</b> ج.م` +
+          (Math.abs(valueDiff) > 0.5
+            ? ` · <span style="color:${valueDiff > 0 ? 'var(--success)' : 'var(--danger)'}">${valueDiff > 0 ? '+' : ''}${GMS.moneyFmt(valueDiff)}</span>`
+            : '');
+      }
+    }
+
+    if (kpis[3]) {
+      const val = kpis[3].querySelector('.kpi-value');
+      const meta = kpis[3].querySelector('.kpi-meta');
+      if (val) val.innerHTML = `${InvState.filtered.length ? GMS.moneyFmt(avgLive) : '0.00'} <small>ج.م</small>`;
+      if (meta) {
+        meta.innerHTML = `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · ` +
+          `سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`;
+      }
+    }
+
+    /* تحديث شريط السعر اللحظي في header */
+    const headerChip = document.querySelector('.page-header .chip.success');
+    if (headerChip) {
+      headerChip.innerHTML = `
+        <i data-lucide="zap" style="width:10px;height:10px"></i>
+        سعر 24K لحظي: ${GMS.moneyFmt(price24)} ج.م
+      `;
+      window.lucide?.createIcons();
     }
   }
 
@@ -1242,7 +1420,8 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function showItemDetails(item) {
-    const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+    /* ✅ v5: السعر الحالي ديناميكي */
+    const price24 = getCurrentPrice24();
     const status = GMS.getStatus(item.status);
     const karatInfo = getItemKaratInfo(item);
 
@@ -1252,6 +1431,11 @@
     const purchaseRate = Number(item.purchase_workmanship || item.workmanship_per_gram || 0);
     const saleRate = Number(item.workmanship_per_gram || 0);
     const marginPerGram = saleRate - purchaseRate;
+
+    /* ✅ v5: القيمة السوقية الحالية */
+    const liveValue = computeLiveValue(item, price24);
+    const storedCost = Number(item.total_cost || 0);
+    const diff = GMS.round(liveValue - storedCost, 2);
 
     GMS.Modal.open({
       title: `تفاصيل الصنف — ${item.sku}`,
@@ -1362,16 +1546,41 @@
           </div>
           <div class="cl-row">
             <span class="k"><i data-lucide="trending-up"></i> سعر 24K الحالي</span>
-            <span class="v">${GMS.moneyFmt(price24)} ج.م</span>
+            <span class="v" style="color:var(--primary)">
+              ${GMS.moneyFmt(price24)} ج.م
+            </span>
           </div>
           <div class="cl-row">
-            <span class="k"><i data-lucide="coins"></i> قيمة الذهب</span>
+            <span class="k"><i data-lucide="coins"></i> قيمة الذهب الحالية</span>
             <span class="v">${GMS.moneyFmt(Number(item.pure_weight) * price24)} ج.م</span>
           </div>
           <div class="cl-row hi">
-            <span class="k"><i data-lucide="banknote"></i> الإجمالي</span>
-            <span class="v">${GMS.moneyFmt(item.total_cost)} ج.م</span>
+            <span class="k">
+              <i data-lucide="banknote"></i>
+              القيمة السوقية الحالية
+            </span>
+            <span class="v">${GMS.moneyFmt(liveValue)} ج.م</span>
           </div>
+          ${Math.abs(diff) > 0.5 ? `
+            <div class="cl-row">
+              <span class="k">
+                <i data-lucide="arrow-up-down"></i>
+                الفرق عن التكلفة
+              </span>
+              <span class="v" style="color:${diff > 0 ? 'var(--success)' : 'var(--danger)'}">
+                ${diff > 0 ? '+' : ''}${GMS.moneyFmt(diff)} ج.م
+              </span>
+            </div>
+            <div class="cl-row">
+              <span class="k">
+                <i data-lucide="archive"></i>
+                التكلفة المخزّنة
+              </span>
+              <span class="v" style="color:var(--muted);font-size:12px">
+                ${GMS.moneyFmt(storedCost)} ج.م
+              </span>
+            </div>
+          ` : ''}
         </div>
 
         <div class="calc-list" style="margin-top:16px">
@@ -1495,7 +1704,7 @@
      §9.1 · Render Item Form — v3 مع العيار المخصص
      ───────────────────────────────────────────────────────────────────── */
   function renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate) {
-    const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+    const price24 = getCurrentPrice24();
 
     return `
       <!-- Section 1: SKU + Manufacturer + Category -->
@@ -1942,7 +2151,7 @@
         <div class="field">
           <label>سعر 24K الحالي</label>
           <input readonly class="mono"
-                 value="${GMS.moneyFmt(GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24)} ج.م"
+                 value="${GMS.moneyFmt(getCurrentPrice24())} ج.م"
                  style="text-align:center;font-weight:700;
                         background:var(--surface-3)">
         </div>
@@ -2182,7 +2391,7 @@
       const stonesIncluded = $id('f-stones-included')?.checked || false;
       const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
       const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
-      const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+      const price24 = getCurrentPrice24();
       const qty = isEdit ? 1 : (parseInt($id('f-quantity')?.value) || 1);
 
       let netUnit = 0;
@@ -2823,7 +3032,7 @@
     const stonesIncluded = $id('f-stones-included')?.checked || false;
     const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
     const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
-    const price24 = GMS.Cache?.getPrice()?.price_24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+    const price24 = getCurrentPrice24();
 
     /* ✅ v3: الحصول على معلومات العيار الحالية */
     const karatInfo = getCurrentKarat();
@@ -3211,7 +3420,16 @@
       GMS.Toast.err('محرك Excel غير متاح');
       return;
     }
-    GMS.Excel.Exporter.inventory(InvState.filtered, { filters: InvState.filters });
+
+    /* ✅ v5: نضيف القيمة السوقية الحالية في التصدير */
+    const price24 = getCurrentPrice24();
+    const enriched = InvState.filtered.map(item => ({
+      ...item,
+      live_value: computeLiveValue(item, price24),
+      current_price_24: price24,
+    }));
+
+    GMS.Excel.Exporter.inventory(enriched, { filters: InvState.filters });
   }
 
   async function printTag(item) {
@@ -3311,13 +3529,64 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · INIT & CLEANUP
+     §14 · PRICE MANAGER LISTENER (v5)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ✅ v5: الاستماع لتغييرات سعر الذهب وتحديث الصفحة تلقائياً
+   */
+  function bindPriceListener() {
+    /* 1 · اشتراك PriceManager */
+    if (GMS.PriceManager?.on) {
+      const unsub = GMS.PriceManager.on((newPrice, oldPrice) => {
+        /* تجاهل لو لسنا في صفحة المخزون */
+        if (GMS.Router?.currentId?.() !== 'inventory') return;
+
+        console.log(
+          `[Inventory] 🔄 Price changed: ${oldPrice} → ${newPrice}, refreshing…`
+        );
+
+        /* أعد حساب الإحصائيات */
+        applyFilters();
+
+        /* أعد تصيير الجدول + KPI */
+        refreshTable();
+
+        /* Show subtle notification */
+        GMS.Toast?.info?.(
+          'تحديث لحظي',
+          `سعر الذهب: ${GMS.moneyFmt(newPrice)} ج.م · تم تحديث القيم`
+        );
+      });
+
+      InvState.unsubscribers.push(unsub);
+    }
+
+    /* 2 · استمع لحدث goldPriceUpdated العام (fallback) */
+    const priceEventHandler = (e) => {
+      if (GMS.Router?.currentId?.() !== 'inventory') return;
+      if (!e.detail?.prices?.price24) return;
+
+      applyFilters();
+      refreshTable();
+    };
+
+    window.addEventListener('goldPriceUpdated', priceEventHandler);
+
+    InvState.unsubscribers.push(() => {
+      window.removeEventListener('goldPriceUpdated', priceEventHandler);
+    });
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §15 · INIT & CLEANUP
      ═════════════════════════════════════════════════════════════════════ */
 
   async function init() {
     try {
       await loadInventory();
       applyFilters();
+      bindPriceListener();  /* ✅ v5: بدء الاستماع لتغييرات السعر */
     } catch (e) {
       console.error('[Inventory.init]', e);
       GMS.Toast.err('فشل تحميل المخزون', e.message);
@@ -3330,7 +3599,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · VIEW REGISTRATION
+     §16 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
@@ -3362,29 +3631,32 @@
     lockInteraction,
     isInteractionLocked,
     getItemKaratInfo,
+    getCurrentPrice24,
+    computeLiveValue,
+    computeAggregateValues,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · LOADED CONFIRMATION
+     §17 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Inventory View v3.0 loaded · Custom Karat Support',
-    'color:#b8912f;font-weight:800;font-size:12px;padding:1px 5px;' +
-    'background:#fdf3e3;border-radius:4px;'
+    '%c📦 Inventory View v5.0 loaded · Live Price Integration',
+    'color:#b8912f;font-weight:900;font-size:13px;padding:2px 6px;' +
+    'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
 
   console.log(
-    `%c🎯 Standard Karats + Custom (300-999) · Purity Ratio (0.3-1.0) · SKU: A888-...`,
+    `%c💰 Live values via PriceManager · Standard Karats + Custom (300-999)`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🛡️  Interaction lock (10s) — dropdowns no longer close during rerenders`,
+    `%c🛡️  Interaction lock (10s) · Dropdowns protected during rerenders`,
     'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🆕 v3: 4th karat button "مخصص" · Custom presets (999.9, 995, 916, 888...)`,
+    `%c🆕 v5: Dynamic total_cost column · Live KPI values · Price change listener`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
