@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
+   ✅ v2: تفويض تبديل اللغة إلى GMS.switchLanguage() الآمن
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -32,7 +33,6 @@
       router: false,
       ui: false,
       repair: false,
-      /* ✅ PWA */
       sw: false,
       pwa: false,
     },
@@ -111,8 +111,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · ✅ PWA — SERVICE WORKER REGISTRATION
-     ─────────────────────────────────────────────────────────────────────
-     يتم التسجيل مبكراً حتى تُخزَّن الملفات بينما يستمر الـ Boot
      ═════════════════════════════════════════════════════════════════════ */
 
   async function registerServiceWorker() {
@@ -121,7 +119,6 @@
       return false;
     }
 
-    /* تحقق من وجود HTTPS (أو localhost) */
     const isLocalhost =
       location.hostname === 'localhost' ||
       location.hostname === '127.0.0.1';
@@ -133,7 +130,6 @@
     }
 
     try {
-      /* التسجيل الفعلي مُدار عبر js/25-pwa.js لتفادي التكرار */
       if (GMS.PWA && typeof GMS.PWA.registerServiceWorker === 'function') {
         const reg = await GMS.PWA.registerServiceWorker();
         if (reg) {
@@ -143,7 +139,6 @@
         }
       }
 
-      /* Fallback — تسجيل مباشر */
       const reg = await navigator.serviceWorker.register('./service-worker.js');
       markSystem('sw');
       console.log('[Boot] ✅ Service Worker registered (fallback)');
@@ -189,7 +184,6 @@
       try {
         const profile = await GMS.Auth.signIn(email, password);
 
-        /* ✅ إخفاء شاشة تسجيل الدخول وإظهار التطبيق */
         const loginScreen = document.getElementById('login-screen');
         if (loginScreen) loginScreen.style.display = 'none';
 
@@ -315,25 +309,28 @@
       window.lucide?.createIcons();
     }
 
-    /* Language switcher */
+    /* ✅ Language switcher — مُفوَّض إلى LangSwitcher الآمن */
     document.querySelectorAll('.lang-btn, [data-lang]').forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         const lang = btn.dataset.lang;
         if (!lang) return;
 
+        /* ✅ المسار المُفضّل: switchLanguage الآمن */
+        if (typeof GMS.switchLanguage === 'function') {
+          GMS.switchLanguage(lang);
+          return;
+        }
+
+        /* fallback بسيط لو LangSwitcher لم يُحمَّل بعد */
         if (GMS.I18n?.setLang) {
           GMS.I18n.setLang(lang);
+          document.querySelectorAll('.lang-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.lang === lang);
+          });
+          GMS.Router?.reload?.({ force: true });
         }
-
-        document.querySelectorAll('.lang-btn').forEach(b => {
-          b.classList.toggle('active', b.dataset.lang === lang);
-        });
-
-        if (GMS.Router) {
-          GMS.Router.reload();
-        }
-
-        GMS.Beep?.info?.();
       };
     });
 
@@ -640,12 +637,11 @@
         console.log('[Boot] ✅ Repair module detected');
       }
 
-      /* ✅ 7 · PWA module check */
+      /* 7 · PWA module check */
       if (GMS.PWA) {
         markSystem('pwa');
         console.log('[Boot] ✅ PWA module detected');
 
-        /* تأكد من أن Badge محدَّث */
         if (GMS.PWA.updateBadge) {
           setTimeout(() => GMS.PWA.updateBadge(), 500);
         }
@@ -733,9 +729,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §10 · VISIBILITY HANDLER
-     ─────────────────────────────────────────────────────────────────────
      ✅ مُصلَح: لا نعمل rerender على visibilitychange
-     ده كان سبب مشكلة "الريفريش" المستمر على الموبايل
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindVisibilityHandler() {
@@ -747,9 +741,7 @@
 
       console.log('[Boot] Tab visible');
 
-      /* ✅ لا نعمل rerender على visibilitychange
-         — ده كان سبب المشكلة الرئيسي على الموبايل */
-
+      /* ✅ لا نعمل rerender على visibilitychange */
       /* مزامنة تفاضلية فقط (بدون rerender) */
       if (GMS.Sync?.state?.online) {
         setTimeout(() => {
@@ -1010,7 +1002,7 @@
     /* 2 · Error handlers */
     bindGlobalErrorHandlers();
 
-    /* ✅ 3 · Service Worker — يُسجَّل مبكراً */
+    /* 3 · Service Worker — يُسجَّل مبكراً */
     updateBootProgress('تحضير PWA…', 8);
     registerServiceWorker().catch(e => console.warn('[Boot] SW registration failed:', e));
 
