@@ -10,7 +10,7 @@
      • POST/PUT/DELETE → تُمرَّر مباشرة للسيرفر (لا تُخزَّن)
      • Background Sync → للمزامنة التلقائية عند عودة الشبكة
 
-   Version: 1.0.10
+   Version: 1.0.11
    ═══════════════════════════════════════════════════════════════════════ */
 
 'use strict';
@@ -23,8 +23,8 @@
      - الكاش القديم يُحذَف تلقائياً في activate
      - يُشعر المستخدم بوجود تحديث جديد
    ───────────────────────────────────────────────────────────────────── */
-const SW_VERSION = 'v1.0.10';       // ✅ NEW: يدعم Wholesale View
-const BUILD_DATE = '2026-09-24';    // ✅ NEW: تاريخ البناء
+const SW_VERSION = 'v1.0.11';       // ✅ NEW: يدعم PriceManager
+const BUILD_DATE = '2026-09-25';    // ✅ NEW: تاريخ البناء
 
 const CACHE_STATIC = `gold-erp-static-${SW_VERSION}`;
 const CACHE_CDN    = `gold-erp-cdn-${SW_VERSION}`;
@@ -79,8 +79,11 @@ const PRECACHE_URLS = [
   /* ✅ Accounting View */
   './js/26-views-accounting.js',
 
-  /* ✅ NEW: Wholesale View */
+  /* ✅ Wholesale View */
   './js/27-views-wholesale.js',
+
+  /* ✅ NEW: Real-Time Price Manager */
+  './js/28-price-manager.js',
 
   /* Manifest */
   './manifest.json',
@@ -204,6 +207,7 @@ self.addEventListener('fetch', (event) => {
   /*  • POST/PUT/DELETE → تُمرَّر للسيرفر                       */
   /*  • chrome-extension:// و devtools                         */
   /*  • طلبات Supabase Auth (تتطلب تحديث فوري)                 */
+  /*  • طلبات APIs الخاصة بأسعار الذهب (تحتاج بيانات حية)      */
   /* ─────────────────────────────────────────────────────── */
   if (request.method !== 'GET') return;
 
@@ -213,6 +217,17 @@ self.addEventListener('fetch', (event) => {
 
   if (url.hostname.includes('supabase.co') && url.pathname.includes('/auth/')) {
     return; // لا نُخزِّن Auth
+  }
+
+  /* ✅ لا نُخزِّن طلبات أسعار الذهب — نحتاج بيانات لحظية دائماً */
+  const LIVE_PRICE_HOSTS = [
+    'xaus.com',
+    'api.goldprice.dev',
+    'api.exchangerate.fun',
+    'open.er-api.com',
+  ];
+  if (LIVE_PRICE_HOSTS.some(h => url.hostname.includes(h))) {
+    return; // pass-through مباشر
   }
 
   /* ─────────────────────────────────────────────────────── */
