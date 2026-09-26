@@ -1,8 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v2: تفويض تبديل اللغة إلى GMS.switchLanguage() الآمن
-   ✅ v3: bindLoginForm محصَّن — ربط مزدوج (submit + click) + diagnostics
+   ✅ v3: Login محصَّن + Language Switch مدمج (بدون ملف 29)
+   ✅ v3.1: Overlay فوري عند تبديل اللغة — يمنع الشاشة البيضاء/السوداء
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -39,6 +39,9 @@
     },
 
     unsubscribers: [],
+
+    /* ✅ v3.1: flag لمنع تحذير beforeunload عند تبديل اللغة */
+    intentionalReload: false,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -108,10 +111,16 @@
         );
       }
     });
+
+    /* ✅ v3.1: تجاهل beforeunload عند التبديل المُبرمَج */
+    window.addEventListener('beforeunload', (e) => {
+      if (BootState.intentionalReload) return;
+      /* لا نمنع - نترك السلوك الافتراضي */
+    });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · ✅ PWA — SERVICE WORKER REGISTRATION
+     §4 · PWA — SERVICE WORKER REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
 
   async function registerServiceWorker() {
@@ -152,7 +161,356 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ AUTH UI BINDING — v3 محصَّن بالكامل
+     §5 · ✅ LANGUAGE SWITCHER — v3.1 (مدمج + Overlay)
+     ─────────────────────────────────────────────────────────────────────
+     الطريقة الجديدة:
+       1. تحديث <html> dir/lang فوراً
+       2. حفظ اللغة في LocalStorage
+       3. عرض Overlay تحميل فوري (بدل الشاشة البيضاء)
+       4. إعادة تحميل الصفحة بأمان (بدون حفظ حالة DOM المعقدة)
+       5. Boot يعيد تحميل اللغة الجديدة من LocalStorage تلقائياً
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function showLanguageSwitchOverlay(targetLang) {
+    /* احذف أي overlay سابق */
+    const existing = document.getElementById('gms-lang-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'gms-lang-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(1000px 500px at 20% 0%,#1e293b 0%,transparent 55%),
+        radial-gradient(900px 500px at 100% 100%,#0f172a 0%,transparent 55%),
+        #080d18;
+      font-family: 'Cairo', system-ui, sans-serif;
+      direction: ${targetLang === 'ar' ? 'rtl' : 'ltr'};
+      opacity: 0;
+      transition: opacity .18s ease;
+      pointer-events: all;
+    `;
+
+    const isAr = targetLang === 'ar';
+    const message = isAr ? 'جارٍ التبديل للعربية…' : 'Switching to English…';
+    const sub = isAr ? 'RTL · نظام إدارة الذهب' : 'LTR · Gold Management System';
+
+    overlay.innerHTML = `
+      <div style="text-align:center;max-width:340px;padding:20px">
+        <div style="width:72px;height:72px;border-radius:20px;
+                    background:linear-gradient(135deg,#F0D68C 0%,#D4A017 48%,#9C7726 100%);
+                    margin:0 auto 20px;
+                    display:grid;place-items:center;
+                    color:#2a1f05;font-weight:900;font-size:30px;
+                    box-shadow:0 18px 44px -14px rgba(212,160,23,.95);
+                    animation:gmsLangPulse 1.4s ease infinite">
+          Au
+        </div>
+
+        <div style="color:#e8eefb;font-size:15px;font-weight:800;
+                    letter-spacing:-.2px;margin-bottom:8px">
+          ${message}
+        </div>
+
+        <div style="color:#6b7a95;font-size:11.5px;font-weight:600;
+                    margin-bottom:22px">
+          ${sub}
+        </div>
+
+        <div style="height:5px;background:rgba(255,255,255,.1);
+                    border-radius:4px;overflow:hidden;max-width:220px;
+                    margin:0 auto">
+          <div style="height:100%;
+                      background:linear-gradient(135deg,#F0D68C 0%,#D4A017 48%,#9C7726 100%);
+                      border-radius:4px;
+                      animation:gmsLangBar 1.2s ease-in-out infinite"></div>
+        </div>
+      </div>
+
+      <style>
+        @keyframes gmsLangPulse {
+          0%,100% { transform: scale(1); }
+          50% { transform: scale(1.06); }
+        }
+        @keyframes gmsLangBar {
+          0%   { width: 5%; margin-inline-start: 0; }
+          50%  { width: 60%; margin-inline-start: 20%; }
+          100% { width: 5%; margin-inline-start: 95%; }
+        }
+      </style>
+    `;
+
+    document.body.appendChild(overlay);
+
+    /* Fade in */
+    requestAnimationFrame(() => {
+      overlay.style.opacity = '1';
+    });
+
+    return overlay;
+  }
+
+  /**
+   * ✅ تبديل اللغة — الدالة الرئيسية
+   * @param {'ar'|'en'} lang
+   * @returns {Promise<boolean>}
+   */
+  async function switchLanguage(lang) {
+    if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
+
+    const currentLang = document.documentElement.getAttribute('lang') || 'ar';
+    if (lang === currentLang) {
+      console.log('[switchLanguage] ℹ️ اللغة نفسها — لا تغيير');
+      updateLangButtons(lang);
+      return true;
+    }
+
+    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang}`);
+
+    try {
+      /* ─── 1 · تحديث <html> فوراً ─── */
+      const html = document.documentElement;
+      html.setAttribute('lang', lang);
+      html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+      html.setAttribute('data-lang', lang);
+
+      /* ─── 2 · حفظ اللغة في LocalStorage ─── */
+      try {
+        const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
+        localStorage.setItem(key, lang);
+        console.log(`[switchLanguage] 💾 حُفظت اللغة: ${lang}`);
+      } catch (e) {
+        console.warn('[switchLanguage] localStorage.save failed:', e);
+      }
+
+      /* ─── 3 · تحديث أزرار اللغة فوراً (بصرياً) ─── */
+      updateLangButtons(lang);
+
+      /* ─── 4 · محاولة تحديث ذكي أولاً ─── */
+      let smartSuccess = false;
+
+      try {
+        if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
+          GMS.I18n.setLang(lang, { silent: true });
+          console.log('[switchLanguage] ✅ I18n.setLang نجح');
+          smartSuccess = true;
+        }
+      } catch (i18nErr) {
+        console.warn('[switchLanguage] ⚠️ I18n.setLang فشل:', i18nErr);
+        smartSuccess = false;
+      }
+
+      /* ─── 5 · لو نجح التحديث الذكي، أعِد رسم الصفحة الحالية ─── */
+      if (smartSuccess) {
+        try {
+          const currentRoute = GMS.Router?.currentId?.();
+          if (currentRoute && GMS.Router?.go) {
+            /* محاولة إعادة الرسم بدون reload — مع timeout 2.5s */
+            const renderPromise = GMS.Router.go(currentRoute, { force: true });
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('render timeout')), 2500)
+            );
+
+            await Promise.race([renderPromise, timeoutPromise]);
+
+            /* لو نجح، تحقق من أن الصفحة ليست فارغة */
+            const pageHost = document.getElementById('page');
+            const hasContent = pageHost && pageHost.innerHTML.trim().length > 100;
+
+            if (hasContent) {
+              console.log('[switchLanguage] ✅ تم التبديل بدون reload');
+              GMS.Beep?.info?.();
+              GMS.Toast?.ok?.(
+                lang === 'ar' ? 'تم التبديل للعربية' : 'Switched to English',
+                lang === 'ar' ? 'واجهة RTL' : 'LTR interface'
+              );
+              return true;
+            } else {
+              console.warn('[switchLanguage] ⚠️ الصفحة فارغة — سأنتقل للـ reload');
+            }
+          }
+        } catch (renderErr) {
+          console.warn('[switchLanguage] ⚠️ الرسم الذكي فشل:', renderErr.message);
+        }
+      }
+
+      /* ─── 6 · Fallback: Overlay + reload نظيف ─── */
+      console.log('[switchLanguage] 🔄 استخدام reload الآمن…');
+
+      /* عرض Overlay فوري — يمنع الشاشة البيضاء */
+      showLanguageSwitchOverlay(lang);
+
+      /* علامة للـ beforeunload */
+      BootState.intentionalReload = true;
+      window.GMS = window.GMS || {};
+      window.GMS._intentionalReload = true;
+
+      /* إغلاق Modals لتفادي تعارضات */
+      try { GMS.Modal?.closeAll?.(); } catch (_) {}
+
+      /* انتظر قليلاً حتى يرسم Overlay + يُحفظ localStorage */
+      await new Promise(r => setTimeout(r, 350));
+
+      /* إعادة التحميل النظيف */
+      location.reload();
+
+      return true;
+
+    } catch (err) {
+      console.error('[switchLanguage] ❌ خطأ خطير:', err);
+
+      /* عرض Fallback UI بدل الشاشة الفاضية */
+      showLanguageSwitchError(err, currentLang);
+      return false;
+    }
+  }
+
+  /**
+   * تحديث أزرار اللغة
+   */
+  function updateLangButtons(lang) {
+    document.querySelectorAll('.lang-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.lang === lang);
+    });
+  }
+
+  /**
+   * Fallback UI عند فشل التبديل
+   */
+  function showLanguageSwitchError(error, fallbackLang) {
+    /* استرجاع اللغة السابقة */
+    try {
+      const html = document.documentElement;
+      html.setAttribute('lang', fallbackLang);
+      html.setAttribute('dir', fallbackLang === 'ar' ? 'rtl' : 'ltr');
+      html.setAttribute('data-lang', fallbackLang);
+
+      const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
+      localStorage.setItem(key, fallbackLang);
+
+      if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
+        try { GMS.I18n.setLang(fallbackLang, { silent: true }); } catch (_) {}
+      }
+      updateLangButtons(fallbackLang);
+    } catch (_) {}
+
+    /* عرض شاشة خطأ بدل الشاشة البيضاء */
+    const overlay = document.getElementById('gms-lang-overlay');
+    if (overlay) overlay.remove();
+
+    const errorOverlay = document.createElement('div');
+    errorOverlay.id = 'gms-lang-error';
+    errorOverlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      background: rgba(8,13,24,.95);
+      padding: 20px;
+      font-family: 'Cairo', system-ui, sans-serif;
+    `;
+
+    errorOverlay.innerHTML = `
+      <div style="background:var(--surface);border-radius:16px;
+                  padding:28px 24px;max-width:400px;width:100%;
+                  text-align:center;border:1px solid var(--border)">
+        <div style="width:56px;height:56px;border-radius:16px;
+                    background:var(--warn-bg);color:var(--warn);
+                    display:grid;place-items:center;margin:0 auto 14px;
+                    font-size:26px">
+          ⚠
+        </div>
+        <div style="font-size:15px;font-weight:900;color:var(--text);
+                    margin-bottom:8px">
+          تعذّر تبديل اللغة
+        </div>
+        <div style="font-size:12px;color:var(--muted);font-weight:600;
+                    line-height:1.7;margin-bottom:16px">
+          تم استرجاع اللغة السابقة. يمكنك إعادة المحاولة بأمان.
+        </div>
+        <div style="font-size:10.5px;color:var(--danger);font-weight:700;
+                    background:var(--danger-bg);padding:8px 12px;
+                    border-radius:8px;margin-bottom:18px;
+                    font-family:var(--font-mono);word-break:break-all">
+          ${(error?.message || 'Unknown error').slice(0, 120)}
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button id="gms-lang-retry"
+                  style="padding:10px 20px;border-radius:8px;border:none;
+                         background:linear-gradient(135deg,#F0D68C,#9C7726);
+                         color:#2a1f05;font-weight:900;font-size:13px;
+                         cursor:pointer;font-family:inherit">
+            🔄 إعادة التحميل
+          </button>
+          <button id="gms-lang-home"
+                  style="padding:10px 20px;border-radius:8px;
+                         background:transparent;color:var(--muted);
+                         border:1px solid var(--border);font-weight:700;
+                         font-size:13px;cursor:pointer;font-family:inherit">
+            الرئيسية
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(errorOverlay);
+
+    document.getElementById('gms-lang-retry')?.addEventListener('click', () => {
+      errorOverlay.remove();
+      location.reload();
+    });
+
+    document.getElementById('gms-lang-home')?.addEventListener('click', () => {
+      errorOverlay.remove();
+      try { GMS.Router?.go?.('dashboard', { force: true }); }
+      catch (_) { location.reload(); }
+    });
+  }
+
+  /**
+   * ربط أزرار اللغة — باستخدام Event Delegation (أكثر أماناً)
+   */
+  function bindLanguageButtons() {
+    /* تجنب الربط المتكرر */
+    if (window.GMS && window.GMS._langButtonsBound) {
+      console.log('[Boot.bindLanguageButtons] ℹ️ مُربط مسبقاً');
+      return;
+    }
+    window.GMS = window.GMS || {};
+    window.GMS._langButtonsBound = true;
+
+    /* ✅ Event Delegation على document — يعمل حتى لو أُعيد رسم الأزرار */
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest
+        ? e.target.closest('.lang-btn, [data-lang]')
+        : null;
+
+      if (!btn) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const lang = btn.dataset.lang;
+      if (!lang) return;
+
+      console.log(`[lang-btn] 🖱️ نقرة على: ${lang}`);
+      switchLanguage(lang);
+    }, true);
+
+    /* حالة أولية */
+    const currentLang = document.documentElement.getAttribute('lang') || 'ar';
+    updateLangButtons(currentLang);
+
+    console.log('[Boot.bindLanguageButtons] ✅ تم الربط (event delegation)');
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §6 · AUTH UI BINDING — محصَّن
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLoginForm() {
@@ -165,7 +523,6 @@
       return;
     }
 
-    /* منع إعادة الربط المتكرر */
     if (form._gmsLoginBound) {
       console.log('[Boot.bindLoginForm] ℹ️ مُربط مسبقاً — تم التخطي');
       return;
@@ -176,7 +533,6 @@
 
     let submitting = false;
 
-    /* ─── دالة الدخول الرئيسية ─── */
     const doLogin = async (e) => {
       if (e) {
         e.preventDefault();
@@ -184,7 +540,7 @@
       }
 
       if (submitting) {
-        console.log('[Boot.login] ⏳ طلب جارٍ بالفعل — تم التخطي');
+        console.log('[Boot.login] ⏳ طلب جارٍ بالفعل');
         return;
       }
 
@@ -195,7 +551,6 @@
 
       console.log('[Boot.login] 📤 محاولة دخول:', email);
 
-      /* ─── فحوصات أولية ─── */
       if (!email || !password) {
         if (errEl) {
           errEl.textContent = 'البريد الإلكتروني وكلمة المرور مطلوبان';
@@ -213,7 +568,6 @@
         return;
       }
 
-      /* ─── وضع التحميل ─── */
       submitting = true;
       const originalHTML = submitBtn?.innerHTML;
 
@@ -225,20 +579,16 @@
 
       if (errEl) errEl.classList.add('hidden');
 
-      /* ─── محاولة الدخول ─── */
       try {
         const profile = await GMS.Auth.signIn(email, password);
-
         console.log('[Boot.login] ✅ نجح الدخول:', profile?.full_name);
 
-        /* إخفاء شاشة الدخول + إظهار التطبيق */
         const loginScreen = document.getElementById('login-screen');
         if (loginScreen) loginScreen.style.display = 'none';
 
         const app = document.getElementById('app');
         if (app) app.classList.add('visible');
 
-        /* سجل التدقيق */
         if (GMS.Audit && profile) {
           try {
             await GMS.Audit.log(
@@ -254,13 +604,10 @@
         }
 
         GMS.Beep?.success?.();
-
-        /* بدء التطبيق */
         await startApp();
 
       } catch (err) {
         console.error('[Boot.login] ❌ فشل الدخول:', err);
-
         submitting = false;
 
         if (errEl) {
@@ -278,7 +625,6 @@
       }
     };
 
-    /* ─── ربط مزدوج (form + button) ─── */
     form.onsubmit = doLogin;
 
     if (submitBtn) {
@@ -288,7 +634,6 @@
       };
     }
 
-    /* ─── Enter على حقل كلمة المرور ─── */
     const passEl = document.getElementById('login-password');
     if (passEl) {
       passEl.onkeydown = (e) => {
@@ -299,22 +644,15 @@
       };
     }
 
-    console.log('[Boot.bindLoginForm] ✅ تم الربط بنجاح', {
-      form: Boolean(form),
-      button: Boolean(submitBtn),
-      errEl: Boolean(errEl),
-    });
+    console.log('[Boot.bindLoginForm] ✅ تم الربط بنجاح');
 
-    /* ─── تركيز أولي ─── */
     setTimeout(() => {
-      try {
-        document.getElementById('login-email')?.focus();
-      } catch (_) {}
+      try { document.getElementById('login-email')?.focus(); } catch (_) {}
     }, 400);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · LOGOUT UI
+     §7 · LOGOUT UI
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLogoutButton() {
@@ -356,15 +694,17 @@
       }
 
       await GMS.Auth.signOut();
-
       GMS.Beep?.delete?.();
+
+      BootState.intentionalReload = true;
+      window.GMS._intentionalReload = true;
 
       setTimeout(() => location.reload(), 300);
     };
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · TOPBAR BINDING
+     §8 · TOPBAR BINDING
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindTopbar() {
@@ -395,30 +735,8 @@
       window.lucide?.createIcons();
     }
 
-    /* ✅ Language switcher — مُفوَّض إلى LangSwitcher الآمن */
-    document.querySelectorAll('.lang-btn, [data-lang]').forEach(btn => {
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const lang = btn.dataset.lang;
-        if (!lang) return;
-
-        /* المسار المُفضّل: switchLanguage الآمن */
-        if (typeof GMS.switchLanguage === 'function') {
-          GMS.switchLanguage(lang);
-          return;
-        }
-
-        /* fallback بسيط */
-        if (GMS.I18n?.setLang) {
-          GMS.I18n.setLang(lang);
-          document.querySelectorAll('.lang-btn').forEach(b => {
-            b.classList.toggle('active', b.dataset.lang === lang);
-          });
-          GMS.Router?.reload?.({ force: true });
-        }
-      };
-    });
+    /* ✅ Language switcher: مُفوَّض إلى Event Delegation في bindLanguageButtons */
+    bindLanguageButtons();
 
     /* Sync button */
     const syncBtn = document.getElementById('sync-btn');
@@ -434,9 +752,7 @@
               await GMS.Sync.pushQueue();
             }
           }
-
           GMS.Toast.ok('تمت المزامنة');
-
         } catch (e) {
           GMS.Toast.err('فشلت المزامنة', e.message);
         } finally {
@@ -451,7 +767,7 @@
     if (cacheBtn) {
       cacheBtn.onclick = async () => {
         const ok = await GMS.Confirm.ask(
-          'سيتم إعادة تحميل كل البيانات من الخادم. قد يستغرق بعض الوقت. متابعة؟',
+          'سيتم إعادة تحميل كل البيانات من الخادم. متابعة؟',
           {
             title: 'تحديث الذاكرة',
             okText: 'تحديث',
@@ -459,18 +775,14 @@
             icon: 'database-zap',
           }
         );
-
         if (!ok) return;
 
         cacheBtn.classList.add('spinning');
         cacheBtn.disabled = true;
 
         try {
-          if (GMS.Sync) {
-            await GMS.Sync.fullSync();
-          }
+          if (GMS.Sync) await GMS.Sync.fullSync();
           GMS.Toast.ok('تم تحديث الذاكرة المؤقتة');
-
         } catch (e) {
           GMS.Toast.err('فشل التحديث', e.message);
         } finally {
@@ -483,25 +795,19 @@
     /* Queue button */
     const queueBtn = document.getElementById('queue-btn');
     if (queueBtn) {
-      queueBtn.onclick = () => {
-        GMS.Router?.go('queue');
-      };
+      queueBtn.onclick = () => GMS.Router?.go('queue');
     }
 
     /* Settings button */
     const settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
-      settingsBtn.onclick = () => {
-        GMS.Router?.go('settings');
-      };
+      settingsBtn.onclick = () => GMS.Router?.go('settings');
     }
 
     /* Connection chip */
     const connChip = document.getElementById('conn-chip');
     if (connChip) {
-      connChip.onclick = () => {
-        showConnectionInfo();
-      };
+      connChip.onclick = () => showConnectionInfo();
     }
   }
 
@@ -532,56 +838,39 @@
               ${online ? 'متصل' : 'غير متصل'}
             </span>
           </div>
-
           <div class="cl-row">
             <span class="k"><i data-lucide="database"></i> Supabase</span>
             <span class="v" style="color:${sbReady ? 'var(--success)' : 'var(--muted)'}">
               ${sbReady ? 'متصل' : 'غير مُهيّأ'}
             </span>
           </div>
-
           <div class="cl-row">
             <span class="k"><i data-lucide="radio"></i> Realtime</span>
             <span class="v" style="color:${rtStatus === 'connected' ? 'var(--success)' : 'var(--warn)'}">
               ${rtLabels[rtStatus] || rtStatus}
             </span>
           </div>
-
           <div class="cl-row">
             <span class="k"><i data-lucide="package"></i> طابور المزامنة</span>
-            <span class="v" style="color:${queueCount > 0 ? 'var(--warn)' : 'var(--muted)'}">
-              ${GMS.intFmt(queueCount)} فاتورة
-            </span>
+            <span class="v">${GMS.intFmt(queueCount)} فاتورة</span>
           </div>
-
           <div class="cl-row">
             <span class="k"><i data-lucide="clock"></i> آخر مزامنة</span>
             <span class="v" style="font-size:12px">
               ${GMS.timeAgo(GMS.Sync?.state?.stats?.lastSync)}
             </span>
           </div>
-
-          <div class="cl-row">
-            <span class="k"><i data-lucide="activity"></i> الأحداث المستقبلة</span>
-            <span class="v">
-              ${GMS.intFmt(GMS.Realtime?.state?.stats?.totalEvents || 0)}
-            </span>
-          </div>
-
           <div class="cl-row" style="border-top:1.5px solid var(--border);
                        padding-top:14px;margin-top:8px">
             <span class="k"><i data-lucide="smartphone"></i> PWA</span>
             <span class="v" style="color:${pwaStandalone ? 'var(--success)' : 'var(--muted)'}">
-              ${pwaStandalone ? 'مثبَّت (Standalone)' : 'متصفح عادي'}
+              ${pwaStandalone ? 'مثبَّت' : 'متصفح عادي'}
             </span>
           </div>
-
           ${!pwaStandalone && pwaInstallable ? `
             <div style="padding:10px 12px;background:var(--gold-soft);
                         border-radius:9px;margin-top:8px;font-size:11.5px;
                         font-weight:700;color:var(--warn)">
-              <i data-lucide="download" style="width:12px;height:12px;
-                 display:inline;vertical-align:-2px"></i>
               التطبيق قابل للتثبيت
             </div>
           ` : ''}
@@ -607,14 +896,13 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · STARTUP SEQUENCE
+     §9 · STARTUP SEQUENCE
      ═════════════════════════════════════════════════════════════════════ */
 
   async function startApp() {
     try {
       updateBootProgress('تهيئة الذاكرة المؤقتة…', 45);
 
-      /* 1 · Cache warmup */
       if (GMS.Cache) {
         try {
           await GMS.Cache.warmup({
@@ -627,16 +915,13 @@
             },
             branches: GMS.Demo?.getBranches(),
           });
-
           markSystem('cache');
           updateBootProgress('الذاكرة جاهزة', 55);
-
         } catch (e) {
           recordError('cache', e);
         }
       }
 
-      /* 2 · Sync engine */
       updateBootProgress('الاتصال بـ Supabase…', 65);
 
       if (GMS.Sync) {
@@ -646,16 +931,13 @@
             realtime: false,
             initialSync: false,
           });
-
           markSystem('sync');
           updateBootProgress('المزامنة جاهزة', 75);
-
         } catch (e) {
           recordError('sync', e);
         }
       }
 
-      /* 3 · Realtime */
       updateBootProgress('تفعيل التحديثات المباشرة…', 82);
 
       if (GMS.Realtime) {
@@ -664,19 +946,15 @@
             autoSubscribe: true,
             loadFeed: true,
           });
-
           markSystem('realtime');
           updateBootProgress('التحديثات المباشرة جاهزة', 88);
-
         } catch (e) {
           recordError('realtime', e);
         }
       }
 
-      /* 4 · Realtime to UI */
       bindRealtimeToUI();
 
-      /* 5 · Router */
       updateBootProgress('تحضير الواجهة…', 92);
 
       if (GMS.Router) {
@@ -686,36 +964,28 @@
             listenHash: true,
             listenKeyboard: true,
           });
-
           markSystem('router');
           updateBootProgress('الواجهة جاهزة', 97);
-
         } catch (e) {
           recordError('router', e);
         }
       }
 
-      /* 6 · Repair module check */
       if (GMS.Views?.repair) {
         markSystem('repair');
         console.log('[Boot] ✅ Repair module detected');
       }
 
-      /* 7 · PWA module check */
       if (GMS.PWA) {
         markSystem('pwa');
         console.log('[Boot] ✅ PWA module detected');
-
         if (GMS.PWA.updateBadge) {
           setTimeout(() => GMS.PWA.updateBadge(), 500);
         }
       }
 
-      /* 8 · Welcome */
       updateBootProgress('جارٍ التشغيل…', 100);
-
       await GMS.sleep(200);
-
       hideBootScreen();
 
       BootState.appReady = true;
@@ -746,19 +1016,14 @@
     } catch (e) {
       recordError('startApp', e);
       hideBootScreen();
-
-      GMS.Toast.err(
-        'فشل بدء التشغيل',
-        'تحقق من Console للأخطاء'
-      );
-
+      GMS.Toast.err('فشل بدء التشغيل', 'تحقق من Console للأخطاء');
       console.error('[Boot] Fatal startup error:', e);
       return false;
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · REALTIME → UI BINDING
+     §10 · REALTIME → UI BINDING
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindRealtimeToUI() {
@@ -769,14 +1034,12 @@
         GMS.Router.scheduleRerender(1500);
       }
     });
-
     BootState.unsubscribers.push(unsub);
 
     if (GMS.Sync) {
       const unsub2 = GMS.Sync.on('onlineChange', (data) => {
         if (data.online) {
           GMS.Toast.ok('عاد الاتصال', 'جارٍ رفع الطابور…');
-
           setTimeout(() => {
             if (GMS.Sync.state.online) {
               GMS.Sync.pushQueue().catch(() => {});
@@ -786,25 +1049,18 @@
           GMS.Toast.warn('انقطع الاتصال', 'العمل مستمر محلياً');
         }
       });
-
       BootState.unsubscribers.push(unsub2);
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · VISIBILITY HANDLER
+     §11 · VISIBILITY HANDLER
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindVisibilityHandler() {
     const handler = () => {
-      if (document.hidden) {
-        console.log('[Boot] Tab hidden');
-        return;
-      }
+      if (document.hidden) return;
 
-      console.log('[Boot] Tab visible');
-
-      /* مزامنة تفاضلية فقط (بدون rerender) */
       if (GMS.Sync?.state?.online) {
         setTimeout(() => {
           if (!document.hidden && GMS.Sync?.state?.online) {
@@ -813,7 +1069,6 @@
         }, 1500);
       }
 
-      /* تحديث الـ Badge بس */
       if (GMS.PWA?.updateBadge) {
         setTimeout(() => {
           if (!document.hidden) GMS.PWA.updateBadge();
@@ -828,13 +1083,12 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · PERIODIC MAINTENANCE
+     §12 · PERIODIC MAINTENANCE
      ═════════════════════════════════════════════════════════════════════ */
 
   function startPeriodicMaintenance() {
     const interval = setInterval(() => {
       if (document.hidden) return;
-
       try {
         GMS.Cache?.cleanup?.({
           pruneLS: true,
@@ -845,34 +1099,26 @@
         console.warn('[Boot] Periodic cleanup failed:', e);
       }
     }, 5 * 60 * 1000);
-
     BootState.unsubscribers.push(() => clearInterval(interval));
 
     const healthInterval = setInterval(() => {
       if (document.hidden) return;
-
       const health = {
         online: GMS.Sync?.state?.online,
-        realtime: GMS.Realtime?.state?.channelStatus,
-        queue: GMS.Queue?.state?.items?.length || 0,
         lastSync: GMS.Sync?.state?.stats?.lastSync,
       };
-
       if (health.online && health.lastSync) {
         const age = Date.now() - new Date(health.lastSync).getTime();
         if (age > 30 * 60 * 1000) {
-          console.warn('[Boot] Last sync is stale:', age / 60000, 'min');
           GMS.Sync?.deltaSync?.().catch(() => {});
         }
       }
-
     }, 60 * 60 * 1000);
-
     BootState.unsubscribers.push(() => clearInterval(healthInterval));
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · BOOT SCREEN HTML
+     §13 · BOOT SCREEN HTML
      ═════════════════════════════════════════════════════════════════════ */
 
   function createBootScreen() {
@@ -905,17 +1151,14 @@
                     animation:pulse 2s ease infinite">
           Au
         </div>
-
         <h1 style="font-size:22px;font-weight:900;color:#fff;
                    letter-spacing:-.4px;margin:0 0 8px">
           Gold ERP Pro
         </h1>
-
         <p style="color:#6b7a95;font-size:12px;font-weight:600;
                   margin:0 0 32px">
           نظام إدارة الذهب والمجوهرات
         </p>
-
         <div style="background:rgba(255,255,255,.06);
                     border-radius:12px;padding:14px 16px;
                     border:1px solid rgba(255,255,255,.08)">
@@ -924,7 +1167,6 @@
                       color:#e8eefb;margin-bottom:10px">
             جارٍ التحميل…
           </div>
-
           <div style="height:6px;background:rgba(255,255,255,.1);
                       border-radius:4px;overflow:hidden">
             <div id="boot-progress-fill"
@@ -934,13 +1176,11 @@
                         transition:width .3s ease"></div>
           </div>
         </div>
-
         <p style="color:#5f6f8d;font-size:10.5px;font-weight:600;
                   margin:24px 0 0">
           الإصدار ${GMS.APP_CONFIG.VERSION} · Build ${GMS.APP_CONFIG.BUILD}
         </p>
       </div>
-
       <style>
         @keyframes pulse {
           0%,100% { transform: scale(1); }
@@ -953,7 +1193,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · RESTORE SESSION OR LOGIN
+     §14 · RESTORE SESSION OR LOGIN
      ═════════════════════════════════════════════════════════════════════ */
 
   async function determineStartMode() {
@@ -983,17 +1223,15 @@
     hideBootScreen();
 
     BootState.stage = 'awaiting-login';
-
     console.log('[Boot] Awaiting login');
     return false;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · INITIALIZE NON-AUTH SYSTEMS
+     §15 · INITIALIZE NON-AUTH SYSTEMS
      ═════════════════════════════════════════════════════════════════════ */
 
   async function initNonAuthSystems() {
-    /* 1 · i18n */
     updateBootProgress('تحضير اللغة…', 10);
 
     if (GMS.I18n) {
@@ -1005,7 +1243,6 @@
       }
     }
 
-    /* 2 · Theme */
     updateBootProgress('تحميل المظهر…', 18);
 
     try {
@@ -1013,7 +1250,6 @@
       document.documentElement.setAttribute('data-theme', theme);
     } catch (_) {}
 
-    /* 3 · Cache — فتح IndexedDB */
     updateBootProgress('فتح قاعدة البيانات…', 28);
 
     if (GMS.IDB) {
@@ -1025,7 +1261,6 @@
       }
     }
 
-    /* 4 · Auth init */
     updateBootProgress('تهيئة المصادقة…', 35);
 
     if (GMS.Auth) {
@@ -1041,7 +1276,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · MAIN BOOT
+     §16 · MAIN BOOT
      ═════════════════════════════════════════════════════════════════════ */
 
   async function boot() {
@@ -1057,29 +1292,22 @@
       'background:#121212;border-radius:6px;'
     );
 
-    /* 1 · Boot screen */
     createBootScreen();
     updateBootProgress('بدء التحميل…', 5);
 
-    /* 2 · Error handlers */
     bindGlobalErrorHandlers();
 
-    /* 3 · Service Worker — يُسجَّل مبكراً */
     updateBootProgress('تحضير PWA…', 8);
     registerServiceWorker().catch(e => console.warn('[Boot] SW registration failed:', e));
 
-    /* 4 · Topbar */
     bindTopbar();
     bindLogoutButton();
     bindVisibilityHandler();
 
-    /* 5 · Icons */
     window.lucide?.createIcons();
 
-    /* 6 · Non-auth systems */
     await initNonAuthSystems();
 
-    /* 7 · Determine mode */
     updateBootProgress('التحقق من الجلسة…', 40);
 
     try {
@@ -1094,10 +1322,8 @@
       bindLoginForm();
     }
 
-    /* 8 · Periodic maintenance */
     startPeriodicMaintenance();
 
-    /* 9 · Cleanup on unload */
     window.addEventListener('beforeunload', () => {
       try {
         BootState.unsubscribers.forEach(fn => {
@@ -1108,13 +1334,15 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · PUBLIC API
+     §17 · PUBLIC API
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Boot = {
     boot,
     state: BootState,
     startApp,
     bindLoginForm,
+    switchLanguage,
+    updateLangButtons,
 
     getState: () => ({ ...BootState }),
 
@@ -1125,8 +1353,16 @@
     },
   };
 
+  /* ✅ v3.1: تصدير switchLanguage عالمياً للاستخدام من أي مكان */
+  GMS.switchLanguage = switchLanguage;
+  GMS.LangSwitcher = {
+    switch: switchLanguage,
+    updateButtons: updateLangButtons,
+    bind: bindLanguageButtons,
+  };
+
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · AUTO START
+     §18 · AUTO START
      ═════════════════════════════════════════════════════════════════════ */
 
   if (document.readyState === 'loading') {
@@ -1146,12 +1382,17 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · LOADED CONFIRMATION
+     §19 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v3 (Login hardened)',
+    '%c⚡ Boot loaded · v3.1 (Lang Switch + Overlay)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
+  );
+
+  console.log(
+    '%c🌍 switchLanguage() متاح عالمياً — بدون ملف 29 مطلوب',
+    'color:#6b3fa0;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
