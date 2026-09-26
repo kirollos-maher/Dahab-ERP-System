@@ -1,8 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v3: Login محصَّن + Language Switch مدمج (بدون ملف 29)
-   ✅ v3.1: Overlay فوري عند تبديل اللغة — يمنع الشاشة البيضاء/السوداء
+   ✅ v3.2: FIX — language event delegation لا يعترض زر تسجيل الدخول
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -39,8 +38,6 @@
     },
 
     unsubscribers: [],
-
-    /* ✅ v3.1: flag لمنع تحذير beforeunload عند تبديل اللغة */
     intentionalReload: false,
   };
 
@@ -112,10 +109,8 @@
       }
     });
 
-    /* ✅ v3.1: تجاهل beforeunload عند التبديل المُبرمَج */
-    window.addEventListener('beforeunload', (e) => {
+    window.addEventListener('beforeunload', () => {
       if (BootState.intentionalReload) return;
-      /* لا نمنع - نترك السلوك الافتراضي */
     });
   }
 
@@ -161,18 +156,10 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ LANGUAGE SWITCHER — v3.1 (مدمج + Overlay)
-     ─────────────────────────────────────────────────────────────────────
-     الطريقة الجديدة:
-       1. تحديث <html> dir/lang فوراً
-       2. حفظ اللغة في LocalStorage
-       3. عرض Overlay تحميل فوري (بدل الشاشة البيضاء)
-       4. إعادة تحميل الصفحة بأمان (بدون حفظ حالة DOM المعقدة)
-       5. Boot يعيد تحميل اللغة الجديدة من LocalStorage تلقائياً
+     §5 · ✅ LANGUAGE SWITCHER — v3.2
      ═════════════════════════════════════════════════════════════════════ */
 
   function showLanguageSwitchOverlay(targetLang) {
-    /* احذف أي overlay سابق */
     const existing = document.getElementById('gms-lang-overlay');
     if (existing) existing.remove();
 
@@ -210,17 +197,14 @@
                     animation:gmsLangPulse 1.4s ease infinite">
           Au
         </div>
-
         <div style="color:#e8eefb;font-size:15px;font-weight:800;
                     letter-spacing:-.2px;margin-bottom:8px">
           ${message}
         </div>
-
         <div style="color:#6b7a95;font-size:11.5px;font-weight:600;
                     margin-bottom:22px">
           ${sub}
         </div>
-
         <div style="height:5px;background:rgba(255,255,255,.1);
                     border-radius:4px;overflow:hidden;max-width:220px;
                     margin:0 auto">
@@ -230,7 +214,6 @@
                       animation:gmsLangBar 1.2s ease-in-out infinite"></div>
         </div>
       </div>
-
       <style>
         @keyframes gmsLangPulse {
           0%,100% { transform: scale(1); }
@@ -246,7 +229,6 @@
 
     document.body.appendChild(overlay);
 
-    /* Fade in */
     requestAnimationFrame(() => {
       overlay.style.opacity = '1';
     });
@@ -254,11 +236,6 @@
     return overlay;
   }
 
-  /**
-   * ✅ تبديل اللغة — الدالة الرئيسية
-   * @param {'ar'|'en'} lang
-   * @returns {Promise<boolean>}
-   */
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
@@ -272,13 +249,13 @@
     console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang}`);
 
     try {
-      /* ─── 1 · تحديث <html> فوراً ─── */
+      /* 1 · تحديث <html> فوراً */
       const html = document.documentElement;
       html.setAttribute('lang', lang);
       html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
       html.setAttribute('data-lang', lang);
 
-      /* ─── 2 · حفظ اللغة في LocalStorage ─── */
+      /* 2 · حفظ اللغة */
       try {
         const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
         localStorage.setItem(key, lang);
@@ -287,10 +264,10 @@
         console.warn('[switchLanguage] localStorage.save failed:', e);
       }
 
-      /* ─── 3 · تحديث أزرار اللغة فوراً (بصرياً) ─── */
+      /* 3 · تحديث أزرار اللغة */
       updateLangButtons(lang);
 
-      /* ─── 4 · محاولة تحديث ذكي أولاً ─── */
+      /* 4 · محاولة التحديث الذكي */
       let smartSuccess = false;
 
       try {
@@ -304,12 +281,11 @@
         smartSuccess = false;
       }
 
-      /* ─── 5 · لو نجح التحديث الذكي، أعِد رسم الصفحة الحالية ─── */
+      /* 5 · إعادة رسم الصفحة الحالية */
       if (smartSuccess) {
         try {
           const currentRoute = GMS.Router?.currentId?.();
           if (currentRoute && GMS.Router?.go) {
-            /* محاولة إعادة الرسم بدون reload — مع timeout 2.5s */
             const renderPromise = GMS.Router.go(currentRoute, { force: true });
             const timeoutPromise = new Promise((_, reject) =>
               setTimeout(() => reject(new Error('render timeout')), 2500)
@@ -317,7 +293,6 @@
 
             await Promise.race([renderPromise, timeoutPromise]);
 
-            /* لو نجح، تحقق من أن الصفحة ليست فارغة */
             const pageHost = document.getElementById('page');
             const hasContent = pageHost && pageHost.innerHTML.trim().length > 100;
 
@@ -338,51 +313,34 @@
         }
       }
 
-      /* ─── 6 · Fallback: Overlay + reload نظيف ─── */
+      /* 6 · Fallback: Overlay + reload */
       console.log('[switchLanguage] 🔄 استخدام reload الآمن…');
-
-      /* عرض Overlay فوري — يمنع الشاشة البيضاء */
       showLanguageSwitchOverlay(lang);
 
-      /* علامة للـ beforeunload */
       BootState.intentionalReload = true;
       window.GMS = window.GMS || {};
       window.GMS._intentionalReload = true;
 
-      /* إغلاق Modals لتفادي تعارضات */
       try { GMS.Modal?.closeAll?.(); } catch (_) {}
 
-      /* انتظر قليلاً حتى يرسم Overlay + يُحفظ localStorage */
       await new Promise(r => setTimeout(r, 350));
-
-      /* إعادة التحميل النظيف */
       location.reload();
-
       return true;
 
     } catch (err) {
       console.error('[switchLanguage] ❌ خطأ خطير:', err);
-
-      /* عرض Fallback UI بدل الشاشة الفاضية */
       showLanguageSwitchError(err, currentLang);
       return false;
     }
   }
 
-  /**
-   * تحديث أزرار اللغة
-   */
   function updateLangButtons(lang) {
     document.querySelectorAll('.lang-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.lang === lang);
     });
   }
 
-  /**
-   * Fallback UI عند فشل التبديل
-   */
   function showLanguageSwitchError(error, fallbackLang) {
-    /* استرجاع اللغة السابقة */
     try {
       const html = document.documentElement;
       html.setAttribute('lang', fallbackLang);
@@ -398,7 +356,6 @@
       updateLangButtons(fallbackLang);
     } catch (_) {}
 
-    /* عرض شاشة خطأ بدل الشاشة البيضاء */
     const overlay = document.getElementById('gms-lang-overlay');
     if (overlay) overlay.remove();
 
@@ -472,11 +429,19 @@
     });
   }
 
-  /**
-   * ربط أزرار اللغة — باستخدام Event Delegation (أكثر أماناً)
-   */
+  /* ═════════════════════════════════════════════════════════════════════
+     §5.1 · ✅ ربط أزرار اللغة — v3.2 (FIXED)
+     ─────────────────────────────────────────────────────────────────────
+     🔴 المشكلة السابقة:
+        كان الـ selector: `.lang-btn, [data-lang]`
+        وعنصر <html> يحمل data-lang — فيلتقط نقرات أي زر في الصفحة
+        ويقتلها بـ stopPropagation().
+
+     ✅ الحل:
+        استخدام `button.lang-btn` — أزرار اللغة الفعلية فقط.
+     ═════════════════════════════════════════════════════════════════════ */
+
   function bindLanguageButtons() {
-    /* تجنب الربط المتكرر */
     if (window.GMS && window.GMS._langButtonsBound) {
       console.log('[Boot.bindLanguageButtons] ℹ️ مُربط مسبقاً');
       return;
@@ -484,21 +449,27 @@
     window.GMS = window.GMS || {};
     window.GMS._langButtonsBound = true;
 
-    /* ✅ Event Delegation على document — يعمل حتى لو أُعيد رسم الأزرار */
+    /* ✅ Event Delegation — يلتقط النقر على أزرار اللغة فقط */
     document.addEventListener('click', (e) => {
-      const btn = e.target && e.target.closest
-        ? e.target.closest('.lang-btn, [data-lang]')
-        : null;
+      /* فحص آمن: هل العنصر زر؟ */
+      const target = e.target;
+      if (!target || !target.closest) return;
 
+      /* ✅ FIX: ابحث فقط عن أزرار اللغة الفعلية */
+      const btn = target.closest('button.lang-btn');
+
+      /* لم يكن زر لغة → اترك النقرة تمر بشكل طبيعي */
       if (!btn) return;
 
+      /* تأكد أن الزر يحتوي فعلاً على data-lang */
+      const lang = btn.dataset.lang;
+      if (!lang || !['ar', 'en'].includes(lang)) return;
+
+      /* امنع السلوك الافتراضي فقط لهذا الزر */
       e.preventDefault();
       e.stopPropagation();
 
-      const lang = btn.dataset.lang;
-      if (!lang) return;
-
-      console.log(`[lang-btn] 🖱️ نقرة على: ${lang}`);
+      console.log(`[lang-btn] 🖱️ نقرة على زر اللغة: ${lang}`);
       switchLanguage(lang);
     }, true);
 
@@ -506,11 +477,11 @@
     const currentLang = document.documentElement.getAttribute('lang') || 'ar';
     updateLangButtons(currentLang);
 
-    console.log('[Boot.bindLanguageButtons] ✅ تم الربط (event delegation)');
+    console.log('[Boot.bindLanguageButtons] ✅ تم الربط (event delegation آمن)');
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · AUTH UI BINDING — محصَّن
+     §6 · AUTH UI BINDING
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLoginForm() {
@@ -735,7 +706,7 @@
       window.lucide?.createIcons();
     }
 
-    /* ✅ Language switcher: مُفوَّض إلى Event Delegation في bindLanguageButtons */
+    /* ✅ Language switcher: Event Delegation آمن */
     bindLanguageButtons();
 
     /* Sync button */
@@ -1029,7 +1000,7 @@
   function bindRealtimeToUI() {
     if (!GMS.Realtime) return;
 
-    const unsub = GMS.Realtime.on('event', (event) => {
+    const unsub = GMS.Realtime.on('event', () => {
       if (GMS.Router?.currentId() === 'dashboard') {
         GMS.Router.scheduleRerender(1500);
       }
@@ -1353,7 +1324,6 @@
     },
   };
 
-  /* ✅ v3.1: تصدير switchLanguage عالمياً للاستخدام من أي مكان */
   GMS.switchLanguage = switchLanguage;
   GMS.LangSwitcher = {
     switch: switchLanguage,
@@ -1385,14 +1355,9 @@
      §19 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v3.1 (Lang Switch + Overlay)',
+    '%c⚡ Boot loaded · v3.2 (Login + Lang Switch FIXED)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
-  );
-
-  console.log(
-    '%c🌍 switchLanguage() متاح عالمياً — بدون ملف 29 مطلوب',
-    'color:#6b3fa0;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
