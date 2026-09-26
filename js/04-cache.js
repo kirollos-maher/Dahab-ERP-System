@@ -3,6 +3,7 @@
    نظام التخزين المؤقت ذو الطبقتين:
      Layer 1 · LocalStorage — للإعدادات الصغيرة (TTL 12 ساعة)
      Layer 2 · IndexedDB — للمخزون الضخم والطابور
+   ✅ v5: getPrice() يقرأ من PriceManager أولاً (سعر لحظي)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -12,13 +13,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · LSCache — LocalStorage Cache Layer
-     ─────────────────────────────────────────────────────────────────────
-     يخزن الإعدادات الصغيرة مع TTL 12 ساعة:
-     - قائمة الماركات
-     - مصفوفة المصنعية
-     - بيانات الموظف الحالي
-     - تفضيلات المستخدم
-     - سعر الذهب الحالي
      ═════════════════════════════════════════════════════════════════════ */
   class LSCacheClass {
 
@@ -28,46 +22,17 @@
       this.DEFAULT_TTL = GMS.SYNC_CONFIG.CACHE_TTL_MS;
     }
 
-    /* ─── Helpers ─────────────────────────────────────────────────── */
+    _k(key) { return this.PREFIX + key; }
+    _t(key) { return this.PREFIX + key + this.TTL_SUFFIX; }
 
-    /**
-     * بناء المفتاح الكامل
-     * @param {string} key
-     * @returns {string}
-     */
-    _k(key) {
-      return this.PREFIX + key;
-    }
-
-    /**
-     * بناء مفتاح TTL
-     * @param {string} key
-     * @returns {string}
-     */
-    _t(key) {
-      return this.PREFIX + key + this.TTL_SUFFIX;
-    }
-
-    /* ─── Set / Get / Delete ──────────────────────────────────────── */
-
-    /**
-     * تخزين قيمة مع TTL
-     * @param {string} key
-     * @param {*} value
-     * @param {Object} [opts]
-     * @param {number} [opts.ttl] — بالمللي ثانية
-     * @returns {boolean}
-     */
     set(key, value, opts = {}) {
       const { ttl = this.DEFAULT_TTL } = opts;
-
       try {
         const payload = JSON.stringify({
           v: value,
           storedAt: Date.now(),
           ttl,
         });
-
         localStorage.setItem(this._k(key), payload);
         localStorage.setItem(this._t(key), String(Date.now() + ttl));
         return true;
@@ -77,24 +42,15 @@
       }
     }
 
-    /**
-     * قراءة قيمة (null إذا منتهية أو غير موجودة)
-     * @param {string} key
-     * @returns {*}
-     */
     get(key) {
       try {
         const expiresAt = Number(localStorage.getItem(this._t(key))) || 0;
-
-        // فحص TTL
         if (expiresAt > 0 && Date.now() > expiresAt) {
           this.del(key);
           return null;
         }
-
         const raw = localStorage.getItem(this._k(key));
         if (!raw) return null;
-
         const parsed = JSON.parse(raw);
         return parsed.v;
       } catch (e) {
@@ -102,24 +58,16 @@
       }
     }
 
-    /**
-     * قراءة البيانات الوصفية مع القيمة
-     * @param {string} key
-     * @returns {{value:*, storedAt:number, expiresAt:number, ttl:number}|null}
-     */
     getMeta(key) {
       try {
         const raw = localStorage.getItem(this._k(key));
         if (!raw) return null;
-
         const parsed = JSON.parse(raw);
         const expiresAt = Number(localStorage.getItem(this._t(key))) || 0;
-
         if (expiresAt > 0 && Date.now() > expiresAt) {
           this.del(key);
           return null;
         }
-
         return {
           value: parsed.v,
           storedAt: parsed.storedAt,
@@ -131,30 +79,16 @@
       }
     }
 
-    /**
-     * التحقق من وجود مفتاح صالح
-     * @param {string} key
-     * @returns {boolean}
-     */
     has(key) {
       return this.get(key) !== null;
     }
 
-    /**
-     * الوقت المتبقي بالمللي ثانية
-     * @param {string} key
-     * @returns {number|null}
-     */
     ttl(key) {
       const expiresAt = Number(localStorage.getItem(this._t(key))) || 0;
       if (!expiresAt) return null;
       return Math.max(0, expiresAt - Date.now());
     }
 
-    /**
-     * حذف مفتاح
-     * @param {string} key
-     */
     del(key) {
       try {
         localStorage.removeItem(this._k(key));
@@ -162,9 +96,6 @@
       } catch (_) {}
     }
 
-    /**
-     * حذف كل المفاتيح
-     */
     clear() {
       const keys = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -176,62 +107,36 @@
       });
     }
 
-    /**
-     * حذف المفاتيح المنتهية فقط
-     * @returns {number} عدد المفاتيح المحذوفة
-     */
     prune() {
       let count = 0;
       const now = Date.now();
       const toDelete = [];
-
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k || !k.startsWith(this.PREFIX)) continue;
-
-        // تجاهل ملفات TTL
         if (k.endsWith(this.TTL_SUFFIX)) continue;
-
         const ttlKey = k + this.TTL_SUFFIX;
         const expiresAt = Number(localStorage.getItem(ttlKey)) || 0;
-
         if (expiresAt > 0 && now > expiresAt) {
           toDelete.push(k, ttlKey);
         }
       }
-
       toDelete.forEach(k => {
-        try {
-          localStorage.removeItem(k);
-          count++;
-        } catch (_) {}
+        try { localStorage.removeItem(k); count++; } catch (_) {}
       });
-
       return count;
     }
 
-    /* ─── Introspection ───────────────────────────────────────────── */
-
-    /**
-     * قائمة كل المفاتيح النشطة
-     * @returns {Array<{key:string, size:number, ttl:number, expiresAt:number}>}
-     */
     entries() {
       const out = [];
-
       for (let i = 0; i < localStorage.length; i++) {
         const fullKey = localStorage.key(i);
         if (!fullKey || !fullKey.startsWith(this.PREFIX)) continue;
         if (fullKey.endsWith(this.TTL_SUFFIX)) continue;
-
         const shortKey = fullKey.slice(this.PREFIX.length);
         const ttl = this.ttl(shortKey);
-
         let size = 0;
-        try {
-          size = (localStorage.getItem(fullKey) || '').length * 2;
-        } catch (_) {}
-
+        try { size = (localStorage.getItem(fullKey) || '').length * 2; } catch (_) {}
         out.push({
           key: shortKey,
           size,
@@ -239,14 +144,9 @@
           expiresAt: ttl !== null ? Date.now() + ttl : null,
         });
       }
-
       return out.sort((a, b) => a.key.localeCompare(b.key));
     }
 
-    /**
-     * حساب الحجم الإجمالي بالبايت
-     * @returns {number}
-     */
     size() {
       let total = 0;
       for (let i = 0; i < localStorage.length; i++) {
@@ -258,10 +158,6 @@
       return total;
     }
 
-    /**
-     * عدد المفاتيح النشطة
-     * @returns {number}
-     */
     count() {
       return this.entries().length;
     }
@@ -271,12 +167,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §2 · IDBEngine — IndexedDB Layer
-     ─────────────────────────────────────────────────────────────────────
-     يخزن البيانات الضخمة:
-     - المخزون (10,000+ صنف)
-     - طابور المزامنة (فواتير offline)
-     - metadata (آخر مزامنة)
-     - عناصر معلقة
      ═════════════════════════════════════════════════════════════════════ */
   class IDBEngine {
 
@@ -287,20 +177,9 @@
       this._queuedOps = [];
     }
 
-    /* ─── Open / Close ────────────────────────────────────────────── */
-
-    /**
-     * فتح قاعدة البيانات
-     * @returns {Promise<IDBDatabase>}
-     */
     open() {
-      if (this.db && this.isOpen) {
-        return Promise.resolve(this.db);
-      }
-
-      if (this._openPromise) {
-        return this._openPromise;
-      }
+      if (this.db && this.isOpen) return Promise.resolve(this.db);
+      if (this._openPromise) return this._openPromise;
 
       this._openPromise = new Promise((resolve, reject) => {
         const cfg = GMS.IDB_CONFIG;
@@ -309,11 +188,8 @@
         req.onupgradeneeded = (event) => {
           const db = event.target.result;
 
-          /* Store 1: inventory */
           if (!db.objectStoreNames.contains(cfg.STORE_INVENTORY)) {
-            const store = db.createObjectStore(cfg.STORE_INVENTORY, {
-              keyPath: 'id',
-            });
+            const store = db.createObjectStore(cfg.STORE_INVENTORY, { keyPath: 'id' });
             store.createIndex('sku', 'sku', { unique: true });
             store.createIndex('karat', 'karat', { unique: false });
             store.createIndex('status', 'status', { unique: false });
@@ -324,26 +200,19 @@
             store.createIndex('status_karat', ['status', 'karat'], { unique: false });
           }
 
-          /* Store 2: offline_queue */
           if (!db.objectStoreNames.contains(cfg.STORE_QUEUE)) {
-            const store = db.createObjectStore(cfg.STORE_QUEUE, {
-              keyPath: 'id',
-            });
+            const store = db.createObjectStore(cfg.STORE_QUEUE, { keyPath: 'id' });
             store.createIndex('created_at', 'created_at', { unique: false });
             store.createIndex('status', 'status', { unique: false });
             store.createIndex('branch_id', 'branch_id', { unique: false });
           }
 
-          /* Store 3: metadata */
           if (!db.objectStoreNames.contains(cfg.STORE_META)) {
             db.createObjectStore(cfg.STORE_META, { keyPath: 'key' });
           }
 
-          /* Store 4: pending_items */
           if (!db.objectStoreNames.contains(cfg.STORE_PENDING_ITEMS)) {
-            const store = db.createObjectStore(cfg.STORE_PENDING_ITEMS, {
-              keyPath: 'localId',
-            });
+            const store = db.createObjectStore(cfg.STORE_PENDING_ITEMS, { keyPath: 'localId' });
             store.createIndex('created_at', 'created_at', { unique: false });
             store.createIndex('operation', 'operation', { unique: false });
           }
@@ -355,7 +224,6 @@
           this.db = event.target.result;
           this.isOpen = true;
 
-          // معالجة الأخطاء العامة
           this.db.onerror = (e) => {
             console.error('[IDB] Global error:', e.target.error);
           };
@@ -365,9 +233,7 @@
             this.close();
           };
 
-          // تنفيذ العمليات المعلقة
           this._flushQueue();
-
           console.log('[IDB] Database opened:', cfg.DB_NAME, 'v' + cfg.DB_VERSION);
           resolve(this.db);
         };
@@ -386,9 +252,6 @@
       return this._openPromise;
     }
 
-    /**
-     * إغلاق قاعدة البيانات
-     */
     close() {
       if (this.db) {
         this.db.close();
@@ -398,32 +261,22 @@
       }
     }
 
-    /* ─── Queue operations when DB not ready ─────────────────────── */
-
     _flushQueue() {
       const ops = this._queuedOps.splice(0);
       ops.forEach(op => op());
     }
 
-    /* ─── Internal transaction runner ─────────────────────────────── */
-
     async _tx(store, mode, fn) {
       const db = await this.open();
-
       return new Promise((resolve, reject) => {
         let tx;
-        try {
-          tx = db.transaction(store, mode);
-        } catch (e) {
-          return reject(e);
-        }
+        try { tx = db.transaction(store, mode); }
+        catch (e) { return reject(e); }
 
         const os = tx.objectStore(store);
         let result;
-
-        try {
-          result = fn(os);
-        } catch (e) {
+        try { result = fn(os); }
+        catch (e) {
           try { tx.abort(); } catch (_) {}
           return reject(e);
         }
@@ -434,132 +287,58 @@
       });
     }
 
-    /**
-     * تنفيذ طلب واحد وإرجاع نتيجة
-     * @param {IDBObjectStore} os
-     * @param {Function} fn
-     * @returns {Promise<*>}
-     */
     async _req(store, mode, fn) {
       const db = await this.open();
       return new Promise((resolve, reject) => {
         const tx = db.transaction(store, mode);
         const os = tx.objectStore(store);
-
         let req;
-        try {
-          req = fn(os);
-        } catch (e) {
-          return reject(e);
-        }
-
+        try { req = fn(os); }
+        catch (e) { return reject(e); }
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
     }
 
-    /* ═══════════════════════════════════════════════════════════════
-       INVENTORY OPERATIONS
-       ═══════════════════════════════════════════════════════════════ */
-
-    /**
-     * تخزين مصفوفة أصناف دفعة واحدة
-     * @param {Array} items
-     * @returns {Promise<number>}
-     */
     async putMany(items) {
       if (!items || !items.length) return 0;
-
       const db = await this.open();
-
       return new Promise((resolve, reject) => {
         const tx = db.transaction('inventory', 'readwrite');
         const store = tx.objectStore('inventory');
-
         items.forEach(item => {
           try { store.put(item); }
           catch (e) { console.warn('[IDB.putMany] item failed:', e); }
         });
-
         tx.oncomplete = () => resolve(items.length);
         tx.onerror = () => reject(tx.error);
         tx.onabort = () => reject(tx.error);
       });
     }
 
-    /**
-     * تخزين صنف واحد
-     * @param {Object} item
-     * @returns {Promise<string>}
-     */
-    put(item) {
-      return this._req('inventory', 'readwrite', os => os.put(item));
-    }
+    put(item) { return this._req('inventory', 'readwrite', os => os.put(item)); }
+    get(id) { return this._req('inventory', 'readonly', os => os.get(id)); }
 
-    /**
-     * استرجاع صنف بالمعرف
-     * @param {string} id
-     * @returns {Promise<Object|undefined>}
-     */
-    get(id) {
-      return this._req('inventory', 'readonly', os => os.get(id));
-    }
-
-    /**
-     * استرجاع صنف بالـ SKU
-     * @param {string} sku
-     * @returns {Promise<Object|undefined>}
-     */
     getBySku(sku) {
       const key = String(sku || '').trim().toUpperCase();
-      return this._req('inventory', 'readonly', os =>
-        os.index('sku').get(key)
-      );
+      return this._req('inventory', 'readonly', os => os.index('sku').get(key));
     }
 
-    /**
-     * استرجاع كل الأصناف
-     * @returns {Promise<Array>}
-     */
-    getAll() {
-      return this._req('inventory', 'readonly', os => os.getAll());
-    }
+    getAll() { return this._req('inventory', 'readonly', os => os.getAll()); }
+    count() { return this._req('inventory', 'readonly', os => os.count()); }
 
-    /**
-     * عدد الأصناف الكلي
-     * @returns {Promise<number>}
-     */
-    count() {
-      return this._req('inventory', 'readonly', os => os.count());
-    }
-
-    /**
-     * عدد الأصناف بحالة معينة
-     * @param {string} status
-     * @returns {Promise<number>}
-     */
     countByStatus(status) {
       return this._req('inventory', 'readonly', os =>
         os.index('status').count(IDBKeyRange.only(status))
       );
     }
 
-    /**
-     * أصناف بحالة معينة
-     * @param {string} status
-     * @returns {Promise<Array>}
-     */
     getByStatus(status) {
       return this._req('inventory', 'readonly', os =>
         os.index('status').getAll(IDBKeyRange.only(status))
       );
     }
 
-    /**
-     * أصناف بعيار معين
-     * @param {number} karat
-     * @returns {Promise<Array>}
-     */
     getByKarat(karat) {
       const k = Number(karat);
       return this._req('inventory', 'readonly', os =>
@@ -567,48 +346,23 @@
       );
     }
 
-    /**
-     * أصناف بفرع معين
-     * @param {string} branchId
-     * @returns {Promise<Array>}
-     */
     getByBranch(branchId) {
       return this._req('inventory', 'readonly', os =>
         os.index('branch_id').getAll(IDBKeyRange.only(branchId))
       );
     }
 
-    /**
-     * أصناف مُعدَّلة بعد تاريخ معين
-     * @param {string} isoTimestamp
-     * @returns {Promise<Array>}
-     */
     getUpdatedAfter(isoTimestamp) {
       return this._req('inventory', 'readonly', os =>
-        os.index('updated_at').getAll(
-          IDBKeyRange.lowerBound(isoTimestamp, true)
-        )
+        os.index('updated_at').getAll(IDBKeyRange.lowerBound(isoTimestamp, true))
       );
     }
 
-    /**
-     * حذف صنف
-     * @param {string} id
-     * @returns {Promise<void>}
-     */
-    delete(id) {
-      return this._req('inventory', 'readwrite', os => os.delete(id));
-    }
+    delete(id) { return this._req('inventory', 'readwrite', os => os.delete(id)); }
 
-    /**
-     * حذف عدة أصناف
-     * @param {Array<string>} ids
-     * @returns {Promise<number>}
-     */
     async deleteMany(ids) {
       if (!ids || !ids.length) return 0;
       const db = await this.open();
-
       return new Promise((resolve, reject) => {
         const tx = db.transaction('inventory', 'readwrite');
         const store = tx.objectStore('inventory');
@@ -618,50 +372,22 @@
       });
     }
 
-    /**
-     * تفريغ كل المخزون
-     * @returns {Promise<void>}
-     */
     clearInventory() {
       return this._req('inventory', 'readwrite', os => os.clear());
     }
 
-    /**
-     * البحث المتقدم في المخزون
-     * @param {string} [query='']
-     * @param {Object} [filters={}]
-     * @param {number} [filters.karat]
-     * @param {string} [filters.status]
-     * @param {string} [filters.branch_id]
-     * @param {string} [filters.manufacturer_code]
-     * @param {string} [filters.category]
-     * @param {number} [filters.limit=500]
-     * @returns {Promise<Array>}
-     */
     async search(query = '', filters = {}) {
       const {
-        karat = null,
-        status = null,
-        branch_id = null,
-        manufacturer_code = null,
-        category = null,
-        limit = 500,
+        karat = null, status = null, branch_id = null,
+        manufacturer_code = null, category = null, limit = 500,
       } = filters;
 
-      // اختيار أسرع مصدر للبيانات
       let candidates;
+      if (status) candidates = await this.getByStatus(status);
+      else if (branch_id) candidates = await this.getByBranch(branch_id);
+      else if (karat !== null) candidates = await this.getByKarat(karat);
+      else candidates = await this.getAll();
 
-      if (status) {
-        candidates = await this.getByStatus(status);
-      } else if (branch_id) {
-        candidates = await this.getByBranch(branch_id);
-      } else if (karat !== null) {
-        candidates = await this.getByKarat(karat);
-      } else {
-        candidates = await this.getAll();
-      }
-
-      // تطبيق الفلاتر المتبقية
       if (status && karat !== null) {
         candidates = candidates.filter(i => Number(i.karat) === Number(karat));
       }
@@ -674,11 +400,8 @@
           String(manufacturer_code).toUpperCase()
         );
       }
-      if (category) {
-        candidates = candidates.filter(i => i.category === category);
-      }
+      if (category) candidates = candidates.filter(i => i.category === category);
 
-      // البحث النصي
       const q = String(query || '').trim().toLowerCase();
       if (q) {
         candidates = candidates.filter(i => {
@@ -695,66 +418,13 @@
       return candidates.slice(0, limit);
     }
 
-    /* ═══════════════════════════════════════════════════════════════
-       OFFLINE QUEUE OPERATIONS
-       ═══════════════════════════════════════════════════════════════ */
+    queueAdd(sale) { return this._req('offline_queue', 'readwrite', os => os.put(sale)); }
+    queueAll() { return this._req('offline_queue', 'readonly', os => os.getAll()); }
+    queueGet(id) { return this._req('offline_queue', 'readonly', os => os.get(id)); }
+    queueCount() { return this._req('offline_queue', 'readonly', os => os.count()); }
+    queueDelete(id) { return this._req('offline_queue', 'readwrite', os => os.delete(id)); }
+    queueClear() { return this._req('offline_queue', 'readwrite', os => os.clear()); }
 
-    /**
-     * إضافة فاتورة إلى الطابور
-     * @param {Object} sale
-     * @returns {Promise<string>}
-     */
-    queueAdd(sale) {
-      return this._req('offline_queue', 'readwrite', os => os.put(sale));
-    }
-
-    /**
-     * قراءة كل الفواتير
-     * @returns {Promise<Array>}
-     */
-    queueAll() {
-      return this._req('offline_queue', 'readonly', os => os.getAll());
-    }
-
-    /**
-     * قراءة فاتورة محددة
-     * @param {string} id
-     * @returns {Promise<Object|undefined>}
-     */
-    queueGet(id) {
-      return this._req('offline_queue', 'readonly', os => os.get(id));
-    }
-
-    /**
-     * عدد الفواتير
-     * @returns {Promise<number>}
-     */
-    queueCount() {
-      return this._req('offline_queue', 'readonly', os => os.count());
-    }
-
-    /**
-     * حذف فاتورة
-     * @param {string} id
-     * @returns {Promise<void>}
-     */
-    queueDelete(id) {
-      return this._req('offline_queue', 'readwrite', os => os.delete(id));
-    }
-
-    /**
-     * تفريغ كل الطابور
-     * @returns {Promise<void>}
-     */
-    queueClear() {
-      return this._req('offline_queue', 'readwrite', os => os.clear());
-    }
-
-    /**
-     * الفواتير الأقدم من مدة معينة
-     * @param {number} ageMs — المدة بالمللي ثانية
-     * @returns {Promise<Array>}
-     */
     async queueOlderThan(ageMs) {
       const all = await this.queueAll();
       const threshold = Date.now() - ageMs;
@@ -764,58 +434,20 @@
       });
     }
 
-    /* ═══════════════════════════════════════════════════════════════
-       METADATA OPERATIONS
-       ═══════════════════════════════════════════════════════════════ */
-
-    /**
-     * تخزين قيمة metadata
-     * @param {string} key
-     * @param {*} value
-     * @returns {Promise<string>}
-     */
     metaSet(key, value) {
       return this._req('metadata', 'readwrite', os =>
         os.put({ key, value, updatedAt: new Date().toISOString() })
       );
     }
 
-    /**
-     * قراءة قيمة metadata
-     * @param {string} key
-     * @returns {Promise<*>}
-     */
     async metaGet(key) {
       const row = await this._req('metadata', 'readonly', os => os.get(key));
       return row ? row.value : null;
     }
 
-    /**
-     * حذف مفتاح metadata
-     * @param {string} key
-     * @returns {Promise<void>}
-     */
-    metaDelete(key) {
-      return this._req('metadata', 'readwrite', os => os.delete(key));
-    }
+    metaDelete(key) { return this._req('metadata', 'readwrite', os => os.delete(key)); }
+    metaAll() { return this._req('metadata', 'readonly', os => os.getAll()); }
 
-    /**
-     * قراءة كل المفاتيح
-     * @returns {Promise<Array>}
-     */
-    metaAll() {
-      return this._req('metadata', 'readonly', os => os.getAll());
-    }
-
-    /* ═══════════════════════════════════════════════════════════════
-       PENDING ITEMS (لعمليات CRUD المحلية قبل المزامنة)
-       ═══════════════════════════════════════════════════════════════ */
-
-    /**
-     * إضافة عملية معلقة
-     * @param {Object} op
-     * @returns {Promise<string>}
-     */
     pendingAdd(op) {
       const entry = {
         localId: GMS.uid(),
@@ -825,101 +457,42 @@
       return this._req('pending_items', 'readwrite', os => os.put(entry));
     }
 
-    /**
-     * قراءة كل العمليات المعلقة
-     * @returns {Promise<Array>}
-     */
-    pendingAll() {
-      return this._req('pending_items', 'readonly', os => os.getAll());
-    }
+    pendingAll() { return this._req('pending_items', 'readonly', os => os.getAll()); }
+    pendingDelete(localId) { return this._req('pending_items', 'readwrite', os => os.delete(localId)); }
+    pendingClear() { return this._req('pending_items', 'readwrite', os => os.clear()); }
 
-    /**
-     * حذف عملية معلقة
-     * @param {string} localId
-     * @returns {Promise<void>}
-     */
-    pendingDelete(localId) {
-      return this._req('pending_items', 'readwrite', os => os.delete(localId));
-    }
-
-    /**
-     * تفريغ كل العمليات المعلقة
-     * @returns {Promise<void>}
-     */
-    pendingClear() {
-      return this._req('pending_items', 'readwrite', os => os.clear());
-    }
-
-    /* ═══════════════════════════════════════════════════════════════
-       STATISTICS & MAINTENANCE
-       ═══════════════════════════════════════════════════════════════ */
-
-    /**
-     * إحصائيات كاملة عن قاعدة البيانات
-     * @returns {Promise<Object>}
-     */
     async stats() {
       try {
-        const [
-          inventoryCount,
-          queueCount,
-          metaCount,
-          pendingCount,
-          sizeInfo,
-        ] = await Promise.all([
+        const [inventoryCount, queueCount, metaCount, pendingCount, sizeInfo] = await Promise.all([
           this.count(),
           this.queueCount(),
           this._req('metadata', 'readonly', os => os.count()),
           this._req('pending_items', 'readonly', os => os.count()),
           this._estimateSize(),
         ]);
-
         return {
-          inventoryCount,
-          queueCount,
-          metaCount,
-          pendingCount,
-          usage: sizeInfo.usage,
-          quota: sizeInfo.quota,
-          usagePercent: sizeInfo.quota > 0
-            ? (sizeInfo.usage / sizeInfo.quota) * 100
-            : 0,
+          inventoryCount, queueCount, metaCount, pendingCount,
+          usage: sizeInfo.usage, quota: sizeInfo.quota,
+          usagePercent: sizeInfo.quota > 0 ? (sizeInfo.usage / sizeInfo.quota) * 100 : 0,
         };
       } catch (e) {
         return {
-          inventoryCount: 0,
-          queueCount: 0,
-          metaCount: 0,
-          pendingCount: 0,
-          usage: 0,
-          quota: 0,
-          usagePercent: 0,
-          error: e.message,
+          inventoryCount: 0, queueCount: 0, metaCount: 0, pendingCount: 0,
+          usage: 0, quota: 0, usagePercent: 0, error: e.message,
         };
       }
     }
 
-    /**
-     * تقدير الحجم
-     * @returns {Promise<{usage:number, quota:number}>}
-     */
     async _estimateSize() {
       try {
         if (navigator.storage && navigator.storage.estimate) {
           const est = await navigator.storage.estimate();
-          return {
-            usage: est.usage || 0,
-            quota: est.quota || 0,
-          };
+          return { usage: est.usage || 0, quota: est.quota || 0 };
         }
       } catch (_) {}
       return { usage: 0, quota: 0 };
     }
 
-    /**
-     * إحصائيات حسب الحالة
-     * @returns {Promise<Object>}
-     */
     async statusBreakdown() {
       try {
         const [inStock, sold, reserved, returned, melted] = await Promise.all([
@@ -929,41 +502,23 @@
           this.countByStatus('RETURNED'),
           this.countByStatus('MELTED'),
         ]);
-
         return {
-          IN_STOCK: inStock,
-          SOLD: sold,
-          RESERVED: reserved,
-          RETURNED: returned,
-          MELTED: melted,
+          IN_STOCK: inStock, SOLD: sold, RESERVED: reserved,
+          RETURNED: returned, MELTED: melted,
           total: inStock + sold + reserved + returned + melted,
         };
       } catch (e) {
-        return {
-          IN_STOCK: 0, SOLD: 0, RESERVED: 0,
-          RETURNED: 0, MELTED: 0, total: 0,
-        };
+        return { IN_STOCK: 0, SOLD: 0, RESERVED: 0, RETURNED: 0, MELTED: 0, total: 0 };
       }
     }
 
-    /**
-     * إحصائيات حسب العيار
-     * @returns {Promise<Object>}
-     */
     async karatBreakdown() {
       try {
         const all = await this.getAll();
         const breakdown = {};
-
         GMS.KARAT_ORDER.forEach(k => {
-          breakdown[k] = {
-            count: 0,
-            netWeight: 0,
-            pureWeight: 0,
-            totalValue: 0,
-          };
+          breakdown[k] = { count: 0, netWeight: 0, pureWeight: 0, totalValue: 0 };
         });
-
         all.forEach(item => {
           const k = Number(item.karat);
           if (!breakdown[k]) {
@@ -974,27 +529,20 @@
           breakdown[k].pureWeight += Number(item.pure_weight || 0);
           breakdown[k].totalValue += Number(item.total_cost || 0);
         });
-
         return breakdown;
       } catch (e) {
         return {};
       }
     }
 
-    /**
-     * حذف قاعدة البيانات بالكامل
-     * @returns {Promise<void>}
-     */
     async nuke() {
       const cfg = GMS.IDB_CONFIG;
-
       if (this.db) {
         this.db.close();
         this.db = null;
         this.isOpen = false;
         this._openPromise = null;
       }
-
       return new Promise((resolve, reject) => {
         const req = indexedDB.deleteDatabase(cfg.DB_NAME);
         req.onsuccess = () => {
@@ -1008,11 +556,6 @@
       });
     }
 
-    /**
-     * تنظيف المخزون المُباع الأقدم من مدة معينة
-     * @param {number} ageMs
-     * @returns {Promise<number>}
-     */
     async pruneSoldItems(ageMs = 30 * 86400000) {
       const sold = await this.getByStatus('SOLD');
       const threshold = Date.now() - ageMs;
@@ -1022,7 +565,6 @@
           return isFinite(t) && t < threshold;
         })
         .map(item => item.id);
-
       if (!toDelete.length) return 0;
       await this.deleteMany(toDelete);
       return toDelete.length;
@@ -1033,6 +575,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §3 · CacheManager — ينسق الطبقتين
+     ✅ v5: getPrice() يقرأ من PriceManager أولاً
      ═════════════════════════════════════════════════════════════════════ */
   class CacheManagerClass {
 
@@ -1041,19 +584,10 @@
       this.idb = IDB;
     }
 
-    /* ─── Bootstrap ───────────────────────────────────────────────── */
-
-    /**
-     * تهيئة الذاكرة المؤقتة عند بدء التشغيل
-     * @param {Object} data
-     * @returns {Promise<Object>}
-     */
     async warmup(data = {}) {
       try {
-        // فتح قاعدة البيانات
         await this.idb.open();
 
-        // حفظ بيانات التهيئة في LS
         if (data.manufacturers) {
           this.ls.set(GMS.LS_KEYS.CACHE_MANUFACTURERS, data.manufacturers);
         }
@@ -1074,7 +608,6 @@
           this._deriveKaratBoard(data.price);
         }
 
-        // تنظيف المفاتيح المنتهية
         const pruned = this.ls.prune();
         if (pruned > 0) {
           console.log(`[Cache] Pruned ${pruned} expired keys`);
@@ -1094,7 +627,7 @@
 
     /**
      * اشتقاق جدول أسعار العيارات من سعر 24K
-     * @param {Object} priceObj
+     * ✅ v5: يستخدم PriceManager إذا متاح
      */
     _deriveKaratBoard(priceObj) {
       const price24 = Number(priceObj?.price_24) || GMS.APP_CONFIG.DEFAULT_PRICE_24;
@@ -1112,77 +645,109 @@
       return board;
     }
 
-    /* ─── High-level getters ──────────────────────────────────────── */
-
-    /**
-     * قراءة قائمة الماركات (مع fallback)
-     * @returns {Array}
-     */
     getManufacturers() {
       return this.ls.get(GMS.LS_KEYS.CACHE_MANUFACTURERS) || [];
     }
 
-    /**
-     * قراءة مصفوفة المصنعية
-     * @returns {Array}
-     */
     getWorkmanshipMatrix() {
       return this.ls.get(GMS.LS_KEYS.CACHE_WORKMANSHIP) || GMS.WORKMANSHIP_MATRIX;
     }
 
-    /**
-     * قراءة بيانات الموظف
-     * @returns {Object|null}
-     */
     getProfile() {
       return this.ls.get(GMS.LS_KEYS.CACHE_PROFILE);
     }
 
-    /**
-     * قراءة التفضيلات
-     * @returns {Object}
-     */
     getPreferences() {
       return this.ls.get(GMS.LS_KEYS.CACHE_PREFERENCES) || {};
     }
 
-    /**
-     * قراءة الفروع
-     * @returns {Array}
-     */
     getBranches() {
       return this.ls.get(GMS.LS_KEYS.CACHE_BRANCHES) || GMS.DEFAULT_BRANCHES;
     }
 
-    /**
-     * قراءة سعر الذهب
-     * @returns {Object}
-     */
+    /* ═══════════════════════════════════════════════════════════════
+       ✅ v5: getPrice() — المصدر الوحيد للحقيقة = PriceManager
+       ───────────────────────────────────────────────────────────────
+       الترتيب:
+         1. PriceManager (السعر اللحظي)
+         2. LS Cache (السعر اليدوي القديم)
+         3. Default (قيمة افتراضية)
+       ═══════════════════════════════════════════════════════════════ */
     getPrice() {
-      return this.ls.get(GMS.LS_KEYS.CACHE_PRICE) || {
+      /* 1 · أولوية للأسعار اللحظية */
+      try {
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+        if (PM && typeof PM.getCurrentPrices === 'function') {
+          const live = PM.getCurrentPrices();
+          if (live && live.price24 > 0) {
+            return {
+              price_24: live.price24,
+              price_22: live.price22,
+              price_21: live.price21,
+              price_18: live.price18,
+              price_14: live.price14,
+              scrap_price: live.scrapPrice,
+              spread: live.spread,
+              updated_at: live.fetchedAt || new Date().toISOString(),
+              source: live.sourceLabel || 'live',
+              sourceKey: live.source || 'live',
+              isLive: true,
+              usdPerOz: live.usdPerOz,
+              usdToEgp: live.usdToEgp,
+              status: live.status,
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('[Cache.getPrice] PriceManager error:', e);
+      }
+
+      /* 2 · Fallback: LS cache */
+      const cached = this.ls.get(GMS.LS_KEYS.CACHE_PRICE);
+      if (cached && cached.price_24 > 0) {
+        return {
+          ...cached,
+          isLive: false,
+          source: cached.source || 'manual',
+        };
+      }
+
+      /* 3 · Default */
+      return {
         price_24: GMS.APP_CONFIG.DEFAULT_PRICE_24,
         updated_at: null,
+        isLive: false,
+        source: 'default',
       };
     }
 
-    /**
-     * قراءة جدول العيارات
-     * @returns {Object}
-     */
     getKaratBoard() {
+      /* ✅ v5: نبني الجدول من PriceManager مباشرة */
+      try {
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+        if (PM && typeof PM.getCurrentPrices === 'function') {
+          const live = PM.getCurrentPrices();
+          if (live && live.price24 > 0) {
+            const board = {};
+            GMS.KARAT_ORDER.forEach(k => {
+              board[k] = {
+                karat: k,
+                ratio: GMS.karatRatio(k),
+                pricePerGram: GMS.round(live.price24 * GMS.karatRatio(k), 2),
+              };
+            });
+            return board;
+          }
+        }
+      } catch (_) {}
+
       return this.ls.get(GMS.LS_KEYS.CACHE_KARAT_BOARD) || this._deriveKaratBoard(this.getPrice());
     }
 
     /* ═════════════════════════════════════════════════════════════════
-       ✅ NEW: MANUFACTURERS MANAGEMENT
-       ─────────────────────────────────────────────────────────────────
-       إدارة كاملة للمصانع مع تخزين دائم في LocalStorage
+       ✅ MANUFACTURERS MANAGEMENT
        ═════════════════════════════════════════════════════════════════ */
 
-    /**
-     * قراءة قائمة المصانع المحفوظة (مع fallback للافتراضي)
-     * @returns {Array}
-     */
     getManufacturersList() {
       try {
         const raw = localStorage.getItem(GMS.LS_KEYS.MANUFACTURERS);
@@ -1194,27 +759,14 @@
         }
       } catch (_) {}
 
-      /* fallback: القائمة الافتراضية من config */
       return GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
     }
 
-    /**
-     * حفظ قائمة المصانع كاملة
-     * @param {Array} list
-     * @returns {boolean}
-     */
     setManufacturersList(list) {
       if (!Array.isArray(list)) return false;
-
       try {
-        localStorage.setItem(
-          GMS.LS_KEYS.MANUFACTURERS,
-          JSON.stringify(list)
-        );
-
-        /* حدِّث النسخة المؤقتة أيضاً */
+        localStorage.setItem(GMS.LS_KEYS.MANUFACTURERS, JSON.stringify(list));
         this.ls.set(GMS.LS_KEYS.CACHE_MANUFACTURERS, list);
-
         return true;
       } catch (e) {
         console.warn('[Cache.setManufacturersList]', e.message);
@@ -1222,24 +774,15 @@
       }
     }
 
-    /**
-     * إضافة مصنع جديد
-     * @param {Object} manufacturer
-     * @returns {Object|null}
-     */
     addManufacturer(manufacturer) {
       if (!manufacturer) return null;
-
       const list = this.getManufacturersList();
-
-      /* التحقق من عدم تكرار الـ code */
       const exists = list.find(m => m.code === manufacturer.code);
       if (exists) {
         console.warn('[Cache.addManufacturer] Code already exists:', manufacturer.code);
         return null;
       }
 
-      /* إضافة الحقول الافتراضية */
       const entry = {
         id: 'manu-' + GMS.uid(),
         code: manufacturer.code || 'X',
@@ -1265,22 +808,15 @@
       return entry;
     }
 
-    /**
-     * تحديث مصنع موجود
-     * @param {string} id
-     * @param {Object} updates
-     * @returns {Object|null}
-     */
     updateManufacturer(id, updates = {}) {
       const list = this.getManufacturersList();
       const idx = list.findIndex(m => m.id === id);
-
       if (idx < 0) return null;
 
       list[idx] = {
         ...list[idx],
         ...updates,
-        id: list[idx].id,         /* لا يُسمح بتغيير id */
+        id: list[idx].id,
         updatedAt: new Date().toISOString(),
       };
 
@@ -1288,46 +824,25 @@
       return list[idx];
     }
 
-    /**
-     * حذف مصنع
-     * @param {string} id
-     * @returns {boolean}
-     */
     deleteManufacturer(id) {
       const list = this.getManufacturersList();
       const filtered = list.filter(m => m.id !== id);
-
       if (filtered.length === list.length) return false;
-
       this.setManufacturersList(filtered);
       return true;
     }
 
-    /**
-     * إعادة ضبط المصانع إلى الافتراضي
-     * @returns {Array}
-     */
     resetManufacturers() {
       const defaults = GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
       this.setManufacturersList(defaults);
       return defaults;
     }
 
-    /**
-     * قراءة مصنع بالمعرف
-     * @param {string} id
-     * @returns {Object|null}
-     */
     getManufacturerById(id) {
       const list = this.getManufacturersList();
       return list.find(m => m.id === id) || null;
     }
 
-    /**
-     * قراءة مصنع بالكود
-     * @param {string} code
-     * @returns {Object|null}
-     */
     getManufacturerByCode(code) {
       const list = this.getManufacturersList();
       return list.find(m =>
@@ -1335,30 +850,20 @@
       ) || null;
     }
 
-    /* ─── Invalidation ────────────────────────────────────────────── */
+    /* ═════════════════════════════════════════════════════════════════
+       INVALIDATION
+       ═════════════════════════════════════════════════════════════════ */
 
-    /**
-     * إبطال مفتاح محدد
-     * @param {string} key
-     */
     invalidate(key) {
       this.ls.del(key);
       console.log('[Cache] Invalidated:', key);
     }
 
-    /**
-     * إبطال كل LocalStorage
-     */
     invalidateAllLS() {
       this.ls.clear();
       console.log('[Cache] Invalidated all LocalStorage');
     }
 
-    /**
-     * إبطال صنف معين من IndexedDB (بعد تعديل)
-     * @param {string} id
-     * @returns {Promise<void>}
-     */
     async invalidateInventoryItem(id) {
       try {
         const item = await this.idb.get(id);
@@ -1371,38 +876,20 @@
       }
     }
 
-    /**
-     * إبطال مجموعة من الأصناف
-     * @param {Array<string>} ids
-     * @returns {Promise<void>}
-     */
     async invalidateInventoryItems(ids) {
       if (!ids || !ids.length) return;
       const now = new Date().toISOString();
-
       try {
         const items = await Promise.all(ids.map(id => this.idb.get(id)));
         const updated = items
           .filter(Boolean)
           .map(item => ({ ...item, updated_at: now }));
-
         await this.idb.putMany(updated);
       } catch (e) {
         console.warn('[Cache.invalidateInventoryItems]', e);
       }
     }
 
-    /* ─── Realtime-style invalidation ─────────────────────────────── */
-
-    /**
-     * معالجة حدث realtime — يبطل المفاتيح المتأثرة
-     * @param {Object} event
-     * @param {string} event.table
-     * @param {string} event.action
-     * @param {string} [event.id]
-     * @param {Object} [event.row]
-     * @returns {Promise<void>}
-     */
     async handleRealtimeInvalidation(event) {
       if (!event || !event.table) return;
 
@@ -1450,12 +937,6 @@
       console.log('[Cache] Realtime invalidated:', table, action);
     }
 
-    /* ─── Statistics ──────────────────────────────────────────────── */
-
-    /**
-     * إحصائيات كاملة عن الذاكرة
-     * @returns {Promise<Object>}
-     */
     async getStats() {
       const [idbStats, idbStatus, idbKarat] = await Promise.all([
         this.idb.stats(),
@@ -1477,16 +958,6 @@
       };
     }
 
-    /* ─── Maintenance ─────────────────────────────────────────────── */
-
-    /**
-     * تنظيف شامل
-     * @param {Object} [opts]
-     * @param {boolean} [opts.pruneLS=true]
-     * @param {boolean} [opts.pruneSoldItems=true]
-     * @param {number} [opts.soldAgeMs]
-     * @returns {Promise<Object>}
-     */
     async cleanup(opts = {}) {
       const {
         pruneLS = true,
@@ -1494,16 +965,10 @@
         soldAgeMs = 30 * 86400000,
       } = opts;
 
-      const result = {
-        lsPruned: 0,
-        itemsPruned: 0,
-        errors: [],
-      };
+      const result = { lsPruned: 0, itemsPruned: 0, errors: [] };
 
       try {
-        if (pruneLS) {
-          result.lsPruned = this.ls.prune();
-        }
+        if (pruneLS) result.lsPruned = this.ls.prune();
       } catch (e) {
         result.errors.push('LS prune: ' + e.message);
       }
@@ -1519,20 +984,12 @@
       return result;
     }
 
-    /**
-     * مسح شامل لكل الذاكرة المؤقتة
-     * @returns {Promise<void>}
-     */
     async clearAll() {
       this.ls.clear();
       await this.idb.nuke();
       console.log('[Cache] All cleared');
     }
 
-    /**
-     * تصدير snapshot للحالة
-     * @returns {Promise<Object>}
-     */
     async exportSnapshot() {
       const [inventory, queue, meta] = await Promise.all([
         this.idb.getAll(),
@@ -1544,11 +1001,7 @@
         exportedAt: new Date().toISOString(),
         version: GMS.APP_CONFIG.VERSION,
         ls: {},
-        idb: {
-          inventory,
-          queue,
-          meta,
-        },
+        idb: { inventory, queue, meta },
       };
     }
   }
@@ -1559,7 +1012,6 @@
      §4 · Auto-cleanup على تحميل التطبيق
      ═════════════════════════════════════════════════════════════════════ */
   function scheduleAutoCleanup() {
-    // تشغيل التنظيف بعد 10 ثوان من التحميل
     setTimeout(async () => {
       try {
         const result = await Cache.cleanup({
@@ -1590,7 +1042,6 @@
   GMS.LSCacheClass = LSCacheClass;
   GMS.CacheManagerClass = CacheManagerClass;
 
-  /* تفعيل التنظيف التلقائي */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', scheduleAutoCleanup);
   } else {
@@ -1616,6 +1067,11 @@
   console.log(
     `%c🏭 Manufacturers API: getList/setList/add/update/delete/reset`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v5: getPrice() → PriceManager (Live) → LS Cache → Default`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
