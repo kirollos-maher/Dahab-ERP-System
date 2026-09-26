@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/21-views-settings.js
-   الإعدادات الشاملة:
+   الإعدادات الشاملة — النسخة v5.0
      - إعدادات عامة (الفروع، الماركات)
      - المظهر واللغة والصوت
-     - لوحة الأسعار وهامش الشراء
+     - ✅ v5: لوحة الأسعار اللحظية (PriceManager)
      - سياسة الإرجاع
      - حدود الخسس
      - إعدادات Supabase
@@ -12,6 +12,13 @@
      - الأعمدة المفضلة
      - نسخ احتياطي واستعادة
      - منطقة الخطر
+
+   ✅ v5 التغييرات الرئيسية:
+     • قسم الأسعار يعتمد كلياً على PriceManager
+     • لا يوجد إدخال يدوي لسعر 24K
+     • عرض مباشر للأسعار اللحظية + المصدر + آخر تحديث
+     • التحكم فقط في هامش الصاغة وفترة التحديث وهامش الكسر
+     • تحديث تلقائي عند تغيير السعر
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -48,6 +55,11 @@
       lang: 'ar',
       supabaseUrl: '',
       supabaseKey: '',
+
+      /* ✅ v5: إعدادات PriceManager */
+      offset: 0,
+      autoRefreshEnabled: true,
+      priceManagerInterval: 60,
     },
 
     /* آخر نسخة محفوظة */
@@ -105,14 +117,26 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §3 · DATA LOADING
-     ───────────────────────────────────────────────────────────────────── */
+     ─────────────────────────────────────────────────────────────────────
+     ✅ v5: loadSettings يقرأ السعر من PriceManager
+     ═════════════════════════════════════════════════════════════════════ */
 
   function loadSettings() {
-    /* Price */
+    /* ✅ v5: السعر الآن من PriceManager (لا يوجد إدخال يدوي) */
     try {
-      const price = GMS.Cache?.getPrice();
-      SetState.draft.price24 = Number(price?.price_24)
-        || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+      const PM = window.GMS?.PriceManager || window.PriceManager;
+      if (PM && typeof PM.getCurrentPrices === 'function') {
+        const live = PM.getCurrentPrices();
+        SetState.draft.price24 = live?.price24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
+
+        /* قراءة إعدادات PriceManager */
+        const pmStatus = PM.getStatus?.() || {};
+        SetState.draft.offset = pmStatus.offset || 0;
+        SetState.draft.autoRefreshEnabled = pmStatus.autoRefresh !== false;
+        SetState.draft.priceManagerInterval = Math.round((pmStatus.interval || 60000) / 1000);
+      } else {
+        SetState.draft.price24 = GMS.APP_CONFIG.DEFAULT_PRICE_24;
+      }
     } catch (_) {
       SetState.draft.price24 = GMS.APP_CONFIG.DEFAULT_PRICE_24;
     }
@@ -211,7 +235,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · RENDERERS — TABS
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderTabs() {
     const tabs = [
@@ -244,7 +268,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · TAB: GENERAL
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderGeneralTab() {
     const d = SetState.draft;
@@ -425,7 +449,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §6 · TAB: APPEARANCE
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderAppearanceTab() {
     const d = SetState.draft;
@@ -638,75 +662,307 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · TAB: PRICING
-     ───────────────────────────────────────────────────────────────────── */
+     §7 · TAB: PRICING — ✅ v5 (الأسعار اللحظية من PriceManager)
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderPricingTab() {
     const d = SetState.draft;
     const buy24 = GMS.round(d.price24 * (1 - d.buyMargin / 100), 2);
 
+    /* ✅ v5: قراءة بيانات PriceManager */
+    const PM = window.GMS?.PriceManager || window.PriceManager;
+    const pmPrices = PM?.getCurrentPrices?.() || {};
+    const pmStatus = PM?.getStatus?.() || {};
+    const pmActive = PM && pmPrices.price24 > 0;
+
+    const livePrice24 = pmPrices.price24 || d.price24 || 0;
+    const livePrice22 = pmPrices.price22 || 0;
+    const livePrice21 = pmPrices.price21 || 0;
+    const livePrice18 = pmPrices.price18 || 0;
+    const livePrice14 = pmPrices.price14 || 0;
+    const liveScrap = pmPrices.scrapPrice || 0;
+
+    const liveOffset = pmStatus.offset || 0;
+    const liveInterval = Math.round((pmStatus.interval || 60000) / 1000);
+    const autoRefresh = pmStatus.autoRefresh !== false;
+
+    const statusText = {
+      fresh: 'حديث',
+      stale: 'قديم',
+      fetching: 'جارٍ الجلب…',
+      error: 'خطأ',
+      idle: 'غير مُفعّل',
+    }[pmStatus.status] || 'غير معروف';
+
+    const statusColor = {
+      fresh: 'var(--success)',
+      stale: 'var(--warn)',
+      fetching: 'var(--info)',
+      error: 'var(--danger)',
+      idle: 'var(--muted)',
+    }[pmStatus.status] || 'var(--muted)';
+
+    const sourceLabel = pmStatus.sourceLabel || '—';
+    const fetchedAt = pmStatus.fetchedAt ? GMS.timeAgo(pmStatus.fetchedAt) : '—';
+    const usdPerOz = pmPrices.usdPerOz || 0;
+    const usdToEgp = pmPrices.usdToEgp || 0;
+    const lastError = pmStatus.error || pmPrices.error || '';
+
     return `
       <div style="max-width:900px;margin:0 auto">
-        <div class="card">
+
+        <!-- ══════════════════════════════════════════════════════
+             ✅ v5: بطاقة الأسعار اللحظية (LIVE — المصدر الوحيد)
+             ══════════════════════════════════════════════════════ -->
+        <div class="card" style="margin-bottom:16px;
+                    background:linear-gradient(135deg,
+                      color-mix(in srgb,var(--success) 8%,var(--surface)) 0%,
+                      var(--surface) 100%);
+                    border-color:color-mix(in srgb,var(--success) 30%,var(--border))">
+
           <div class="card-head">
             <h3>
-              <i data-lucide="trending-up"></i>
-              لوحة الأسعار
+              <i data-lucide="radio" style="color:var(--success)"></i>
+              أسعار الذهب اللحظية — Live Gold Prices
             </h3>
+            <div class="spacer" style="flex:1"></div>
+
+            <span class="chip" id="pm-status-chip"
+                  style="background:${statusColor}20;
+                         color:${statusColor};
+                         border:1px solid ${statusColor}40">
+              <i data-lucide="${pmStatus.status === 'fetching' ? 'loader-circle' : 'wifi'}"
+                 style="width:12px;height:12px;
+                        ${pmStatus.status === 'fetching' ? 'animation:spin 1s linear infinite' : ''}"></i>
+              ${statusText}
+            </span>
           </div>
 
           <div class="card-body">
-            <div class="field" style="max-width:340px">
-              <label>سعر جرام 24K الحالي (ج.م)</label>
-              <input type="number" id="set-price24"
-                     step="0.5" min="100"
-                     value="${d.price24}"
-                     class="big mono">
-              <span class="hint">
-                هذا السعر يُستخدم لحساب كل أسعار العيارات
+
+            ${!pmActive ? `
+              <div style="padding:20px;text-align:center;
+                          background:var(--warn-bg);border-radius:11px;
+                          border:1px solid color-mix(in srgb,var(--warn) 30%,var(--border));
+                          color:var(--warn);font-weight:700;
+                          margin-bottom:16px">
+                <i data-lucide="alert-triangle"
+                   style="width:20px;height:20px;
+                          display:inline;vertical-align:-4px"></i>
+                محرك الأسعار اللحظية لم يُفعَّل بعد.
+                اضغط "تحديث فوري" لبدء الجلب من الإنترنت.
+              </div>
+            ` : ''}
+
+            <!-- ═══ 4 بطاقات معلومات ═══ -->
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);
+                        gap:12px;margin-bottom:16px">
+              <div style="padding:12px 14px;background:var(--surface);
+                          border-radius:10px;
+                          border:1px solid var(--border)">
+                <div style="font-size:10.5px;font-weight:800;
+                            color:var(--muted);text-transform:uppercase">
+                  المصدر
+                </div>
+                <div style="font-size:13px;font-weight:900;
+                            margin-top:5px;color:var(--primary)">
+                  ${GMS.esc(sourceLabel)}
+                </div>
+              </div>
+
+              <div style="padding:12px 14px;background:var(--surface);
+                          border-radius:10px;
+                          border:1px solid var(--border)">
+                <div style="font-size:10.5px;font-weight:800;
+                            color:var(--muted);text-transform:uppercase">
+                  آخر تحديث
+                </div>
+                <div style="font-size:13px;font-weight:900;
+                            margin-top:5px">
+                  ${GMS.esc(fetchedAt)}
+                </div>
+              </div>
+
+              <div style="padding:12px 14px;background:var(--surface);
+                          border-radius:10px;
+                          border:1px solid var(--border)">
+                <div style="font-size:10.5px;font-weight:800;
+                            color:var(--muted);text-transform:uppercase">
+                  XAU/USD
+                </div>
+                <div class="mono" style="font-size:13px;font-weight:900;
+                            margin-top:5px;direction:ltr">
+                  $${GMS.moneyFmt(usdPerOz)}
+                </div>
+              </div>
+
+              <div style="padding:12px 14px;background:var(--surface);
+                          border-radius:10px;
+                          border:1px solid var(--border)">
+                <div style="font-size:10.5px;font-weight:800;
+                            color:var(--muted);text-transform:uppercase">
+                  USD/EGP
+                </div>
+                <div class="mono" style="font-size:13px;font-weight:900;
+                            margin-top:5px;direction:ltr">
+                  ${GMS.moneyFmt(usdToEgp)}
+                </div>
+              </div>
+            </div>
+
+            <!-- ═══ بطاقة الأسعار المُحدَّثة (5 عيارات) ═══ -->
+            <div style="padding:16px 18px;background:var(--gold-soft);
+                        border-radius:12px;
+                        border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
+                        margin-bottom:16px">
+              <div style="font-size:11px;font-weight:800;
+                          color:var(--warn);text-transform:uppercase;
+                          margin-bottom:12px;display:flex;
+                          align-items:center;gap:6px">
+                <i data-lucide="coins" style="width:12px;height:12px"></i>
+                الأسعار المُحدَّثة تلقائياً (ج.م/جم)
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(5,1fr);
+                          gap:10px">
+                ${[
+                  { label: '24K', val: livePrice24, ratio: '1.0000' },
+                  { label: '22K', val: livePrice22, ratio: '0.9167' },
+                  { label: '21K', val: livePrice21, ratio: '0.8750' },
+                  { label: '18K', val: livePrice18, ratio: '0.7500' },
+                  { label: '14K', val: livePrice14, ratio: '0.5833' },
+                ].map(k => `
+                  <div style="padding:11px 10px;background:var(--surface);
+                              border-radius:10px;text-align:center">
+                    <div style="font-size:11.5px;font-weight:800;
+                                color:var(--muted)">${k.label}</div>
+                    <div class="mono" style="font-size:15px;font-weight:900;
+                                color:var(--primary);margin-top:4px;
+                                letter-spacing:-.3px">
+                      ${GMS.moneyFmt(k.val)}
+                    </div>
+                    <div style="font-size:10px;color:var(--muted);
+                                margin-top:3px">${k.ratio}</div>
+                  </div>
+                `).join('')}
+              </div>
+
+              <!-- سعر شراء الكسر -->
+              <div style="margin-top:12px;padding:10px 14px;
+                          background:var(--surface);border-radius:10px;
+                          display:flex;justify-content:space-between;
+                          align-items:center">
+                <div style="font-size:11.5px;font-weight:800;
+                            color:var(--muted)">
+                  <i data-lucide="recycle"
+                     style="width:12px;height:12px;
+                            display:inline;vertical-align:-2px"></i>
+                  سعر شراء الكسر
+                </div>
+                <div class="mono" style="font-size:15px;font-weight:900;
+                            color:var(--success)">
+                  ${GMS.moneyFmt(liveScrap)} ج.م
+                </div>
+              </div>
+            </div>
+
+            <!-- ═══ ضبط الهامش والتحديث ═══ -->
+            <div class="grid-form" style="gap:14px;margin-bottom:16px">
+
+              <div class="field">
+                <label style="display:flex;align-items:center;
+                              justify-content:space-between">
+                  <span>هامش الصاغة (Spread) — ج.م/جم</span>
+                  <span class="mono" id="pm-offset-display"
+                        style="color:var(--primary);font-weight:900">
+                    ${liveOffset > 0 ? '+' : ''}${GMS.moneyFmt(liveOffset)} ج.م
+                  </span>
+                </label>
+                <input type="number" id="set-pm-offset"
+                       step="0.5" min="-100" max="100"
+                       value="${liveOffset}"
+                       class="mono"
+                       style="font-size:15px;font-weight:800;
+                              text-align:center">
+                <span class="hint">
+                  يُضاف على سعر البورصة (موجب = أغلى، سالب = أرخص)
+                </span>
+              </div>
+
+              <div class="field">
+                <label>فترة التحديث التلقائي (ثانية)</label>
+                <input type="number" id="set-pm-interval"
+                       step="5" min="10" max="600"
+                       value="${liveInterval}"
+                       class="mono"
+                       style="font-size:15px;font-weight:800;
+                              text-align:center">
+                <span class="hint">من 10 إلى 600 ثانية</span>
+              </div>
+            </div>
+
+            <!-- ═══ Toggle التحديث التلقائي ═══ -->
+            <div class="setting-item" style="margin-bottom:16px">
+              <div class="si-body">
+                <div class="si-title">
+                  <i data-lucide="refresh-cw"
+                     style="width:13px;height:13px;
+                            display:inline;vertical-align:-2px"></i>
+                  التحديث التلقائي
+                </div>
+                <div class="si-desc">
+                  جلب الأسعار من الإنترنت تلقائياً كل
+                  <b>${liveInterval}</b> ثانية
+                </div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="set-pm-auto-refresh"
+                       ${autoRefresh ? 'checked' : ''}>
+                <span class="track"></span>
+              </label>
+            </div>
+
+            <!-- ═══ أزرار التحكم ═══ -->
+            <div style="display:flex;gap:9px;flex-wrap:wrap">
+              <button class="btn btn-primary" id="set-pm-sync-now"
+                      type="button">
+                <i data-lucide="download-cloud"></i>
+                تحديث فوري
+              </button>
+
+              <button class="btn btn-ghost" id="set-pm-reset-offset"
+                      type="button">
+                <i data-lucide="rotate-ccw"></i>
+                تصفير الهامش
+              </button>
+
+              <div class="spacer" style="flex:1"></div>
+
+              <span class="chip info" style="font-size:10.5px">
+                <i data-lucide="zap" style="width:11px;height:11px"></i>
+                3 مصادر احتياطية
               </span>
             </div>
 
-            <div style="margin-top:20px;
-                        padding:16px;background:var(--surface-2);
-                        border-radius:12px;
-                        border:1px solid var(--border)">
-              <div style="font-size:11px;font-weight:800;color:var(--muted);
-                          text-transform:uppercase;letter-spacing:.5px;
-                          margin-bottom:12px">
-                الأسعار المشتقة
+            ${lastError ? `
+              <div style="margin-top:14px;padding:12px 14px;
+                          background:var(--danger-bg);
+                          border-radius:10px;
+                          border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));
+                          font-size:11.5px;font-weight:700;
+                          color:var(--danger)">
+                <i data-lucide="alert-circle"
+                   style="width:13px;height:13px;
+                          display:inline;vertical-align:-2px"></i>
+                ${GMS.esc(lastError)}
               </div>
-
-              <div id="set-derived-prices" style="display:grid;
-                          grid-template-columns:repeat(3,1fr);gap:10px">
-                ${GMS.KARAT_ORDER.map(k => {
-                  const price = GMS.round(d.price24 * GMS.karatRatio(k), 2);
-                  return `
-                    <div style="padding:11px 13px;background:var(--surface);
-                                border-radius:10px;
-                                border:1px solid var(--border);
-                                text-align:center">
-                      <div style="font-size:11.5px;font-weight:800;
-                                  color:var(--muted);margin-bottom:5px">
-                        ${k}K
-                      </div>
-                      <div class="mono" style="font-size:15px;font-weight:900;
-                                  color:var(--primary);
-                                  letter-spacing:-.3px">
-                        ${GMS.moneyFmt(price)}
-                      </div>
-                      <div style="font-size:10px;color:var(--muted);
-                                  font-weight:700;margin-top:3px">
-                        ${GMS.karatRatio(k).toFixed(4)}
-                      </div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            </div>
+            ` : ''}
           </div>
         </div>
 
+        <!-- ══════════════════════════════════════════════════════
+             هامش شراء الكسر
+             ══════════════════════════════════════════════════════ -->
         <div class="card">
           <div class="card-head">
             <h3>
@@ -758,13 +1014,72 @@
             </div>
           </div>
         </div>
+
+        <!-- ══════════════════════════════════════════════════════
+             قائمة المصادر
+             ══════════════════════════════════════════════════════ -->
+        <div class="card">
+          <div class="card-head">
+            <h3>
+              <i data-lucide="globe"></i>
+              مصادر البيانات
+            </h3>
+            <div class="spacer" style="flex:1"></div>
+            <span class="card-sub">
+              استراتيجية Fallback متعددة
+            </span>
+          </div>
+
+          <div class="card-body">
+            <div style="display:grid;
+                        grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+                        gap:10px">
+              ${[
+                { name: 'XAUS.com', icon: 'activity', desc: 'سعر الأونصة العالمي' },
+                { name: 'GoldPrice.dev', icon: 'gem', desc: 'سعر XAU/USD' },
+                { name: 'ExchangeRate.fun', icon: 'dollar-sign', desc: 'سعر صرف USD/EGP' },
+                { name: 'currency-api (CDN)', icon: 'database', desc: 'احتياطي لسعر الصرف' },
+              ].map(s => `
+                <div style="padding:11px 13px;background:var(--surface-2);
+                            border-radius:10px;
+                            border:1px solid var(--border);
+                            display:flex;align-items:center;gap:10px">
+                  <div style="width:32px;height:32px;border-radius:9px;
+                              background:var(--gold-soft);
+                              display:grid;place-items:center;
+                              color:var(--warn);flex-shrink:0">
+                    <i data-lucide="${s.icon}" style="width:15px;height:15px"></i>
+                  </div>
+                  <div style="min-width:0">
+                    <div style="font-size:12px;font-weight:800">
+                      ${GMS.esc(s.name)}
+                    </div>
+                    <div style="font-size:10.5px;color:var(--muted);
+                                font-weight:600;margin-top:2px">
+                      ${GMS.esc(s.desc)}
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+
+            <div style="margin-top:14px;padding:12px 14px;
+                        background:var(--success-bg);border-radius:10px;
+                        font-size:11.5px;line-height:1.8;
+                        color:var(--text-2);font-weight:600">
+              <b style="color:var(--success)">✓ الأسعار اللحظية مفعّلة</b><br>
+              لا يوجد إدخال يدوي — النظام يجلب الأسعار تلقائياً
+              من البورصة العالمية مع تحويل لـ EGP.
+            </div>
+          </div>
+        </div>
       </div>
     `;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
      §8 · TAB: RETURNS
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderReturnsTab() {
     const d = SetState.draft;
@@ -866,7 +1181,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §9 · TAB: LOSSES
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderLossesTab() {
     const d = SetState.draft;
@@ -1016,7 +1331,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §10 · TAB: SYNC
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderSyncTab() {
     const d = SetState.draft;
@@ -1146,7 +1461,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §11 · TAB: SUPABASE
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderSupabaseTab() {
     const d = SetState.draft;
@@ -1254,7 +1569,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §12 · TAB: SESSION
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderSessionTab() {
     const profile = GMS.Auth?.profile;
@@ -1426,7 +1741,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §13 · TAB: BACKUP
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderBackupTab() {
     const lsSize = GMS.LS?.size?.() || 0;
@@ -1552,7 +1867,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §14 · TAB: DANGER
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderDangerTab() {
     return `
@@ -1694,7 +2009,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §15 · MAIN RENDER
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function render(root) {
     /* Guard */
@@ -1780,7 +2095,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §16 · BIND CONTROLS
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
     /* Tabs */
@@ -1843,7 +2158,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §17 · BIND GENERAL TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindGeneralTab() {
     const themeSelect = document.getElementById('set-default-theme');
@@ -1866,7 +2181,6 @@
     if (soundToggle) {
       soundToggle.onchange = () => {
         SetState.draft.soundEnabled = soundToggle.checked;
-        /* Apply immediately */
         GMS.Beep?.setEnabled?.(soundToggle.checked);
         markDirty();
       };
@@ -1893,7 +2207,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §18 · BIND APPEARANCE TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindAppearanceTab() {
     /* Theme cards */
@@ -1964,57 +2278,131 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · BIND PRICING TAB
-     ───────────────────────────────────────────────────────────────────── */
+     §19 · BIND PRICING TAB — ✅ v5
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindPricingTab() {
-    const priceInput = document.getElementById('set-price24');
+
+    /* ══════════════════════════════════════════════════════
+       ✅ v5: أزرار PriceManager
+       ══════════════════════════════════════════════════════ */
+
+    /* 1 · تحديث فوري */
+    const syncBtn = document.getElementById('set-pm-sync-now');
+    if (syncBtn) {
+      syncBtn.onclick = async () => {
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+        if (!PM) {
+          return GMS.Toast?.err?.('محرك الأسعار غير مُفعّل');
+        }
+
+        const icon = syncBtn.querySelector('i, svg');
+        if (icon) icon.style.animation = 'spin 1s linear infinite';
+        syncBtn.disabled = true;
+
+        try {
+          await PM.syncNow();
+          setTimeout(() => render(document.getElementById('page')), 400);
+        } catch (e) {
+          GMS.Toast?.err?.('فشل التحديث', e.message);
+        } finally {
+          if (icon) icon.style.animation = '';
+          syncBtn.disabled = false;
+        }
+      };
+    }
+
+    /* 2 · تصفير الهامش */
+    const resetOffsetBtn = document.getElementById('set-pm-reset-offset');
+    if (resetOffsetBtn) {
+      resetOffsetBtn.onclick = () => {
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+        if (!PM) return;
+
+        PM.setOffset(0);
+
+        const offsetInput = document.getElementById('set-pm-offset');
+        if (offsetInput) offsetInput.value = 0;
+
+        const displayEl = document.getElementById('pm-offset-display');
+        if (displayEl) displayEl.textContent = '0.00 ج.م';
+
+        GMS.Beep?.info?.();
+        GMS.Toast?.ok?.('تم تصفير هامش الصاغة');
+      };
+    }
+
+    /* 3 · هامش الصاغة — عند التغيير */
+    const offsetInput = document.getElementById('set-pm-offset');
+    if (offsetInput) {
+      offsetInput.oninput = () => {
+        const v = parseFloat(offsetInput.value) || 0;
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+
+        if (PM) PM.setOffset(v);
+
+        const displayEl = document.getElementById('pm-offset-display');
+        if (displayEl) {
+          displayEl.textContent = `${v > 0 ? '+' : ''}${GMS.moneyFmt(v)} ج.م`;
+        }
+
+        SetState.draft.offset = v;
+      };
+    }
+
+    /* 4 · فترة التحديث التلقائي */
+    const intervalInput = document.getElementById('set-pm-interval');
+    if (intervalInput) {
+      intervalInput.onchange = () => {
+        let v = parseInt(intervalInput.value) || 60;
+        v = Math.max(10, Math.min(600, v));
+        intervalInput.value = v;
+
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+        if (PM) {
+          const wasActive = PM.getStatus().autoRefresh;
+          PM.startAutoRefresh(v * 1000);
+          if (!wasActive) PM.stopAutoRefresh();
+        }
+
+        SetState.draft.priceManagerInterval = v;
+        GMS.Toast?.info?.(`فترة التحديث: ${v} ثانية`);
+      };
+    }
+
+    /* 5 · Toggle التحديث التلقائي */
+    const autoToggle = document.getElementById('set-pm-auto-refresh');
+    if (autoToggle) {
+      autoToggle.onchange = () => {
+        const enabled = autoToggle.checked;
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+
+        if (PM) PM.setAutoRefresh(enabled);
+
+        SetState.draft.autoRefreshEnabled = enabled;
+
+        GMS.Beep?.info?.();
+        GMS.Toast?.ok?.(
+          enabled ? 'تم تفعيل التحديث التلقائي' : 'تم إيقاف التحديث التلقائي'
+        );
+      };
+    }
+
+    /* ══════════════════════════════════════════════════════
+       هامش شراء الكسر (يبقى يدوي — إعداد عمل)
+       ══════════════════════════════════════════════════════ */
+
     const marginInput = document.getElementById('set-buy-margin');
 
-    const recalcDerived = () => {
-      const price = readNumber('set-price24', 4500);
+    function recalcBuyMargin() {
+      const price = GMS.PriceManager?.current?.()
+        || GMS.Cache?.getPrice?.()?.price_24
+        || GMS.APP_CONFIG.DEFAULT_PRICE_24;
       const margin = readNumber('set-buy-margin', 8);
-
-      /* حساب سعر الشراء */
       const buy24 = GMS.round(price * (1 - margin / 100), 2);
 
       const buyDisplay = document.getElementById('set-buy24-display');
       if (buyDisplay) buyDisplay.value = GMS.moneyFmt(buy24) + ' ج.م';
-
-      /* ✅ تحديث شبكة الأسعار المشتقة */
-      const grid = document.getElementById('set-derived-prices');
-      if (grid) {
-        grid.innerHTML = GMS.KARAT_ORDER.map(k => {
-          const karatPrice = GMS.round(price * GMS.karatRatio(k), 2);
-          return `
-            <div style="padding:11px 13px;background:var(--surface);
-                        border-radius:10px;
-                        border:1px solid var(--border);
-                        text-align:center">
-              <div style="font-size:11.5px;font-weight:800;
-                          color:var(--muted);margin-bottom:5px">
-                ${k}K
-              </div>
-              <div class="mono" style="font-size:15px;font-weight:900;
-                          color:var(--primary);letter-spacing:-.3px">
-                ${GMS.moneyFmt(karatPrice)}
-              </div>
-              <div style="font-size:10px;color:var(--muted);
-                          font-weight:700;margin-top:3px">
-                ${GMS.karatRatio(k).toFixed(4)}
-              </div>
-            </div>
-          `;
-        }).join('');
-      }
-    };
-
-    if (priceInput) {
-      priceInput.oninput = () => {
-        SetState.draft.price24 = readNumber('set-price24', 4500);
-        recalcDerived();
-        markDirty();
-      };
     }
 
     if (marginInput) {
@@ -2022,15 +2410,46 @@
         let v = readNumber('set-buy-margin', 8);
         v = Math.max(0, Math.min(20, v));
         SetState.draft.buyMargin = v;
-        recalcDerived();
+        recalcBuyMargin();
         markDirty();
       };
     }
+
+    /* ══════════════════════════════════════════════════════
+       ✅ v5: مستمع PriceManager — يحدّث الصفحة تلقائياً
+       ══════════════════════════════════════════════════════ */
+    const PM = window.GMS?.PriceManager || window.PriceManager;
+    if (PM?.on) {
+      const unsub = PM.on(() => {
+        if (GMS.Router?.currentId?.() !== 'settings') return;
+        if (SetState.activeTab !== 'pricing') return;
+        setTimeout(() => render(document.getElementById('page')), 150);
+      });
+      SetState.unsubscribers.push(unsub);
+    }
+
+    /* ══════════════════════════════════════════════════════
+       استمع لحدث goldPriceUpdated (fallback)
+       ══════════════════════════════════════════════════════ */
+    const priceHandler = (e) => {
+      if (GMS.Router?.currentId?.() !== 'settings') return;
+      if (SetState.activeTab !== 'pricing') return;
+      if (!e.detail?.prices?.price24) return;
+      setTimeout(() => render(document.getElementById('page')), 150);
+    };
+
+    window.addEventListener('goldPriceUpdated', priceHandler);
+    SetState.unsubscribers.push(() => {
+      window.removeEventListener('goldPriceUpdated', priceHandler);
+    });
+
+    /* رجّع حساب الهامش الأولي */
+    recalcBuyMargin();
   }
 
   /* ═════════════════════════════════════════════════════════════════════
      §20 · BIND RETURNS TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindReturnsTab() {
     const fields = {
@@ -2055,7 +2474,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §21 · BIND LOSSES TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindLossesTab() {
     const fields = {
@@ -2081,7 +2500,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §22 · BIND SYNC TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindSyncTab() {
     const autoToggle = document.getElementById('set-sync-auto');
@@ -2167,7 +2586,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §23 · BIND SUPABASE TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindSupabaseTab() {
     const urlInput = document.getElementById('set-supabase-url');
@@ -2264,7 +2683,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §24 · BIND SESSION TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindSessionTab() {
     const refreshBtn = document.getElementById('set-refresh-session');
@@ -2308,7 +2727,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §25 · BIND BACKUP TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindBackupTab() {
     const exportBtn = document.getElementById('set-backup-export');
@@ -2355,7 +2774,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §26 · BIND DANGER TAB
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function bindDangerTab() {
     /* Clear LocalStorage */
@@ -2452,7 +2871,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §27 · SAVE / RESET ALL
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function saveAll() {
     const btn = document.getElementById('settings-save');
@@ -2466,30 +2885,29 @@
     try {
       const d = SetState.draft;
 
-      /* 1 · Price board */
+      /* 1 · ✅ v5: السعر يُدار عبر PriceManager — لا نحفظه يدوياً */
       try {
-        if (Math.abs(d.price24 - (GMS.Cache?.getPrice()?.price_24 || 0)) > 0.01) {
-          if (GMS.Supabase?.isReady?.()) {
-            await GMS.Supabase.get()
-              .from('price_board')
-              .insert({
-                price_24: d.price24,
-                effective_date: GMS.todayISO(),
-              });
+        const PM = window.GMS?.PriceManager || window.PriceManager;
+        if (PM) {
+          /* هامش الصاغة */
+          if (typeof d.offset === 'number') {
+            PM.setOffset(d.offset);
           }
 
-          GMS.Cache?.ls?.set?.(GMS.LS_KEYS.CACHE_PRICE, {
-            price_24: d.price24,
-            updated_at: new Date().toISOString(),
-          });
+          /* فترة التحديث */
+          if (typeof d.priceManagerInterval === 'number' && d.priceManagerInterval > 0) {
+            const wasActive = PM.getStatus().autoRefresh;
+            PM.startAutoRefresh(d.priceManagerInterval * 1000);
+            if (!wasActive) PM.stopAutoRefresh();
+          }
 
-          /* Update karat board */
-          if (GMS.Cache?._deriveKaratBoard) {
-            GMS.Cache._deriveKaratBoard({ price_24: d.price24 });
+          /* حالة التحديث التلقائي */
+          if (typeof d.autoRefreshEnabled === 'boolean') {
+            PM.setAutoRefresh(d.autoRefreshEnabled);
           }
         }
       } catch (e) {
-        console.warn('[Settings] Price save failed:', e);
+        console.warn('[Settings] PriceManager save failed:', e);
       }
 
       /* 2 · Buy margin */
@@ -2549,7 +2967,7 @@
         GMS.Beep?.setEnabled?.(d.soundEnabled);
       } catch (_) {}
 
-      /* 7 · Theme + Language (already applied live) */
+      /* 7 · Theme + Language */
       try {
         localStorage.setItem('gms.theme', d.theme);
         localStorage.setItem('gms.lang', d.lang);
@@ -2614,7 +3032,7 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §28 · BACKUP / RESTORE
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   async function exportBackup() {
     try {
@@ -2657,6 +3075,13 @@
           theme: SetState.draft.theme,
           lang: SetState.draft.lang,
           columnPrefs: GMS.LS?.get?.(GMS.LS_KEYS.COLUMNS) || null,
+
+          /* ✅ v5: إعدادات PriceManager */
+          priceManager: {
+            offset: SetState.draft.offset,
+            autoRefreshEnabled: SetState.draft.autoRefreshEnabled,
+            interval: SetState.draft.priceManagerInterval,
+          },
         },
         queue: [],
         audit: [],
@@ -2776,6 +3201,24 @@
           localStorage.setItem(GMS.LS_KEYS.COLUMNS,
             JSON.stringify(s.columnPrefs));
         }
+
+        /* ✅ v5: استعادة إعدادات PriceManager */
+        if (s.priceManager) {
+          try {
+            const PM = window.GMS?.PriceManager || window.PriceManager;
+            if (PM) {
+              if (typeof s.priceManager.offset === 'number') {
+                PM.setOffset(s.priceManager.offset);
+              }
+              if (typeof s.priceManager.autoRefreshEnabled === 'boolean') {
+                PM.setAutoRefresh(s.priceManager.autoRefreshEnabled);
+              }
+              if (typeof s.priceManager.interval === 'number') {
+                PM.startAutoRefresh(s.priceManager.interval * 1000);
+              }
+            }
+          } catch (_) {}
+        }
       }
 
       /* Restore queue */
@@ -2852,8 +3295,9 @@
         ['تاريخ التصدير', new Date().toLocaleString('ar-EG')],
         [''],
         ['الفئة', 'الإعداد', 'القيمة'],
-        ['الأسعار', 'سعر 24K', d.price24],
+        ['الأسعار', 'سعر 24K (لحظي)', d.price24],
         ['الأسعار', 'هامش الشراء %', d.buyMargin],
+        ['الأسعار', 'هامش الصاغة (ج.م)', d.offset],
         ['الإرجاع', 'استرجاع كامل (يوم)', d.fullRefundDays],
         ['الإرجاع', 'استرجاع جزئي (يوم)', d.partialRefundDays],
         ['الإرجاع', 'نسبة الجزئي %', d.partialRefundPct],
@@ -2884,10 +3328,31 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §29 · INIT & CLEANUP
-     ───────────────────────────────────────────────────────────────────── */
+     ═════════════════════════════════════════════════════════════════════ */
 
   function init() {
     loadSettings();
+    bindPriceManagerEvents();
+  }
+
+  /* ✅ v5: أحداث PriceManager العامة */
+  function bindPriceManagerEvents() {
+    if (!window || !document) return;
+
+    /* استمع لحدث الأسعار اللحظية */
+    window.addEventListener('goldPriceUpdated', (e) => {
+      /* تجاهل إذا لم نكن في صفحة الإعدادات → الأسعار */
+      if (GMS.Router?.currentId?.() !== 'settings') return;
+      if (SetState.activeTab !== 'pricing') return;
+
+      /* السعر يتحدّث تلقائياً بواسطة PriceManager */
+      const prices = e.detail?.prices || {};
+      if (prices.price24 > 0) {
+        SetState.draft.price24 = prices.price24;
+      }
+    });
+
+    console.log('[Settings] ✅ PriceManager events bound');
   }
 
   function cleanup() {
@@ -2927,14 +3392,19 @@
      §31 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚙️  Settings View loaded · 10 tabs',
+    '%c⚙️  Settings View v5.0 loaded · 10 tabs',
     'color:#6b7a95;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#eef2f8;border-radius:4px;'
   );
 
   console.log(
-    `%c🎛️  General · Appearance · Pricing · Returns · Losses · Sync · Supabase · Session · Backup · Danger`,
+    `%c🎛️  General · Appearance · Pricing (LIVE) · Returns · Losses · Sync · Supabase · Session · Backup · Danger`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v5: PriceManager integration · Live gold prices · No manual 24K input`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
