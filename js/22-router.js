@@ -11,8 +11,7 @@
      - Browser back/forward
      - Route guards
      - ✅ Form Interaction Tracker (يحمي النماذج والفلاتر أثناء التفاعل)
-     - ✅ NEW: Accounting route مضافة
-     - ✅ NEW: Wholesale route مضافة
+     - ✅ v2: reload({force}) + renderView backup/restore (منع الشاشة البيضاء)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -22,16 +21,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · ROUTES DEFINITION
-     ─────────────────────────────────────────────────────────────────────
-     تعريف كل الصفحات مع:
-     - id: مفتاح الصفحة
-     - label: العنوان في التبويب
-     - subtitle: العنوان الفرعي
-     - icon: أيقونة Lucide
-     - permission: الصلاحية المطلوبة (اختياري)
-     - roles: الأدوار المسموحة (اختياري)
-     - view: اسم الـ View في GMS.Views
-     - hidden: إخفاء من التبويبات (اختياري)
      ═════════════════════════════════════════════════════════════════════ */
   const ROUTES = {
     dashboard: {
@@ -134,7 +123,6 @@
       hidden: false,
     },
 
-    /* ✅ Accounting — المحاسبة والمالية */
     accounting: {
       id: 'accounting',
       label: 'المحاسبة والمالية',
@@ -146,7 +134,6 @@
       hidden: false,
     },
 
-    /* ✅ NEW: Wholesale — التوريد والجملة والتحويلات */
     wholesale: {
       id: 'wholesale',
       label: 'التوريد والجملة',
@@ -181,7 +168,7 @@
     },
   };
 
-  /* ✅ ترتيب التبويبات في الواجهة — مع إضافة wholesale */
+  /* ✅ ترتيب التبويبات في الواجهة */
   const TAB_ORDER = [
     'dashboard',
     'pos',
@@ -192,8 +179,8 @@
     'loss',
     'repair',
     'audit',
-    'accounting',   // ✅ المحاسبة
-    'wholesale',    // ✅ NEW: التوريد والجملة
+    'accounting',
+    'wholesale',
     'queue',
     'settings',
   ];
@@ -476,15 +463,17 @@
   }
 
   /**
-   * تصيير الصفحة الحالية
-   * @param {Object} route
-   * @returns {Promise<void>}
+   * ✅ تصيير الصفحة الحالية — النسخة المُحصَّنة
+   * لا تترك #page فارغة أبداً، وتستعيد المحتوى السابق عند الفشل
    */
   async function renderView(route) {
     const host = document.getElementById('page');
     if (!host) {
       throw new Error('عنصر #page غير موجود');
     }
+
+    /* احفظ محتوى احتياطي */
+    const backup = host.innerHTML;
 
     /* ابحث عن الـ View */
     const view = GMS.Views?.[route.view];
@@ -493,17 +482,37 @@
       throw new Error(`View "${route.view}" غير معرّف`);
     }
 
-    /* إذا كان للصفحة دوال خاصة */
-    if (view.render && typeof view.render === 'function') {
-      await view.render(host);
-    } else if (view.mount && typeof view.mount === 'function') {
-      await view.mount(host);
-    } else {
-      throw new Error(`View "${route.view}" لا يحتوي على دالة render`);
-    }
+    try {
+      /* إذا كان للصفحة دوال خاصة */
+      if (typeof view.render === 'function') {
+        await view.render(host);
+      } else if (typeof view.mount === 'function') {
+        await view.mount(host);
+      } else {
+        throw new Error(`View "${route.view}" لا يحتوي على دالة render`);
+      }
 
-    /* إعادة رسم الأيقونات */
-    window.lucide?.createIcons();
+      /* لو الـ host فضيّ — أعِد المحتوى السابق */
+      if (!host.innerHTML.trim() || host.innerHTML.trim().length < 30) {
+        console.warn('[Router] View rendered empty content — restoring backup');
+        host.innerHTML = backup || `
+          <div class="empty" style="padding:60px 20px">
+            <i data-lucide="inbox"></i>
+            <p>لا يوجد محتوى</p>
+          </div>`;
+      }
+
+      /* إعادة رسم الأيقونات */
+      window.lucide?.createIcons();
+
+    } catch (e) {
+      /* استرجاع المحتوى السابق بدل ترك شاشة بيضاء */
+      if (backup && backup.trim().length > 30) {
+        host.innerHTML = backup;
+        window.lucide?.createIcons();
+      }
+      throw e;
+    }
   }
 
   /**
@@ -701,7 +710,6 @@
 
       /* تجاهل إذا كان هناك تصيير جارٍ */
       if (RState.rendering) {
-        /* أعد الجدولة */
         scheduleRerender(d);
         return;
       }
@@ -751,16 +759,26 @@
   }
 
   /**
-   * إعادة تحميل الصفحة الحالية
-   * ✅ بتحترم نفس حماية shouldSkipRerender — لو المستخدم فاتح select
-   * أو حقل، بتأجل التنفيذ بدل ما تمسح الصفحة تحت إيده
+   * ✅ إعادة تحميل الصفحة الحالية — النسخة المُحصَّنة
+   *
+   * @param {Object} [opts]
+   * @param {boolean} [opts.force=false] — يتجاوز فحص التفاعل (للتبديل المُبرمَج)
+   * @returns {Promise<boolean>|void}
+   *
+   * الاستخدام:
+   *   - reload()                     — يحترم Interaction Lock (يؤجّل عند التفاعل)
+   *   - reload({ force: true })      — يتجاوز الفحص فوراً (لتبديل اللغة مثلاً)
    */
-  function reload() {
-    if (shouldSkipRerender()) {
-      console.log('[Router] ⛔ reload() blocked — user interacting, retrying shortly');
-      setTimeout(reload, 400);
-      return;
+  function reload(opts = {}) {
+    const { force = false } = opts;
+
+    /* ✅ التبديل المُبرمَج (force=true) يتجاوز فحص التفاعل */
+    if (!force && shouldSkipRerender()) {
+      console.log('[Router] ⛔ reload() blocked — user interacting, retrying in 400ms');
+      setTimeout(() => reload(opts), 400);
+      return Promise.resolve(false);
     }
+
     return go(RState.current, { force: true });
   }
 
@@ -805,7 +823,6 @@
     const hashRoute = getHashRoute();
 
     if (!hashRoute) {
-      /* انتقل للصفحة الافتراضية */
       if (RState.current !== 'dashboard') {
         go('dashboard', { replace: true });
       }
@@ -819,7 +836,6 @@
     if (ROUTES[hashRoute]) {
       go(hashRoute);
     } else {
-      /* مسار غير معروف — انتقل للافتراضي */
       console.warn('[Router] Unknown hash route:', hashRoute);
       go('dashboard', { replace: true });
     }
@@ -833,13 +849,10 @@
     const tabBar = document.getElementById('tabs-bar');
     if (!tabBar) return;
 
-    /* ابحث عن كل التبويبات */
     tabBar.querySelectorAll('[data-tab]').forEach(tab => {
-      /* إزالة أي handler سابق */
       const newTab = tab.cloneNode(true);
       tab.parentNode.replaceChild(newTab, tab);
 
-      /* إذا كان التبويب يحتاج صلاحية غير متاحة — اخفيه */
       const route = ROUTES[newTab.dataset.tab];
       if (route) {
         const access = checkRouteAccess(route);
@@ -850,7 +863,6 @@
         }
       }
 
-      /* ربط الحدث */
       newTab.onclick = (e) => {
         e.preventDefault();
         const routeId = newTab.dataset.tab;
@@ -865,7 +877,6 @@
 
   function bindKeyboardShortcuts() {
     const handler = (e) => {
-      /* تجاهل داخل حقول الإدخال */
       const tag = document.activeElement?.tagName;
       const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
@@ -881,7 +892,6 @@
           }
         }
 
-        /* Alt + 0 = الصفحة الأخيرة */
         if (e.key === '0') {
           const routeId = TAB_ORDER[TAB_ORDER.length - 1];
           if (routeId) {
@@ -910,7 +920,6 @@
 
     document.addEventListener('keydown', handler);
 
-    /* احفظ مرجعاً للتنظيف */
     RState._keyboardHandler = handler;
   }
 
@@ -918,26 +927,14 @@
      §10 · PUBLIC API — GET ROUTES
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قراءة كل المسارات
-   * @returns {Object}
-   */
   function getRoutes() {
     return { ...ROUTES };
   }
 
-  /**
-   * قراءة ترتيب التبويبات
-   * @returns {Array<string>}
-   */
   function getTabOrder() {
     return TAB_ORDER.slice();
   }
 
-  /**
-   * قراءة المسارات المتاحة للمستخدم الحالي
-   * @returns {Array<Object>}
-   */
   function getAccessibleRoutes() {
     return TAB_ORDER
       .map(id => ROUTES[id])
@@ -948,11 +945,6 @@
       });
   }
 
-  /**
-   * قراءة المسار بالمعرف
-   * @param {string} id
-   * @returns {Object|null}
-   */
   function getRoute(id) {
     return ROUTES[id] || null;
   }
@@ -961,11 +953,6 @@
      §11 · ROUTE GUARD
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * إضافة حارس مخصص لمسار
-   * @param {string} routeId
-   * @param {Function} guard — (route, user) => { allowed: boolean, message?: string }
-   */
   const customGuards = new Map();
 
   function addGuard(routeId, guard) {
@@ -1096,10 +1083,6 @@
      §14 · DIAGNOSTICS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قراءة حالة الراوتر كاملة
-   * @returns {Object}
-   */
   function getState() {
     return {
       current: RState.current,
@@ -1117,9 +1100,6 @@
     };
   }
 
-  /**
-   * تفريغ سجل التنقل
-   */
   function clearHistory() {
     RState.history = [];
     console.log('[Router] History cleared');
@@ -1176,12 +1156,8 @@
   GMS.navTo = go;
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · AUTO-INIT ON DOMContentLoaded (اختياري)
-     ─────────────────────────────────────────────────────────────────────
-     ملاحظة: `23-boot.js` هو المسؤول عن استدعاء `Router.init()`
-     هذا الجزء يبقى معطّلاً لتجنب التعارض.
+     §16 · AUTO-INIT — مُدار عبر 23-boot.js
      ═════════════════════════════════════════════════════════════════════ */
-  /* تم التعطيل عمداً — يُدار عبر 23-boot.js */
 
   /* ═════════════════════════════════════════════════════════════════════
      §17 · LOADED CONFIRMATION
@@ -1203,13 +1179,8 @@
   );
 
   console.log(
-    `%c💰 Accounting route · view: "accounting" · tab position: 10`,
-    'color:#0f7a43;font-weight:700;font-size:11px;'
-  );
-
-  console.log(
-    `%c🏭 Wholesale route · view: "wholesale" · tab position: 11 · B2B Supply & Transfers`,
-    'color:#6b3fa0;font-weight:900;font-size:11px;'
+    `%c🆕 v2: reload({force}) · renderView backup/restore · يمنع الشاشة البيضاء`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
