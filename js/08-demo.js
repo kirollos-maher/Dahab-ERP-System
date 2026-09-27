@@ -3,13 +3,13 @@
    مولّد البيانات التجريبية الكامل:
      - الفروع والمصانع والموردين
      - العملاء والموظفين
+     - ✅ B2B_REPS + B2B_CUSTOMERS + REP_LEDGERS (v2 جديد)
      - المخزون (1,200+ صنف) مع حقول المصنعية المزدوجة
      - الفواتير والبنود
      - دفتر الأستاذ (ذهبي + نقدي)
      - الورديات والمصروفات والعمولات
      - سجلات الخسس (سبك، تحميم، ششني)
      - طابور المزامنة
-     - ✅ دعم كامل لأنماط تسعير المصانع الأربعة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -19,8 +19,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · PRNG DETERMINISTIC
-     ─────────────────────────────────────────────────────────────────────
-     مولّد أرقام شبه عشوائي مع بذرة ثابتة — لضمان ثبات البيانات
      ═════════════════════════════════════════════════════════════════════ */
   function mulberry32(seed) {
     let a = seed >>> 0;
@@ -70,7 +68,6 @@
     },
   ];
 
-  /* ✅ المصانع الافتراضية — تُقرأ من GMS.DEFAULT_MANUFACTURERS */
   const MANUFACTURERS = GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
 
   const CATEGORIES = [
@@ -182,15 +179,132 @@
   ];
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · HELPERS — تكامل مع المصانع
+     §2.5 · ✅ B2B SALES REPS + CUSTOMERS (v2 جديد)
+     ═════════════════════════════════════════════════════════════════════ */
+  const B2B_REPS = [
+    {
+      id: 'rep-1',
+      code: 'REP-001',
+      name: 'محمود الباز',
+      phone: '01155667788',
+      pin: '1234',
+      branch_id: 'br-1',
+      opening_cash: 5000,
+      opening_gold_pure: 15.5000,
+      is_active: true,
+      notes: 'بياع جملة أول — مسؤول عن منطقة وسط البلد',
+      created_at: '2024-08-15T08:00:00.000Z',
+    },
+    {
+      id: 'rep-2',
+      code: 'REP-002',
+      name: 'وليد النجار',
+      phone: '01099887766',
+      pin: '5678',
+      branch_id: 'br-1',
+      opening_cash: 3500,
+      opening_gold_pure: 8.2500,
+      is_active: true,
+      notes: 'بياع جملة ثاني — منطقة المعادي',
+      created_at: '2024-09-01T08:00:00.000Z',
+    },
+    {
+      id: 'rep-3',
+      code: 'REP-003',
+      name: 'شريف الفقي',
+      phone: '01233445566',
+      pin: '9012',
+      branch_id: 'br-2',
+      opening_cash: 2500,
+      opening_gold_pure: 0,
+      is_active: false,
+      notes: 'موقوف مؤقتاً',
+      created_at: '2024-10-10T08:00:00.000Z',
+    },
+  ];
+
+  const B2B_CUSTOMERS = [
+    {
+      id: 'bc-1',
+      code: 'B2C-0001',
+      name: 'محل الفؤاد للذهب',
+      phone: '01111222333',
+      address: 'الصاغة — القاهرة',
+      tax_id: '512-111-222',
+      rep_id: 'rep-1',
+      opening_balance_cash: 0,
+      opening_balance_gold_pure: 0,
+      credit_limit_cash: 50000,
+      is_active: true,
+      notes: '',
+      created_at: '2024-08-15T09:00:00.000Z',
+    },
+    {
+      id: 'bc-2',
+      code: 'B2C-0002',
+      name: 'ورشة الأنصاري للفضة',
+      phone: '01222333444',
+      address: 'الغورية — القاهرة',
+      tax_id: '512-222-333',
+      rep_id: 'rep-1',
+      opening_balance_cash: 2500,
+      opening_balance_gold_pure: 0,
+      credit_limit_cash: 30000,
+      is_active: true,
+      notes: 'له رصيد افتتاحي',
+      created_at: '2024-09-05T09:00:00.000Z',
+    },
+    {
+      id: 'bc-3',
+      code: 'B2C-0003',
+      name: 'محل الساعي جولد',
+      phone: '01333445566',
+      address: 'شبرا — القاهرة',
+      tax_id: '513-333-444',
+      rep_id: 'rep-2',
+      opening_balance_cash: 0,
+      opening_balance_gold_pure: 5.7500,
+      credit_limit_cash: 40000,
+      is_active: true,
+      notes: 'له رصيد ذهب افتتاحي',
+      created_at: '2024-09-20T09:00:00.000Z',
+    },
+    {
+      id: 'bc-4',
+      code: 'B2C-0004',
+      name: 'محل الصفا للمجوهرات',
+      phone: '01444556677',
+      address: 'الإسكندرية',
+      tax_id: '514-444-555',
+      rep_id: 'rep-2',
+      opening_balance_cash: 0,
+      opening_balance_gold_pure: 0,
+      credit_limit_cash: 25000,
+      is_active: true,
+      notes: '',
+      created_at: '2024-10-01T09:00:00.000Z',
+    },
+    {
+      id: 'bc-5',
+      code: 'B2C-0005',
+      name: 'ورشة الشريف',
+      phone: '01555667788',
+      address: 'المنصورة',
+      tax_id: '515-555-666',
+      rep_id: 'rep-1',
+      opening_balance_cash: -1200,
+      opening_balance_gold_pure: 0,
+      credit_limit_cash: 15000,
+      is_active: false,
+      notes: 'موقوف',
+      created_at: '2024-10-15T09:00:00.000Z',
+    },
+  ];
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §3 · HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * ✅ حساب مصنعية الشراء من مصنع + مدخلات
-   * @param {Object} manu
-   * @param {Object} context
-   * @returns {number}
-   */
   function resolvePurchaseRate(manu, context = {}) {
     if (!manu) return 150;
 
@@ -222,12 +336,6 @@
     }
   }
 
-  /**
-   * ✅ توليد سياق عشوائي للمصنع (حرف أو لون)
-   * @param {Object} manu
-   * @param {Function} rnd
-   * @returns {Object}
-   */
   function pickManufacturerContext(manu, rnd) {
     if (!manu) return {};
 
@@ -257,13 +365,6 @@
 
   let _inventoryCache = null;
 
-  /**
-   * توليد مصفوفة المخزون الكاملة
-   * @param {number} [count=1200]
-   * @param {number} [seed=1337]
-   * @param {number} [timeOffsetMs=0]
-   * @returns {Array}
-   */
   function generateInventory(count = 1200, seed = 1337, timeOffsetMs = 0) {
     const rnd = mulberry32(seed);
     const arr = [];
@@ -277,66 +378,48 @@
     return arr;
   }
 
-  /**
-   * توليد صنف واحد — ✅ محدَّث بدعم المصانع الجديدة
-   * @param {number} idx
-   * @param {Function} rnd
-   * @param {number} now
-   * @param {number} price24
-   * @returns {Object}
-   * @private
-   */
   function _makeItem(idx, rnd, now, price24) {
-    /* اختيار عشوائي */
     const karat = GMS.KARAT_ORDER[Math.floor(rnd() * GMS.KARAT_ORDER.length)];
     const ratio = GMS.karatRatio(karat);
     const category = CATEGORIES[Math.floor(rnd() * CATEGORIES.length)];
     const manu = MANUFACTURERS[Math.floor(rnd() * MANUFACTURERS.length)];
     const branch = BRANCHES[Math.floor(rnd() * BRANCHES.length)];
 
-    /* ✅ سياق المصنع (حرف/لون) */
     const manuContext = pickManufacturerContext(manu, rnd);
 
-    /* الأوزان */
     const gross = GMS.round(1.2 + rnd() * 12, 3);
     const hasStones = rnd() < 0.15;
-    const stonesIncluded = hasStones && rnd() < 0.4; /* 40% من اللي عندهم فصوص → داخل الوزن */
+    const stonesIncluded = hasStones && rnd() < 0.4;
     const stones = (hasStones && !stonesIncluded)
       ? GMS.round(rnd() * 0.5, 3)
       : 0;
     const net = GMS.round(Math.max(0.3, gross - stones), 3);
     const pure = GMS.round(net * ratio, 4);
 
-    /* ✅ المصنعية المزدوجة */
     const purchaseRate = resolvePurchaseRate(manu, {
       ...manuContext,
       category,
     });
 
-    /* مصنعية البيع = مصنعية الشراء + هامش (15% - 35%) */
     const marginPct = 0.15 + rnd() * 0.20;
     const saleRate = GMS.round(purchaseRate * (1 + marginPct), 0);
 
-    /* القيم */
     const goldValue = GMS.round(pure * price24, 2);
     const purchaseMakeValue = GMS.round(net * purchaseRate, 2);
     const saleMakeValue = GMS.round(net * saleRate, 2);
     const totalCost = GMS.round(goldValue + saleMakeValue, 2);
     const profitMargin = GMS.round(saleMakeValue - purchaseMakeValue, 2);
 
-    /* التواريخ */
     const daysBack = Math.floor(rnd() * 120);
     const created = new Date(now - daysBack * 86400000);
     const updated = new Date(created.getTime() + Math.floor(rnd() * 5000) * 1000);
 
-    /* SKU */
     const stamp = String(created.getFullYear()).slice(2) +
       String(created.getMonth() + 1).padStart(2, '0') +
       String(created.getDate()).padStart(2, '0');
     const seq = String(idx + 1).padStart(5, '0');
     const sku = `${manu.code}${karat}-${stamp}-${seq}`;
 
-    /* الحالة */
     const roll = rnd();
     let status;
     if (roll < 0.82) status = 'IN_STOCK';
@@ -345,7 +428,6 @@
     else if (roll < 0.98) status = 'RETURNED';
     else status = 'MELTED';
 
-    /* بيانات إضافية */
     const quantity = 1;
     const notes = rnd() < 0.05 ? 'يحتاج تلميع' : null;
 
@@ -357,16 +439,15 @@
       purity_ratio: ratio,
       weight_grams: gross,
       stone_weight: stones,
-      stones_included: stonesIncluded,        /* ✅ جديد */
+      stones_included: stonesIncluded,
       net_weight: net,
       pure_weight: pure,
 
-      /* ✅ المصنعية المزدوجة */
-      workmanship_per_gram: saleRate,         /* مصنعية البيع */
-      purchase_workmanship: purchaseRate,     /* مصنعية الشراء */
-      workmanship_value: saleMakeValue,       /* قيمة مصنعية البيع */
-      purchase_workmanship_value: purchaseMakeValue,  /* قيمة مصنعية الشراء */
-      profit_margin: profitMargin,            /* هامش الربح */
+      workmanship_per_gram: saleRate,
+      purchase_workmanship: purchaseRate,
+      workmanship_value: saleMakeValue,
+      purchase_workmanship_value: purchaseMakeValue,
+      profit_margin: profitMargin,
 
       gold_value: goldValue,
       total_cost: totalCost,
@@ -382,9 +463,9 @@
       manufacturer_id: manu.id,
       manufacturer_code: manu.code,
       manufacturer_name: manu.name,
-      manufacturer_mode: manu.pricingMode,    /* ✅ جديد */
-      letter_code: manuContext.letter || null,   /* ✅ جديد */
-      color_code: manuContext.color || null,     /* ✅ جديد */
+      manufacturer_mode: manu.pricingMode,
+      letter_code: manuContext.letter || null,
+      color_code: manuContext.color || null,
 
       created_at: created.toISOString(),
       updated_at: updated.toISOString(),
@@ -1029,13 +1110,96 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · CACHE CONTROLLER
-     ─────────────────────────────────────────────────────────────────────
-     يخزّن كل البيانات المُولَّدة ويوفرها بسرعة
+     §14 · ✅ B2B REP LEDGERS GENERATOR (v2 جديد)
+     ═════════════════════════════════════════════════════════════════════ */
+  function generateRepLedgers(seed = 7070) {
+    const rnd = mulberry32(seed);
+    const entries = [];
+
+    const types = [
+      { key: 'invoice',       cashWeight: 1.5, goldWeight: 3 },
+      { key: 'cash_received', cashWeight: 2,   goldWeight: 0 },
+      { key: 'gold_received', cashWeight: 0,   goldWeight: 1 },
+      { key: 'adjustment',    cashWeight: 0.3, goldWeight: 0.2 },
+    ];
+
+    const totalWeight = types.reduce((a, t) => a + t.cashWeight + t.goldWeight, 0);
+
+    function pickType() {
+      let roll = rnd() * totalWeight;
+      for (const t of types) {
+        roll -= (t.cashWeight + t.goldWeight);
+        if (roll <= 0) return t.key;
+      }
+      return 'invoice';
+    }
+
+    B2B_REPS.forEach(rep => {
+      const repCustomers = B2B_CUSTOMERS.filter(c => c.rep_id === rep.id);
+      const numEntries = 15 + Math.floor(rnd() * 15);
+
+      for (let i = 0; i < numEntries; i++) {
+        const daysAgo = Math.floor(rnd() * 60);
+        const created = new Date(Date.now() - daysAgo * 86400000 - Math.floor(rnd() * 86400) * 1000);
+        const type = pickType();
+        const customer = repCustomers.length
+          ? repCustomers[Math.floor(rnd() * repCustomers.length)]
+          : null;
+
+        let cashDelta = 0;
+        let goldDelta = 0;
+        let goldKarat = null;
+        let goldNetWeight = null;
+        let description = '';
+
+        switch (type) {
+          case 'invoice':
+            cashDelta = rnd() < 0.7 ? GMS.round(2000 + rnd() * 15000, 2) : 0;
+            goldDelta = -GMS.round(1 + rnd() * 10, 4);
+            description = `فاتورة جملة — ${customer?.name || 'عميل'}`;
+            break;
+          case 'cash_received':
+            cashDelta = GMS.round(1000 + rnd() * 8000, 2);
+            description = `استلام نقدي — ${customer?.name || 'عميل'}`;
+            break;
+          case 'gold_received':
+            goldDelta = GMS.round(0.5 + rnd() * 5, 4);
+            goldKarat = [21, 21, 18, 22][Math.floor(rnd() * 4)];
+            goldNetWeight = goldDelta;
+            description = `استلام ذهب — ${customer?.name || 'عميل'}`;
+            break;
+          case 'adjustment':
+            cashDelta = GMS.round((rnd() - 0.5) * 2000, 2);
+            goldDelta = GMS.round((rnd() - 0.5) * 2, 4);
+            description = 'تسوية يدوية';
+            break;
+        }
+
+        entries.push({
+          id: `repledger-${rep.id}-${i}`,
+          rep_id: rep.id,
+          customer_id: customer?.id || null,
+          customer_name: customer?.name || null,
+          type,
+          cash_delta: cashDelta,
+          gold_delta: goldDelta,
+          gold_karat: goldKarat,
+          gold_net_weight: goldNetWeight,
+          description,
+          created_at: created.toISOString(),
+          created_by: 'نظام تجريبي',
+        });
+      }
+    });
+
+    return entries.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §15 · CACHE CONTROLLER
      ═════════════════════════════════════════════════════════════════════ */
   const DemoData = {
 
-    /* مخزون مؤقت */
     _inventory: null,
     _sales: null,
     _ledgerEntries: null,
@@ -1046,22 +1210,13 @@
     _assayRecords: null,
     _polishingBatches: null,
     _returns: null,
+    _repLedgers: null,   /* ✅ جديد */
 
-    /* ─── Accessors مع lazy-loading ──────────────────────────────── */
-
-    /**
-     * قراءة المخزون (يُولَّد مرة واحدة)
-     * ✅ FIX: تقليل عدد الأصناف على الموبايل لمنع انهيار الذاكرة
-     * @param {boolean} [force=false] — إعادة التوليد
-     * @returns {Array}
-     */
     getInventory(force = false) {
       if (!this._inventory || force) {
-        // ✅ تحديد إذا كان الجهاز موبايل
         const isMobile = /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(
           navigator.userAgent || ''
         );
-        // ✅ تقليل العدد على الموبايل إلى 300 صنف بدلاً من 1200
         const count = isMobile ? 300 : 1200;
 
         this._inventory = generateInventory(count, 1337);
@@ -1073,11 +1228,6 @@
       return this._inventory;
     },
 
-    /**
-     * قراءة الفواتير
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getSales(force = false) {
       if (!this._sales || force) {
         this._sales = generateSales(this.getInventory(), 500, 90);
@@ -1086,11 +1236,6 @@
       return this._sales;
     },
 
-    /**
-     * قراءة قيود دفتر الأستاذ
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getLedgerEntries(force = false) {
       if (!this._ledgerEntries || force) {
         this._ledgerEntries = generateLedgerEntries(200, 180);
@@ -1099,11 +1244,6 @@
       return this._ledgerEntries;
     },
 
-    /**
-     * قراءة الورديات
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getShifts(force = false) {
       if (!this._shifts || force) {
         this._shifts = generateShifts(30);
@@ -1112,11 +1252,6 @@
       return this._shifts;
     },
 
-    /**
-     * قراءة المصروفات
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getExpenses(force = false) {
       if (!this._expenses || force) {
         this._expenses = generateExpenses(80, 90);
@@ -1125,11 +1260,6 @@
       return this._expenses;
     },
 
-    /**
-     * قراءة العمولات
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getCommissions(force = false) {
       if (!this._commissions || force) {
         this._commissions = generateCommissions();
@@ -1138,11 +1268,6 @@
       return this._commissions;
     },
 
-    /**
-     * قراءة دفعات السبك
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getMeltingBatches(force = false) {
       if (!this._meltingBatches || force) {
         this._meltingBatches = generateMeltingBatches(25);
@@ -1151,11 +1276,6 @@
       return this._meltingBatches;
     },
 
-    /**
-     * قراءة سجلات الششني
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getAssayRecords(force = false) {
       if (!this._assayRecords || force) {
         this._assayRecords = generateAssayRecords(40);
@@ -1164,11 +1284,6 @@
       return this._assayRecords;
     },
 
-    /**
-     * قراءة دفعات الصيانة
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getPolishingBatches(force = false) {
       if (!this._polishingBatches || force) {
         this._polishingBatches = generatePolishingBatches(30);
@@ -1177,11 +1292,6 @@
       return this._polishingBatches;
     },
 
-    /**
-     * قراءة المرتجعات
-     * @param {boolean} [force=false]
-     * @returns {Array}
-     */
     getReturns(force = false) {
       if (!this._returns || force) {
         this._returns = generateReturns(this.getInventory(), 50);
@@ -1190,16 +1300,29 @@
       return this._returns;
     },
 
-    /* ─── Static data (لا تحتاج توليد) ───────────────────────────── */
+    /* ✅ B2B Accessors */
+    getB2BReps() {
+      return B2B_REPS.map(r => ({ ...r }));
+    },
+
+    getB2BCustomers() {
+      return B2B_CUSTOMERS.map(c => ({ ...c }));
+    },
+
+    getRepLedgers(force = false) {
+      if (!this._repLedgers || force) {
+        this._repLedgers = generateRepLedgers();
+        console.log(`[Demo] Generated ${this._repLedgers.length} rep ledger entries`);
+      }
+      return this._repLedgers;
+    },
+
+    /* ─── Static data ─────────────────────────────────────────────── */
 
     getBranches() {
       return BRANCHES;
     },
 
-    /**
-     * ✅ قراءة المصانع — من Cache أو من الافتراضي
-     * @returns {Array}
-     */
     getManufacturers() {
       try {
         if (GMS.Cache?.getManufacturersList) {
@@ -1240,10 +1363,6 @@
 
     /* ─── Bulk generation ─────────────────────────────────────────── */
 
-    /**
-     * توليد كل البيانات دفعة واحدة
-     * @returns {Object}
-     */
     generateAll() {
       return {
         branches: BRANCHES,
@@ -1261,12 +1380,14 @@
         assayRecords: this.getAssayRecords(),
         polishingBatches: this.getPolishingBatches(),
         returns: this.getReturns(),
+
+        /* ✅ B2B */
+        b2bReps: this.getB2BReps(),
+        b2bCustomers: this.getB2BCustomers(),
+        repLedgers: this.getRepLedgers(),
       };
     },
 
-    /**
-     * تفريغ كل البيانات المُولَّدة
-     */
     clearCache() {
       this._inventory = null;
       this._sales = null;
@@ -1278,13 +1399,10 @@
       this._assayRecords = null;
       this._polishingBatches = null;
       this._returns = null;
+      this._repLedgers = null;    /* ✅ جديد */
       console.log('[Demo] Cache cleared');
     },
 
-    /**
-     * إعادة توليد كل شيء ببذرة جديدة
-     * @param {number} [seed=Date.now()]
-     */
     regenerate(seed) {
       this.clearCache();
       _inventoryCache = null;
@@ -1299,12 +1417,6 @@
       return this.generateAll();
     },
 
-    /* ─── Statistics ──────────────────────────────────────────────── */
-
-    /**
-     * إحصائيات سريعة عن البيانات التجريبية
-     * @returns {Object}
-     */
     stats() {
       const inv = this.getInventory();
       const byStatus = {};
@@ -1333,17 +1445,12 @@
         assayRecords: this.getAssayRecords().length,
         polishingBatches: this.getPolishingBatches().length,
         returns: this.getReturns().length,
+        b2bReps: B2B_REPS.length,            /* ✅ جديد */
+        b2bCustomers: B2B_CUSTOMERS.length,   /* ✅ جديد */
+        repLedgers: this.getRepLedgers().length,  /* ✅ جديد */
       };
     },
 
-    /* ─── Search/Filter helpers ───────────────────────────────────── */
-
-    /**
-     * البحث في المخزون
-     * @param {string} query
-     * @param {Object} [filters={}]
-     * @returns {Array}
-     */
     searchInventory(query, filters = {}) {
       const { karat, status, branch_id, category, limit = 200 } = filters;
       let rows = this.getInventory();
@@ -1365,53 +1472,32 @@
       return rows.slice(0, limit);
     },
 
-    /**
-     * فاتورة بالمعرف
-     * @param {string} id
-     * @returns {Object|null}
-     */
     getSaleById(id) {
       return this.getSales().find(s => s.id === id) || null;
     },
 
-    /**
-     * فاتورة برقم الفاتورة
-     * @param {string} saleNo
-     * @returns {Object|null}
-     */
     getSaleByNo(saleNo) {
       return this.getSales().find(s =>
         s.sale_no === saleNo || s.invoice_no === saleNo
       ) || null;
     },
 
-    /**
-     * فواتير بتاريخ معين
-     * @param {string} dateISO — YYYY-MM-DD
-     * @returns {Array}
-     */
     getSalesByDate(dateISO) {
       return this.getSales().filter(s =>
         s.created_at.slice(0, 10) === dateISO
       );
     },
 
-    /**
-     * فواتير بفرع معين
-     * @param {string} branchId
-     * @returns {Array}
-     */
     getSalesByBranch(branchId) {
       return this.getSales().filter(s => s.branch_id === branchId);
     },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · EXPORT
+     §16 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Demo = DemoData;
 
-  /* ─── Static data معرّضة أيضاً ─────────────────────────────────── */
   GMS.DEMO_DATA = {
     BRANCHES,
     MANUFACTURERS,
@@ -1422,9 +1508,10 @@
     ASSAY_OFFICES,
     EXPENSE_CATEGORIES,
     CATEGORIES,
+    B2B_REPS,           /* ✅ جديد */
+    B2B_CUSTOMERS,      /* ✅ جديد */
   };
 
-  /* ─── Utilities معرّضة للاستخدام الخارجي ──────────────────────── */
   GMS.DemoUtils = {
     generateInventory,
     generateSales,
@@ -1436,13 +1523,12 @@
     generateAssayRecords,
     generatePolishingBatches,
     generateReturns,
+    generateRepLedgers,   /* ✅ جديد */
     mulberry32,
-    /* ✅ دوال مساعدة للمصانع */
     resolvePurchaseRate,
     pickManufacturerContext,
   };
 
-  /* ─── Backward-compat aliases ──────────────────────────────────── */
   GMS.DEMO_BRANCHES = BRANCHES;
   GMS.DEMO_MANUFACTURERS = MANUFACTURERS;
   GMS.DEMO_SUPPLIERS = SUPPLIERS;
@@ -1450,10 +1536,10 @@
   GMS.DEMO_SALESPEOPLE = SALESPEOPLE;
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · LOADED CONFIRMATION
+     §17 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📊 Demo Data loaded · 9 entity types',
+    '%c📊 Demo Data v2 loaded · 9 entity types + B2B',
     'color:#a55a00;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#fdf3e3;border-radius:4px;'
   );
@@ -1465,8 +1551,8 @@
   );
 
   console.log(
-    `%c🏭 Dual workmanship (purchase + sale) + profit_margin + stones_included`,
-    'color:#0f7a43;font-weight:700;font-size:11px;'
+    `%c🆕 v2: ${B2B_REPS.length} B2B reps · ${B2B_CUSTOMERS.length} B2B customers · generateRepLedgers()`,
+    'color:#6b3fa0;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
