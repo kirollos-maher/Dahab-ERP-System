@@ -21,6 +21,7 @@
     initialized: false,
     authenticated: false,
     appReady: false,
+    switchingLang: false,
 
     errors: [],
 
@@ -239,12 +240,23 @@
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
+    /* ✅ حماية ضد الضغط المزدوج (ghost click / double-tap على الموبايل) —
+       لو في تبديل شغال بالفعل، تجاهل أي محاولة تانية لحد ما يخلص */
+    if (BootState.switchingLang) {
+      console.log('[switchLanguage] ⏳ في تبديل شغال بالفعل — تجاهل الضغطة دي');
+      return false;
+    }
+
     const currentLang = document.documentElement.getAttribute('lang') || 'ar';
     if (lang === currentLang) {
       console.log('[switchLanguage] ℹ️ اللغة نفسها — لا تغيير');
       updateLangButtons(lang);
       return true;
     }
+
+    BootState.switchingLang = true;
+    const langBtns = Array.from(document.querySelectorAll('.lang-btn'));
+    langBtns.forEach(b => { b.style.pointerEvents = 'none'; });
 
     console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang}`);
 
@@ -267,70 +279,40 @@
       /* 3 · تحديث أزرار اللغة */
       updateLangButtons(lang);
 
-      /* 4 · محاولة التحديث الذكي */
-      let smartSuccess = false;
-
+      /* 4 · تحديث حالة I18n (بدون إعادة رسم — الرسم بيحصل في الخطوة 5) */
       try {
         if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
           GMS.I18n.setLang(lang, { silent: true });
           console.log('[switchLanguage] ✅ I18n.setLang نجح');
-          smartSuccess = true;
         }
       } catch (i18nErr) {
         console.warn('[switchLanguage] ⚠️ I18n.setLang فشل:', i18nErr);
-        smartSuccess = false;
       }
 
-      /* 5 · إعادة رسم الصفحة الحالية */
-      if (smartSuccess) {
-        try {
-          const currentRoute = GMS.Router?.currentId?.();
-          if (currentRoute && GMS.Router?.go) {
-            const renderPromise = GMS.Router.go(currentRoute, { force: true });
-            const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('render timeout')), 2500)
-            );
-
-            await Promise.race([renderPromise, timeoutPromise]);
-
-            const pageHost = document.getElementById('page');
-            const hasContent = pageHost && pageHost.innerHTML.trim().length > 100;
-
-            if (hasContent) {
-              console.log('[switchLanguage] ✅ تم التبديل بدون reload');
-              GMS.Beep?.info?.();
-              GMS.Toast?.ok?.(
-                lang === 'ar' ? 'تم التبديل للعربية' : 'Switched to English',
-                lang === 'ar' ? 'واجهة RTL' : 'LTR interface'
-              );
-              return true;
-            } else {
-              console.warn('[switchLanguage] ⚠️ الصفحة فارغة — سأنتقل للـ reload');
-            }
-          }
-        } catch (renderErr) {
-          console.warn('[switchLanguage] ⚠️ الرسم الذكي فشل:', renderErr.message);
-        }
+      /* 5 · إعادة رسم الصفحة الحالية — من غير أي timeout ولا reload.
+         GMS.Router.go بيعمل cleanup صح (Chart.js/timers) قبل الرسم،
+         وبيتعامل مع أي خطأ داخليًا (صفحة خطأ بدل شاشة فاضية)،
+         فمفيش داعي لأي fallback خطر هنا. */
+      const currentRoute = GMS.Router?.currentId?.();
+      if (currentRoute && GMS.Router?.go) {
+        await GMS.Router.go(currentRoute, { force: true });
       }
 
-      /* 6 · Fallback: Overlay + reload */
-      console.log('[switchLanguage] 🔄 استخدام reload الآمن…');
-      showLanguageSwitchOverlay(lang);
-
-      BootState.intentionalReload = true;
-      window.GMS = window.GMS || {};
-      window.GMS._intentionalReload = true;
-
-      try { GMS.Modal?.closeAll?.(); } catch (_) {}
-
-      await new Promise(r => setTimeout(r, 350));
-      location.reload();
+      console.log('[switchLanguage] ✅ تم التبديل');
+      GMS.Beep?.info?.();
+      GMS.Toast?.ok?.(
+        lang === 'ar' ? 'تم التبديل للعربية' : 'Switched to English',
+        lang === 'ar' ? 'واجهة RTL' : 'LTR interface'
+      );
       return true;
 
     } catch (err) {
       console.error('[switchLanguage] ❌ خطأ خطير:', err);
       showLanguageSwitchError(err, currentLang);
       return false;
+    } finally {
+      BootState.switchingLang = false;
+      langBtns.forEach(b => { b.style.pointerEvents = ''; });
     }
   }
 
