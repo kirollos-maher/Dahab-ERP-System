@@ -240,8 +240,7 @@
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
-    /* ✅ حماية ضد الضغط المزدوج (ghost click / double-tap على الموبايل) —
-       لو في تبديل شغال بالفعل، تجاهل أي محاولة تانية لحد ما يخلص */
+    /* ✅ حماية ضد الضغط المزدوج (ghost click / double-tap على الموبايل) */
     if (BootState.switchingLang) {
       console.log('[switchLanguage] ⏳ في تبديل شغال بالفعل — تجاهل الضغطة دي');
       return false;
@@ -255,19 +254,11 @@
     }
 
     BootState.switchingLang = true;
-    const langBtns = Array.from(document.querySelectorAll('.lang-btn'));
-    langBtns.forEach(b => { b.style.pointerEvents = 'none'; });
-
-    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang}`);
+    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (reload path)`);
 
     try {
-      /* 1 · تحديث <html> فوراً */
-      const html = document.documentElement;
-      html.setAttribute('lang', lang);
-      html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
-      html.setAttribute('data-lang', lang);
-
-      /* 2 · حفظ اللغة */
+      /* 1 · حفظ اللغة الجديدة — البوت القادم هيقرأها ويبني الواجهة بيها
+         بنفس المسار المضمون اللي بيشتغل صح عند أي فتح عادي للموقع */
       try {
         const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
         localStorage.setItem(key, lang);
@@ -276,43 +267,25 @@
         console.warn('[switchLanguage] localStorage.save failed:', e);
       }
 
-      /* 3 · تحديث أزرار اللغة */
-      updateLangButtons(lang);
+      /* 2 · overlay بسيط يغطي الشاشة لحد ما الصفحة تتحمّل من جديد —
+         مفيش أي محاولة "ذكية" لإعادة رسم الصفحة الحالية، ومفيش
+         Router.go ولا race ولا timeout. reload واحد نضيف بس. */
+      showLanguageSwitchOverlay(lang);
 
-      /* 4 · تحديث حالة I18n (بدون إعادة رسم — الرسم بيحصل في الخطوة 5) */
-      try {
-        if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
-          GMS.I18n.setLang(lang, { silent: true });
-          console.log('[switchLanguage] ✅ I18n.setLang نجح');
-        }
-      } catch (i18nErr) {
-        console.warn('[switchLanguage] ⚠️ I18n.setLang فشل:', i18nErr);
-      }
+      window.GMS = window.GMS || {};
+      window.GMS._intentionalReload = true;
+      BootState.intentionalReload = true;
 
-      /* 5 · إعادة رسم الصفحة الحالية — من غير أي timeout ولا reload.
-         GMS.Router.go بيعمل cleanup صح (Chart.js/timers) قبل الرسم،
-         وبيتعامل مع أي خطأ داخليًا (صفحة خطأ بدل شاشة فاضية)،
-         فمفيش داعي لأي fallback خطر هنا. */
-      const currentRoute = GMS.Router?.currentId?.();
-      if (currentRoute && GMS.Router?.go) {
-        await GMS.Router.go(currentRoute, { force: true });
-      }
-
-      console.log('[switchLanguage] ✅ تم التبديل');
-      GMS.Beep?.info?.();
-      GMS.Toast?.ok?.(
-        lang === 'ar' ? 'تم التبديل للعربية' : 'Switched to English',
-        lang === 'ar' ? 'واجهة RTL' : 'LTR interface'
-      );
+      /* 3 · نديله فريم يترسم فيه الأوفرلاي، وبعدين reload مباشر */
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      location.reload();
       return true;
 
     } catch (err) {
       console.error('[switchLanguage] ❌ خطأ خطير:', err);
       showLanguageSwitchError(err, currentLang);
-      return false;
-    } finally {
       BootState.switchingLang = false;
-      langBtns.forEach(b => { b.style.pointerEvents = ''; });
+      return false;
     }
   }
 
