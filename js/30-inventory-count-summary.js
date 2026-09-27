@@ -2,14 +2,12 @@
    GOLD MS ENTERPRISE — js/30-inventory-count-summary.js
    ملخّص الجرد السريع حسب التصنيف
    ─────────────────────────────────────────────────────────────────────
-   المزايا:
-     • زر في شريط أدوات المخزون
-     • جدول ملخّص حسب التصنيف (خاتم، سلسلة، حلق، ...)
-     • عدد القطع + الوزن القائم + الصافي + البندق
-     • متوسط المصنعية/جرام + إجمالي المصنعية + الإجمالي
-     • يحترم الفلاتر النشطة في المخزون
-     • طباعة A4 + تصدير Excel
-     • اختصار: Ctrl+Shift+G
+   ✅ v1.0.1 — الإصلاحات:
+     • FIX: إزالة `State.lastModal = modal` التي كانت تسبب TDZ Error
+     • FIX: ربط الأزرار يدوياً داخل onMount
+     • FIX: الترتيب يُحدّث الجدول في مكانه بدون إغلاق المودال
+     • FIX: إضافة try/catch لكل زر لمنع تجميد الواجهة
+     • FIX: fallback للنسخ (execCommand) عند فشل clipboard API
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -22,9 +20,8 @@
      ═════════════════════════════════════════════════════════════════════ */
   const State = {
     lastBreakdown: null,
-    sortBy: 'count',        /* 'category' | 'count' | 'gross' | 'net' | 'pure' | 'value' */
+    sortBy: 'value',        /* 'category' | 'count' | 'gross' | 'net' | 'pure' | 'value' */
     sortDir: 'desc',
-    lastModal: null,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -91,11 +88,6 @@
      §3 · COMPUTE CATEGORY BREAKDOWN
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * حساب الملخص حسب التصنيف
-   * @param {Array} items
-   * @returns {{rows: Array, grand: Object, price24: number}}
-   */
   function computeBreakdown(items) {
     const price24 = getPrice24();
     const map = new Map();
@@ -155,7 +147,6 @@
       grand.value += total;
     });
 
-    /* متوسط المصنعية للجرام = إجمالي المصنعية / إجمالي الصافي */
     const rows = Array.from(map.values()).map(b => ({
       ...b,
       gross: round(b.gross, 3),
@@ -180,7 +171,7 @@
 
   function sortRows(rows, sortBy, sortDir) {
     const mult = sortDir === 'asc' ? 1 : -1;
-    const sorted = rows.slice().sort((a, b) => {
+    return rows.slice().sort((a, b) => {
       if (sortBy === 'category') {
         return String(a.category).localeCompare(String(b.category), 'ar') * mult;
       }
@@ -188,7 +179,6 @@
       const bv = Number(b[sortBy]) || 0;
       return (av - bv) * mult;
     });
-    return sorted;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -208,7 +198,23 @@
     const sorted = sortRows(breakdown.rows, State.sortBy, State.sortDir);
     const g = breakdown.grand;
 
-    const modal = GMS.Modal.open({
+    /* نبني الـ footer كنص قبل فتح المودال */
+    const footerHTML = `
+      <button class="btn" id="ics-close-btn" type="button">
+        إغلاق
+      </button>
+      <button class="btn btn-info" id="ics-copy-btn" type="button">
+        <i data-lucide="copy"></i> نسخ الأرقام
+      </button>
+      <button class="btn btn-success" id="ics-excel-btn" type="button">
+        <i data-lucide="download"></i> تصدير Excel
+      </button>
+      <button class="btn btn-primary" id="ics-print-btn" type="button">
+        <i data-lucide="printer"></i> طباعة A4
+      </button>
+    `;
+
+    GMS.Modal.open({
       title: '📊 ملخّص الجرد حسب التصنيف',
       icon: 'clipboard-list',
       size: 'xl',
@@ -291,33 +297,29 @@
         <div style="border:1px solid var(--border);border-radius:12px;
                     overflow:hidden">
           <div style="max-height:520px;overflow-y:auto">
-            <table class="tbl" style="font-size:12px;min-width:100%">
+            <table class="tbl" style="font-size:12px;min-width:100%"
+                   id="ics-table">
               <thead>
                 <tr>
-                  <th style="width:130px;cursor:pointer"
-                      data-sort="category">
+                  <th style="width:130px;cursor:pointer" data-sort="category">
                     التصنيف
-                    ${State.sortBy === 'category' ? `<span style="color:var(--primary)">${State.sortDir === 'asc' ? '↑' : '↓'}</span>` : ''}
+                    <span data-sort-icon="category"></span>
                   </th>
-                  <th style="width:70px" class="col-c"
-                      data-sort="count">
+                  <th style="width:70px" class="col-c" data-sort="count">
                     عدد
-                    ${State.sortBy === 'count' ? `<span style="color:var(--primary)">${State.sortDir === 'asc' ? '↑' : '↓'}</span>` : ''}
+                    <span data-sort-icon="count"></span>
                   </th>
-                  <th style="width:100px" class="col-num"
-                      data-sort="gross">
+                  <th style="width:100px" class="col-num" data-sort="gross">
                     قائم (جم)
-                    ${State.sortBy === 'gross' ? `<span style="color:var(--primary)">${State.sortDir === 'asc' ? '↑' : '↓'}</span>` : ''}
+                    <span data-sort-icon="gross"></span>
                   </th>
-                  <th style="width:100px" class="col-num"
-                      data-sort="net">
+                  <th style="width:100px" class="col-num" data-sort="net">
                     صافي (جم)
-                    ${State.sortBy === 'net' ? `<span style="color:var(--primary)">${State.sortDir === 'asc' ? '↑' : '↓'}</span>` : ''}
+                    <span data-sort-icon="net"></span>
                   </th>
-                  <th style="width:100px" class="col-num"
-                      data-sort="pure">
+                  <th style="width:100px" class="col-num" data-sort="pure">
                     بندق 24K
-                    ${State.sortBy === 'pure' ? `<span style="color:var(--primary)">${State.sortDir === 'asc' ? '↑' : '↓'}</span>` : ''}
+                    <span data-sort-icon="pure"></span>
                   </th>
                   <th style="width:110px" class="col-num">
                     مصنعية/جم
@@ -325,10 +327,9 @@
                   <th style="width:110px" class="col-num">
                     إجمالي مصنعية
                   </th>
-                  <th style="width:120px" class="col-num"
-                      data-sort="value">
+                  <th style="width:120px" class="col-num" data-sort="value">
                     الإجمالي (ج.م)
-                    ${State.sortBy === 'value' ? `<span style="color:var(--primary)">${State.sortDir === 'asc' ? '↑' : '↓'}</span>` : ''}
+                    <span data-sort-icon="value"></span>
                   </th>
                 </tr>
               </thead>
@@ -385,24 +386,16 @@
           اضغط على رأس أي عمود للترتيب · متوسط المصنعية محسوب = إجمالي المصنعية ÷ إجمالي الصافي
         </div>
       `,
-      footer: `
-        <button class="btn" data-close>إغلاق</button>
-        <button class="btn btn-info" id="ics-copy-btn">
-          <i data-lucide="copy"></i> نسخ الأرقام
-        </button>
-        <button class="btn btn-success" id="ics-excel-btn">
-          <i data-lucide="download"></i> تصدير Excel
-        </button>
-        <button class="btn btn-primary" id="ics-print-btn">
-          <i data-lucide="printer"></i> طباعة A4
-        </button>
-      `,
+      footer: footerHTML,
       onMount: (el, close) => {
-        State.lastModal = modal;
+        /* ✅ ربط زر الإغلاق يدوياً */
+        const closeBtn = el.querySelector('#ics-close-btn');
+        if (closeBtn) {
+          closeBtn.onclick = () => close();
+        }
 
-        /* الترتيب بالنقر على رأس العمود */
+        /* ─── الترتيب بالنقر على رأس العمود ─── */
         el.querySelectorAll('[data-sort]').forEach(th => {
-          th.style.cursor = 'pointer';
           th.onclick = () => {
             const key = th.dataset.sort;
             if (State.sortBy === key) {
@@ -411,31 +404,92 @@
               State.sortBy = key;
               State.sortDir = key === 'category' ? 'asc' : 'desc';
             }
+
+            /* نُحدّث tbody فقط بدون إغلاق المودال */
             const newSorted = sortRows(breakdown.rows, State.sortBy, State.sortDir);
             const host = el.querySelector('#ics-rows-host');
             if (host) host.innerHTML = renderRows(newSorted);
-            /* تحديث أيقونة الترتيب */
-            close();
-            setTimeout(openSummaryModal, 50);
+
+            /* تحديث أيقونات الترتيب */
+            el.querySelectorAll('[data-sort-icon]').forEach(icon => {
+              const iconKey = icon.dataset.sortIcon;
+              if (iconKey === State.sortBy) {
+                icon.textContent = State.sortDir === 'asc' ? ' ↑' : ' ↓';
+                icon.style.color = 'var(--primary)';
+                icon.style.fontWeight = '900';
+              } else {
+                icon.textContent = '';
+              }
+            });
+
+            window.lucide?.createIcons();
           };
         });
 
-        /* نسخ الأرقام */
-        el.querySelector('#ics-copy-btn').onclick = async () => {
-          const text = buildCopyText(sorted, g);
-          const ok = await GMS.copyToClipboard?.(text);
-          if (ok !== false) GMS.Toast?.ok?.('تم نسخ الملخص');
-        };
+        /* ─── زر النسخ ─── */
+        const copyBtn = el.querySelector('#ics-copy-btn');
+        if (copyBtn) {
+          copyBtn.onclick = async () => {
+            try {
+              const currentSorted = sortRows(
+                breakdown.rows, State.sortBy, State.sortDir
+              );
+              const text = buildCopyText(currentSorted, g);
 
-        /* تصدير Excel */
-        el.querySelector('#ics-excel-btn').onclick = () => {
-          exportToExcel(sorted, g, breakdown.price24);
-        };
+              let ok = false;
+              if (GMS.copyToClipboard) {
+                ok = await GMS.copyToClipboard(text);
+              }
+              if (!ok) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.cssText = 'position:fixed;left:-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+                ok = true;
+              }
+              if (ok) GMS.Toast?.ok?.('تم نسخ الملخص', 'الصقه في أي مكان');
+              else GMS.Toast?.err?.('فشل النسخ');
+            } catch (err) {
+              console.error('[ICS.copy]', err);
+              GMS.Toast?.err?.('فشل النسخ', err.message);
+            }
+          };
+        }
 
-        /* طباعة */
-        el.querySelector('#ics-print-btn').onclick = () => {
-          printSummary(sorted, g, breakdown.price24);
-        };
+        /* ─── زر التصدير Excel ─── */
+        const excelBtn = el.querySelector('#ics-excel-btn');
+        if (excelBtn) {
+          excelBtn.onclick = () => {
+            try {
+              const currentSorted = sortRows(
+                breakdown.rows, State.sortBy, State.sortDir
+              );
+              exportToExcel(currentSorted, g, breakdown.price24);
+            } catch (err) {
+              console.error('[ICS.excel]', err);
+              GMS.Toast?.err?.('فشل التصدير', err.message);
+            }
+          };
+        }
+
+        /* ─── زر الطباعة ─── */
+        const printBtn = el.querySelector('#ics-print-btn');
+        if (printBtn) {
+          printBtn.onclick = () => {
+            try {
+              const currentSorted = sortRows(
+                breakdown.rows, State.sortBy, State.sortDir
+              );
+              printSummary(currentSorted, g, breakdown.price24);
+            } catch (err) {
+              console.error('[ICS.print]', err);
+              GMS.Toast?.err?.('فشل الطباعة', err.message);
+            }
+          };
+        }
       },
     });
   }
@@ -516,7 +570,6 @@
         'الإجمالي (ج.م)': r.value,
       }));
 
-      /* صف الإجمالي */
       data.push({
         'التصنيف': 'الإجمالي',
         'عدد القطع': grand.count,
@@ -535,7 +588,6 @@
         { wch: 16 }, { wch: 22 }, { wch: 22 }, { wch: 18 }, { wch: 18 },
       ];
 
-      /* ورقة معلومات */
       const info = [
         ['ملخّص الجرد حسب التصنيف — Gold ERP Pro'],
         ['تاريخ التصدير', new Date().toLocaleString('ar-EG')],
@@ -594,7 +646,6 @@
       <div style="font-family:'Cairo',sans-serif;direction:rtl;
                   color:#000;padding:10mm;background:#fff">
 
-        <!-- الهيدر -->
         <div style="text-align:center;
                     border-bottom:2.5px solid #000;
                     padding-bottom:5mm;margin-bottom:5mm">
@@ -606,7 +657,6 @@
           </p>
         </div>
 
-        <!-- معلومات التقرير -->
         <div style="display:grid;grid-template-columns:1fr 1fr;
                     gap:3mm;font-size:10pt;margin-bottom:5mm;
                     padding:3mm;background:#f5f5f5;border-radius:2mm">
@@ -624,14 +674,12 @@
           </div>
         </div>
 
-        <!-- الفلاتر -->
         <div style="font-size:9pt;margin-bottom:5mm;padding:2.5mm 3mm;
                     background:#e8f0ff;border-inline-start:3px solid #1c4fd8;
                     border-radius:1mm">
           <b>الفلاتر المُطبَّقة:</b> ${esc(filtersText)}
         </div>
 
-        <!-- الجدول الرئيسي -->
         <table style="width:100%;border-collapse:collapse;
                       font-size:9pt;margin-bottom:5mm">
           <thead>
@@ -760,7 +808,6 @@
           </tfoot>
         </table>
 
-        <!-- ملاحظة -->
         <div style="font-size:8.5pt;color:#555;margin-bottom:6mm;
                     text-align:center;padding:2mm;
                     background:#fafafa;border-radius:1mm">
@@ -768,7 +815,6 @@
           · الإجمالي يشمل قيمة الذهب + المصنعية
         </div>
 
-        <!-- التوقيعات -->
         <div style="display:flex;justify-content:space-between;
                     font-size:9pt;margin-top:10mm">
           <div style="border-top:1px solid #000;padding-top:2mm;
@@ -788,7 +834,6 @@
       </div>
     `;
 
-    /* إعادة @page لحجم A4 */
     const pageStyle = document.getElementById('gms-page-size-style');
     const original = pageStyle?.textContent || '';
     if (pageStyle) {
@@ -836,10 +881,8 @@
 
     btn.onclick = () => openSummaryModal();
 
-    /* إدراج الزر قبل زر "الأعمدة" */
     colsBtn.parentNode.insertBefore(btn, colsBtn);
 
-    /* إعادة إنشاء الأيقونات */
     window.lucide?.createIcons();
   }
 
@@ -854,12 +897,10 @@
 
     inv.render = async function (root) {
       const result = await originalRender.call(this, root);
-      /* بعد انتهاء الـ render الأصلي، حقن الزر */
       setTimeout(injectButton, 50);
       return result;
     };
 
-    /* لو الصفحة معروضة بالفعل، حقن الزر فوراً */
     if (GMS.Router?.currentId?.() === 'inventory') {
       setTimeout(injectButton, 100);
     }
@@ -868,7 +909,6 @@
     return true;
   }
 
-  /* محاولة التثبيت مع إعادة المحاولة */
   let retries = 0;
   function tryInstall() {
     if (installHook()) {
@@ -915,7 +955,7 @@
   }
 
   console.log(
-    '%c📊 Inventory Count Summary loaded · Group by Category',
+    '%c📊 Inventory Count Summary v1.0.1 loaded · Fixed Buttons',
     'color:#1c4fd8;font-weight:900;font-size:12px;padding:2px 6px;' +
     'background:#e9efff;border-radius:4px;'
   );
