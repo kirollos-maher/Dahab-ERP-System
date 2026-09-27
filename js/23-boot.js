@@ -1,13 +1,102 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v3.4: FIX — language switch via HARD RELOAD (يمنع كراش الموبايل)
+   ✅ v3.5: FIX — language switch via location.replace() + Boot Logger
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
   'use strict';
 
   const GMS = window.GMS = window.GMS || {};
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §0 · BOOT LOGGER — يلتقط كل رسائل الـ Console ويحفظها
+     ─────────────────────────────────────────────────────────────────────
+     الغرض: لو الصفحة كراشت، نقدر نشوف إيه اللي حصل قبل الكراش
+     ═════════════════════════════════════════════════════════════════════ */
+  (function installBootLogger() {
+    const LOG_KEY = 'gms.debug.bootLog';
+    const MAX_LOGS = 100;
+
+    window.GMS = window.GMS || {};
+    if (window.GMS._bootLoggerInstalled) return;
+    window.GMS._bootLoggerInstalled = true;
+
+    /* اقرأ السجل القديم */
+    let logs = [];
+    try {
+      const raw = sessionStorage.getItem(LOG_KEY);
+      if (raw) logs = JSON.parse(raw) || [];
+    } catch (_) {}
+
+    /* التقط رسالة */
+    function capture(level, args) {
+      try {
+        const msg = args.map(a => {
+          if (a instanceof Error) return a.message + ' | ' + (a.stack || '');
+          if (typeof a === 'object') {
+            try { return JSON.stringify(a); } catch (_) { return String(a); }
+          }
+          return String(a);
+        }).join(' ');
+
+        logs.push({
+          t: Date.now(),
+          lvl: level,
+          msg: msg.slice(0, 500),
+        });
+
+        if (logs.length > MAX_LOGS) logs = logs.slice(-MAX_LOGS);
+
+        sessionStorage.setItem(LOG_KEY, JSON.stringify(logs));
+      } catch (_) {}
+    }
+
+    /* اعتراض console */
+    const origLog = console.log.bind(console);
+    const origErr = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+
+    console.log = function (...args) { capture('log', args); origLog(...args); };
+    console.error = function (...args) { capture('err', args); origErr(...args); };
+    console.warn = function (...args) { capture('warn', args); origWarn(...args); };
+
+    /* التقط الأخطاء غير الملتقطة */
+    window.addEventListener('error', (e) => {
+      capture('uncaught', [e.message + ' @ ' + e.filename + ':' + e.lineno]);
+    });
+
+    window.addEventListener('unhandledrejection', (e) => {
+      capture('reject', [e.reason?.message || String(e.reason)]);
+    });
+
+    /* ✅ API لعرض السجل */
+    window.GMS.showBootLog = function () {
+      try {
+        const raw = sessionStorage.getItem(LOG_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        console.log('%c=== BOOT LOG (' + arr.length + ' entries) ===',
+          'color:#D4A017;font-weight:900;font-size:14px;');
+        arr.forEach((entry, i) => {
+          const time = new Date(entry.t).toLocaleTimeString('ar-EG');
+          const color = entry.lvl === 'err' || entry.lvl === 'uncaught' ? 'color:#ff0000;'
+                      : entry.lvl === 'warn' ? 'color:#ff9900;'
+                      : 'color:#00aaff;';
+          console.log(`%c[${i + 1}] ${time} [${entry.lvl}] ${entry.msg}`, color);
+        });
+        return arr;
+      } catch (_) {
+        return [];
+      }
+    };
+
+    window.GMS.clearBootLog = function () {
+      try { sessionStorage.removeItem(LOG_KEY); } catch (_) {}
+    };
+
+    origLog('%c🐛 Boot logger installed — GMS.showBootLog() لعرض السجل',
+      'color:#0f7a43;font-weight:900;font-size:12px;');
+  })();
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · BOOT STATE
@@ -157,16 +246,19 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ LANGUAGE SWITCHER — v3.4 (HARD RELOAD)
+     §5 · ✅ LANGUAGE SWITCHER — v3.5 (LOCATION.REPLACE)
      ─────────────────────────────────────────────────────────────────────
-     ✅ v3.4: الحل النهائي للكراش على الموبايل
+     ✅ v3.5: الحل النهائي لكراش GPU على Infinix/Tecno/itel
 
-     ليه Hard Reload؟
-       • الموبايل بيقع لما بيعمل Rerender كامل مع Chart.js + RTL
-       • تغيير اتجاه الصفحة (dir) على صفحة فيها charts = crash
-       • Reload كامل = ضمان 100% عدم الكراش
-       • اللغة بتتحفظ في localStorage وبتتحمّل بعد الـ reload
-       • الجلسة بتتحفظ (Session) والمستخدم يفضل داخل
+     ليه location.replace() بدل reload()؟
+       • reload() بيخلي المتصفح يستخدم نفس الـ renderer process
+       • نفس الـ renderer بيحتفظ بـ GPU cache للـ backdrop-filter
+       • تغيير dir → GPU cache invalidate → Infinix GPU crash
+
+       • location.replace() بيدمر الـ renderer process تماماً
+       • بيعمل renderer process جديد نظيف
+       • ما فيش GPU cache قديم
+       • الصفحة بتفتح باللغة الجديدة من الصفر
      ═════════════════════════════════════════════════════════════════════ */
 
   function showLanguageSwitchOverlay(targetLang) {
@@ -246,41 +338,9 @@
     return overlay;
   }
 
-  function showManualLangRecovery() {
-    if (document.getElementById('gms-lang-recover')) return;
-
-    const overlay = document.createElement('div');
-    overlay.id = 'gms-lang-recover';
-    overlay.style.cssText = `
-      position: fixed; inset: 0; z-index: 99999;
-      display: grid; place-items: center;
-      background: rgba(8,13,24,.92);
-      font-family: 'Cairo', system-ui, sans-serif;
-    `;
-    overlay.innerHTML = `
-      <div style="text-align:center;padding:26px;max-width:320px">
-        <div style="color:#e8eefb;font-weight:800;font-size:15px;margin-bottom:16px;line-height:1.7">
-          التبديل بياخد وقت أطول من المتوقع
-        </div>
-        <button id="gms-lang-manual-reload"
-                style="background:linear-gradient(135deg,#F0D68C 0%,#D4A017 48%,#9C7726 100%);
-                       color:#2a1f05;border:none;padding:11px 26px;border-radius:10px;
-                       font-weight:900;font-size:13px;cursor:pointer">
-          إعادة تحميل الصفحة
-        </button>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    document.getElementById('gms-lang-manual-reload')?.addEventListener('click', () => {
-      location.reload();
-    });
-  }
-
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
-    /* ✅ حماية ضد الضغط المزدوج */
     if (BootState.switchingLang) {
       console.log('[switchLanguage] ⏳ في تبديل شغال بالفعل');
       return false;
@@ -294,47 +354,49 @@
     }
 
     BootState.switchingLang = true;
-    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (hard reload mode)`);
+    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (location.replace mode)`);
 
-    /* 1 · احفظ اللغة في localStorage BEFORE anything else */
+    /* 1 · احفظ اللغة */
     try {
       const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
       localStorage.setItem(key, lang);
-      console.log(`[switchLanguage] 💾 حُفظت اللغة: ${lang}`);
+      console.log(`[switchLanguage] 💾 حُفظت: ${lang}`);
     } catch (e) {
-      console.error('[switchLanguage] ❌ فشل حفظ اللغة:', e);
+      console.error('[switchLanguage] ❌ فشل الحفظ:', e);
       BootState.switchingLang = false;
-      GMS.Toast?.err?.('فشل حفظ اللغة', 'المتصفح رافض التخزين المحلي');
+      GMS.Toast?.err?.('فشل حفظ اللغة');
       return false;
     }
 
-    /* 2 · تحقق من الحفظ — تأكيد قبل الـ reload */
+    /* 2 · تحقق من الحفظ */
     try {
       const verify = localStorage.getItem(
         (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang'
       );
       if (verify !== lang) {
-        throw new Error('Verification failed: saved=' + verify + ' expected=' + lang);
+        throw new Error('Verification failed');
       }
     } catch (e) {
       console.error('[switchLanguage] ❌ التحقق فشل:', e);
       BootState.switchingLang = false;
-      GMS.Toast?.err?.('فشل التحقق من اللغة');
       return false;
     }
 
-    /* 3 · جهّز الـ reload — امسح أي حاجة عالقة */
+    /* 3 · علّم إن فيه تبديل معلق (يُقرأ في الـ boot) */
+    try {
+      sessionStorage.setItem('gms._pendingLangSwitch', lang);
+    } catch (_) {}
+
+    /* 4 · جهّز الـ reload */
     try {
       window.GMS = window.GMS || {};
       window.GMS._intentionalReload = true;
       window.GMS._intentionalLangReload = true;
 
-      /* امسح dirty state بتاع Settings لو موجودة */
       if (GMS.Views?.settings?.state) {
         GMS.Views.settings.state.dirty = false;
       }
 
-      /* أوقف كل شيء ممكن يعترض الـ reload */
       try { GMS.Router?.suspendScheduling?.(); } catch (_) {}
       try { GMS.Router?.cancelScheduledRerender?.(); } catch (_) {}
       try { GMS.Queue?.stopAutoSync?.(); } catch (_) {}
@@ -343,47 +405,57 @@
       try { GMS.Realtime?.shutdown?.(); } catch (_) {}
     } catch (_) {}
 
-    /* 4 · اعرض الـ overlay للمستخدم */
+    /* 5 · اعرض الـ overlay */
     showLanguageSwitchOverlay(lang);
 
-    /* 5 · عطّل أزرار اللغة */
+    /* 6 · عطّل أزرار اللغة */
     document.querySelectorAll('.lang-btn').forEach(b => {
       b.style.pointerEvents = 'none';
       b.style.opacity = '0.5';
     });
 
-    /* 6 · تحديث <html> فورًا (رد فعل بصري) */
-    try {
-      const html = document.documentElement;
-      html.setAttribute('lang', lang);
-      html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
-      html.setAttribute('data-lang', lang);
-    } catch (_) {}
-
-    /* 7 · HARD RELOAD — بعد تأخير بسيط عشان الـ overlay يظهر */
+    /* 7 · ✅ v3.5: location.replace() مع cache-buster
+       ده بيدمر الـ renderer process ويعمل واحد جديد
+       → مفيش GPU crash على Infinix
+    */
     setTimeout(() => {
-      console.log('[switchLanguage] 🔃 جارٍ إعادة التحميل…');
-
       try {
-        window.location.reload();
+        const url = new URL(window.location.href);
+
+        /* مسح query params القديمة */
+        url.searchParams.delete('_lang');
+        url.searchParams.delete('_t');
+
+        /* إضافة params جديدة */
+        url.searchParams.set('_lang', lang);
+        url.searchParams.set('_t', String(Date.now()));
+
+        const finalUrl = url.toString();
+
+        console.log('[switchLanguage] 🔀 Navigating to:', finalUrl);
+
+        window.location.replace(finalUrl);
+
       } catch (e) {
-        console.error('[switchLanguage] reload failed:', e);
-        window.location.href = window.location.href;
+        console.error('[switchLanguage] ❌ Navigation failed:', e);
+        /* fallback */
+        window.location.replace(
+          window.location.href.split('?')[0] +
+          '?_lang=' + lang + '&_t=' + Date.now() +
+          (window.location.hash || '')
+        );
       }
-    }, 250);
+    }, 150);
 
-    /* 8 · شبكة أمان إضافية: لو الـ reload ما اشتغلش بعد 3 ثواني */
+    /* 8 · شبكة أمان */
     setTimeout(() => {
-      console.warn('[switchLanguage] ⚠️ Reload safety triggered');
+      console.warn('[switchLanguage] ⚠️ Safety triggered');
       try {
-        window.location.href =
-          window.location.href.split('#')[0] +
-          '?_lang=' + lang +
-          '&_t=' + Date.now() +
-          (window.location.hash || '');
-      } catch (_) {
-        window.location.href = window.location.href;
-      }
+        window.location.replace(
+          window.location.href.split('?')[0] +
+          '?_lang=' + lang + '&_t=' + Date.now()
+        );
+      } catch (_) {}
     }, 3000);
 
     return true;
@@ -395,105 +467,8 @@
     });
   }
 
-  function showLanguageSwitchError(error, fallbackLang) {
-    try {
-      const html = document.documentElement;
-      html.setAttribute('lang', fallbackLang);
-      html.setAttribute('dir', fallbackLang === 'ar' ? 'rtl' : 'ltr');
-      html.setAttribute('data-lang', fallbackLang);
-
-      const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
-      localStorage.setItem(key, fallbackLang);
-
-      if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
-        try { GMS.I18n.setLang(fallbackLang, { silent: true }); } catch (_) {}
-      }
-      updateLangButtons(fallbackLang);
-    } catch (_) {}
-
-    const overlay = document.getElementById('gms-lang-overlay');
-    if (overlay) overlay.remove();
-
-    const errorOverlay = document.createElement('div');
-    errorOverlay.id = 'gms-lang-error';
-    errorOverlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      display: grid;
-      place-items: center;
-      background: rgba(8,13,24,.95);
-      padding: 20px;
-      font-family: 'Cairo', system-ui, sans-serif;
-    `;
-
-    errorOverlay.innerHTML = `
-      <div style="background:var(--surface);border-radius:16px;
-                  padding:28px 24px;max-width:400px;width:100%;
-                  text-align:center;border:1px solid var(--border)">
-        <div style="width:56px;height:56px;border-radius:16px;
-                    background:var(--warn-bg);color:var(--warn);
-                    display:grid;place-items:center;margin:0 auto 14px;
-                    font-size:26px">
-          ⚠
-        </div>
-        <div style="font-size:15px;font-weight:900;color:var(--text);
-                    margin-bottom:8px">
-          تعذّر تبديل اللغة
-        </div>
-        <div style="font-size:12px;color:var(--muted);font-weight:600;
-                    line-height:1.7;margin-bottom:16px">
-          تم استرجاع اللغة السابقة. يمكنك إعادة المحاولة بأمان.
-        </div>
-        <div style="font-size:10.5px;color:var(--danger);font-weight:700;
-                    background:var(--danger-bg);padding:8px 12px;
-                    border-radius:8px;margin-bottom:18px;
-                    font-family:var(--font-mono);word-break:break-all">
-          ${(error?.message || 'Unknown error').slice(0, 120)}
-        </div>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <button id="gms-lang-retry"
-                  style="padding:10px 20px;border-radius:8px;border:none;
-                         background:linear-gradient(135deg,#F0D68C,#9C7726);
-                         color:#2a1f05;font-weight:900;font-size:13px;
-                         cursor:pointer;font-family:inherit">
-            🔄 إعادة التحميل
-          </button>
-          <button id="gms-lang-home"
-                  style="padding:10px 20px;border-radius:8px;
-                         background:transparent;color:var(--muted);
-                         border:1px solid var(--border);font-weight:700;
-                         font-size:13px;cursor:pointer;font-family:inherit">
-            الرئيسية
-          </button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(errorOverlay);
-
-    document.getElementById('gms-lang-retry')?.addEventListener('click', () => {
-      errorOverlay.remove();
-      location.reload();
-    });
-
-    document.getElementById('gms-lang-home')?.addEventListener('click', () => {
-      errorOverlay.remove();
-      try { GMS.Router?.go?.('dashboard', { force: true }); }
-      catch (_) { location.reload(); }
-    });
-  }
-
   /* ═════════════════════════════════════════════════════════════════════
-     §5.1 · ✅ ربط أزرار اللغة — v3.4 (event delegation آمن)
-     ─────────────────────────────────────────────────────────────────────
-     🔴 المشكلة السابقة:
-        كان الـ selector: `.lang-btn, [data-lang]`
-        وعنصر <html> يحمل data-lang — فيلتقط نقرات أي زر في الصفحة
-        ويقتلها بـ stopPropagation().
-
-     ✅ الحل:
-        استخدام `button.lang-btn` — أزرار اللغة الفعلية فقط.
+     §5.1 · ربط أزرار اللغة — event delegation آمن
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLanguageButtons() {
@@ -504,22 +479,17 @@
     window.GMS = window.GMS || {};
     window.GMS._langButtonsBound = true;
 
-    /* ✅ Event Delegation — يلتقط النقر على أزرار اللغة فقط */
     document.addEventListener('click', (e) => {
       const target = e.target;
       if (!target || !target.closest) return;
 
-      /* ✅ FIX: ابحث فقط عن أزرار اللغة الفعلية */
       const btn = target.closest('button.lang-btn');
 
-      /* لم يكن زر لغة → اترك النقرة تمر بشكل طبيعي */
       if (!btn) return;
 
-      /* تأكد أن الزر يحتوي فعلاً على data-lang */
       const lang = btn.dataset.lang;
       if (!lang || !['ar', 'en'].includes(lang)) return;
 
-      /* امنع السلوك الافتراضي فقط لهذا الزر */
       e.preventDefault();
       e.stopPropagation();
 
@@ -527,11 +497,10 @@
       switchLanguage(lang);
     }, true);
 
-    /* حالة أولية */
     const currentLang = document.documentElement.getAttribute('lang') || 'ar';
     updateLangButtons(currentLang);
 
-    console.log('[Boot.bindLanguageButtons] ✅ تم الربط (event delegation آمن)');
+    console.log('[Boot.bindLanguageButtons] ✅ تم الربط');
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -549,7 +518,7 @@
     }
 
     if (form._gmsLoginBound) {
-      console.log('[Boot.bindLoginForm] ℹ️ مُربط مسبقاً — تم التخطي');
+      console.log('[Boot.bindLoginForm] ℹ️ مُربط مسبقاً');
       return;
     }
     form._gmsLoginBound = true;
@@ -724,7 +693,7 @@
       BootState.intentionalReload = true;
       window.GMS._intentionalReload = true;
 
-      setTimeout(() => location.reload(), 300);
+      setTimeout(() => location.replace(location.pathname), 300);
     };
   }
 
@@ -760,7 +729,7 @@
       window.lucide?.createIcons();
     }
 
-    /* ✅ Language switcher: Event Delegation آمن */
+    /* Language switcher */
     bindLanguageButtons();
 
     /* Sync button */
@@ -1297,6 +1266,31 @@
       }
     }
 
+    /* ✅ v3.5: بعد ما اللغة اتحملت، اعرض أي logs قديمة من جلسة كراشت */
+    try {
+      const pendingLang = sessionStorage.getItem('gms._pendingLangSwitch');
+      if (pendingLang) {
+        console.log('%c✅ Language switch succeeded: ' + pendingLang,
+          'color:#0f7a43;font-weight:900;font-size:13px;');
+        sessionStorage.removeItem('gms._pendingLangSwitch');
+      }
+    } catch (_) {}
+
+    /* ✅ v3.5: شوف لو فيه log من جلسة سابقة فيها crash */
+    try {
+      const prevLog = sessionStorage.getItem('gms.debug.bootLog');
+      if (prevLog) {
+        const arr = JSON.parse(prevLog);
+        const errors = arr.filter(l => l.lvl === 'err' || l.lvl === 'uncaught');
+        if (errors.length > 0) {
+          console.warn(
+            `%c⚠️ هناك ${errors.length} أخطاء في الجلسة السابقة — استخدم GMS.showBootLog() لعرضها`,
+            'color:#ff9900;font-weight:900;font-size:12px;'
+          );
+        }
+      }
+    } catch (_) {}
+
     return true;
   }
 
@@ -1409,7 +1403,7 @@
      §19 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v3.4 (Hard Reload Lang Switch)',
+    '%c⚡ Boot loaded · v3.5 (location.replace + Boot Logger)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
   );
