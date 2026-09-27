@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v3.2: FIX — language event delegation لا يعترض زر تسجيل الدخول
+   ✅ v3.3: FIX — switchLanguage مع Fallback لـ Hard Reload
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -157,7 +157,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ LANGUAGE SWITCHER — v3.2
+     §5 · ✅ LANGUAGE SWITCHER — v3.3
+     ─────────────────────────────────────────────────────────────────────
+     ✅ v3.3: FIX — Fallback to Hard Reload
+       - لو الـ SPA Rerender فشل، نعمل window.location.reload()
+       - يمنع الشاشة السوداء/البيضاء على الموبايل
      ═════════════════════════════════════════════════════════════════════ */
 
   function showLanguageSwitchOverlay(targetLang) {
@@ -271,7 +275,6 @@
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
-    /* ✅ حماية ضد الضغط المزدوج (ghost click / double-tap على الموبايل) */
     if (BootState.switchingLang) {
       console.log('[switchLanguage] ⏳ في تبديل شغال بالفعل — تجاهل الضغطة دي');
       return false;
@@ -287,21 +290,18 @@
     BootState.switchingLang = true;
     console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (in-place · no reload · no SW)`);
 
-    /* ✅ وقف أي إعادة رسم تلقائية في الخلفية (Sync/Realtime) لحد ما
-       التبديل يخلص، عشان متتصادمش الاتنين مع بعض */
     try { GMS.Router?.suspendScheduling?.(); } catch (_) {}
 
     const langBtns = Array.from(document.querySelectorAll('.lang-btn'));
     langBtns.forEach(b => { b.style.pointerEvents = 'none'; });
 
-    /* ✅ شبكة أمان: لو التبديل فضل شغال أكتر من 4 ثواني (حاجة عالقة
-       فعلاً)، نورّي زرار "إعادة تحميل" يدوي — مفيش أي reload تلقائي */
+    /* ✅ شبكة أمان — 5 ثواني بدل 4 */
     const safetyTimer = setTimeout(() => {
       if (BootState.switchingLang) {
         console.warn('[switchLanguage] ⚠️ التبديل عالق — عرض زرار الاسترجاع اليدوي');
         showManualLangRecovery();
       }
-    }, 4000);
+    }, 5000);
 
     try {
       /* 1 · تحديث <html> */
@@ -331,12 +331,19 @@
         console.warn('[switchLanguage] ⚠️ I18n.setLang فشل:', i18nErr);
       }
 
-      /* 5 · إعادة رسم الصفحة الحالية داخليًا فقط — بدون شبكة وبدون
-         reload وبدون Service Worker. Router.go بيعمل cleanup صح
-         (Chart.js/timers) قبل الرسم، وبيتعامل مع أي خطأ داخليًا. */
+      /* ✅ 5 · إعادة رسم الصفحة الحالية — v3.3: مع Fallback لإعادة تحميل كاملة */
       const currentRoute = GMS.Router?.currentId?.();
       if (currentRoute && GMS.Router?.go) {
-        await GMS.Router.go(currentRoute, { force: true });
+        try {
+          await GMS.Router.go(currentRoute, { force: true });
+        } catch (routerError) {
+          console.error('[switchLanguage] ❌ Router.go failed, forcing reload:', routerError);
+          clearTimeout(safetyTimer);
+          BootState.switchingLang = false;
+          /* إعادة تحميل كاملة كـ Fallback */
+          window.location.reload();
+          return false;
+        }
       }
 
       clearTimeout(safetyTimer);
@@ -460,15 +467,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5.1 · ✅ ربط أزرار اللغة — v3.2 (FIXED)
-     ─────────────────────────────────────────────────────────────────────
-     🔴 المشكلة السابقة:
-        كان الـ selector: `.lang-btn, [data-lang]`
-        وعنصر <html> يحمل data-lang — فيلتقط نقرات أي زر في الصفحة
-        ويقتلها بـ stopPropagation().
-
-     ✅ الحل:
-        استخدام `button.lang-btn` — أزرار اللغة الفعلية فقط.
+     §5.1 · ✅ ربط أزرار اللغة — event delegation آمن
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLanguageButtons() {
@@ -479,23 +478,17 @@
     window.GMS = window.GMS || {};
     window.GMS._langButtonsBound = true;
 
-    /* ✅ Event Delegation — يلتقط النقر على أزرار اللغة فقط */
     document.addEventListener('click', (e) => {
-      /* فحص آمن: هل العنصر زر؟ */
       const target = e.target;
       if (!target || !target.closest) return;
 
-      /* ✅ FIX: ابحث فقط عن أزرار اللغة الفعلية */
       const btn = target.closest('button.lang-btn');
 
-      /* لم يكن زر لغة → اترك النقرة تمر بشكل طبيعي */
       if (!btn) return;
 
-      /* تأكد أن الزر يحتوي فعلاً على data-lang */
       const lang = btn.dataset.lang;
       if (!lang || !['ar', 'en'].includes(lang)) return;
 
-      /* امنع السلوك الافتراضي فقط لهذا الزر */
       e.preventDefault();
       e.stopPropagation();
 
@@ -503,7 +496,6 @@
       switchLanguage(lang);
     }, true);
 
-    /* حالة أولية */
     const currentLang = document.documentElement.getAttribute('lang') || 'ar';
     updateLangButtons(currentLang);
 
@@ -709,7 +701,6 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindTopbar() {
-    /* Theme toggle */
     const themeBtn = document.getElementById('theme-btn');
     if (themeBtn) {
       themeBtn.onclick = () => {
@@ -736,10 +727,8 @@
       window.lucide?.createIcons();
     }
 
-    /* ✅ Language switcher: Event Delegation آمن */
     bindLanguageButtons();
 
-    /* Sync button */
     const syncBtn = document.getElementById('sync-btn');
     if (syncBtn) {
       syncBtn.onclick = async () => {
@@ -763,7 +752,6 @@
       };
     }
 
-    /* Cache refresh button */
     const cacheBtn = document.getElementById('cache-btn');
     if (cacheBtn) {
       cacheBtn.onclick = async () => {
@@ -793,19 +781,16 @@
       };
     }
 
-    /* Queue button */
     const queueBtn = document.getElementById('queue-btn');
     if (queueBtn) {
       queueBtn.onclick = () => GMS.Router?.go('queue');
     }
 
-    /* Settings button */
     const settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
       settingsBtn.onclick = () => GMS.Router?.go('settings');
     }
 
-    /* Connection chip */
     const connChip = document.getElementById('conn-chip');
     if (connChip) {
       connChip.onclick = () => showConnectionInfo();
@@ -1385,7 +1370,7 @@
      §19 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v3.2 (Login + Lang Switch FIXED)',
+    '%c⚡ Boot loaded · v3.3 (Login + Lang Switch FIXED + Fallback Reload)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
   );
