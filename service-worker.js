@@ -10,7 +10,7 @@
      • POST/PUT/DELETE → تُمرَّر مباشرة للسيرفر (لا تُخزَّن)
      • Background Sync → للمزامنة التلقائية عند عودة الشبكة
 
-   Version: 1.0.11
+   Version: 1.0.13
    ═══════════════════════════════════════════════════════════════════════ */
 
 'use strict';
@@ -23,8 +23,8 @@
      - الكاش القديم يُحذَف تلقائياً في activate
      - يُشعر المستخدم بوجود تحديث جديد
    ───────────────────────────────────────────────────────────────────── */
-const SW_VERSION = 'v1.0.12';       // ✅ FIX: timeout على Network-First navigation
-const BUILD_DATE = '2026-09-27';    // ✅ تاريخ البناء
+const SW_VERSION = 'v1.0.13';       // ✅ FIX: رفع النسخة لمسح كاش قديم
+const BUILD_DATE = '2026-09-27';
 
 const CACHE_STATIC = `gold-erp-static-${SW_VERSION}`;
 const CACHE_CDN    = `gold-erp-cdn-${SW_VERSION}`;
@@ -36,18 +36,12 @@ const CACHE_MAX_AGE_PAGES_MS  = 7 * 24 * 60 * 60 * 1000;  // 7 أيام
 
 /* ─────────────────────────────────────────────────────────────────────
    §2 · PRECACHE MANIFEST
-   ─────────────────────────────────────────────────────────────────────
-   الملفات التي تُحمَّل عند أول تثبيت — متاحة فوراً بدون شبكة
    ───────────────────────────────────────────────────────────────────── */
 const PRECACHE_URLS = [
-  /* Core HTML */
   './',
   './index.html',
-
-  /* Styles */
   './style.css',
 
-  /* Core JS Modules (بالترتيب) */
   './js/01-config.js',
   './js/02-utils.js',
   './js/03-i18n.js',
@@ -60,7 +54,6 @@ const PRECACHE_URLS = [
   './js/10-excel.js',
   './js/11-realtime.js',
 
-  /* Views */
   './js/12-views-dashboard.js',
   './js/13-views-pos.js',
   './js/14-views-inventory.js',
@@ -76,30 +69,20 @@ const PRECACHE_URLS = [
   './js/24-views-repair.js',
   './js/25-pwa.js',
 
-  /* ✅ Accounting View */
   './js/26-views-accounting.js',
-
-  /* ✅ Wholesale View */
   './js/27-views-wholesale.js',
-
-  /* ✅ NEW: Real-Time Price Manager */
   './js/28-price-manager.js',
 
-  /* Manifest */
   './manifest.json',
 
-  /* Icons */
   './icons/icon.svg',
   './icons/icon-maskable.svg',
 
-  /* Offline fallback */
   './offline.html'
 ];
 
 /* ─────────────────────────────────────────────────────────────────────
-   §3 · CDN PRECACHE (اختياري — يعمل بالشبكة أول مرة ثم يُخزَّن)
-   ─────────────────────────────────────────────────────────────────────
-   لا نُجهِز هذا في install لأن الروابط كبيرة — يُخزَّن عند أول استخدام
+   §3 · CDN HOSTS
    ───────────────────────────────────────────────────────────────────── */
 const CDN_HOSTS = [
   'cdn.jsdelivr.net',
@@ -111,9 +94,6 @@ const CDN_HOSTS = [
 
 /* ─────────────────────────────────────────────────────────────────────
    §4 · INSTALL EVENT
-   ─────────────────────────────────────────────────────────────────────
-   - يُخزِّن كل ملفات PRECACHE_URLS
-   - skipWaiting() لتفعيل SW الجديد فوراً
    ───────────────────────────────────────────────────────────────────── */
 self.addEventListener('install', (event) => {
   console.log(`[SW] 📦 Installing ${SW_VERSION} (${BUILD_DATE})`);
@@ -122,7 +102,6 @@ self.addEventListener('install', (event) => {
     (async () => {
       const cache = await caches.open(CACHE_STATIC);
 
-      /* تحميل كل ملف على حدة — لا يفشل الكل لو واحد فشل */
       const results = await Promise.allSettled(
         PRECACHE_URLS.map(async (url) => {
           try {
@@ -142,7 +121,6 @@ self.addEventListener('install', (event) => {
       const ok = results.filter(r => r.status === 'fulfilled').length;
       console.log(`[SW] ✅ Precached ${ok}/${PRECACHE_URLS.length} files`);
 
-      /* تفعيل SW الجديد فوراً */
       await self.skipWaiting();
     })()
   );
@@ -150,16 +128,12 @@ self.addEventListener('install', (event) => {
 
 /* ─────────────────────────────────────────────────────────────────────
    §5 · ACTIVATE EVENT
-   ─────────────────────────────────────────────────────────────────────
-   - يحذف كل الكاشات القديمة (النسخ السابقة)
-   - clients.claim() للسيطرة على كل التبويبات المفتوحة
    ───────────────────────────────────────────────────────────────────── */
 self.addEventListener('activate', (event) => {
   console.log(`[SW] 🚀 Activating ${SW_VERSION}`);
 
   event.waitUntil(
     (async () => {
-      /* احذف كل كاش بأسماء النسخ القديمة */
       const cacheNames = await caches.keys();
       const validNames = new Set([
         CACHE_STATIC,
@@ -177,10 +151,8 @@ self.addEventListener('activate', (event) => {
           })
       );
 
-      /* سيطر على كل التبويبات المفتوحة */
       await self.clients.claim();
 
-      /* أخبر التطبيق أن SW الجديد جاهز */
       const clients = await self.clients.matchAll({ type: 'window' });
       clients.forEach(client => {
         client.postMessage({
@@ -202,13 +174,6 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  /* ─────────────────────────────────────────────────────── */
-  /* تجاهل:                                                    */
-  /*  • POST/PUT/DELETE → تُمرَّر للسيرفر                       */
-  /*  • chrome-extension:// و devtools                         */
-  /*  • طلبات Supabase Auth (تتطلب تحديث فوري)                 */
-  /*  • طلبات APIs الخاصة بأسعار الذهب (تحتاج بيانات حية)      */
-  /* ─────────────────────────────────────────────────────── */
   if (request.method !== 'GET') return;
 
   if (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') {
@@ -216,37 +181,32 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.hostname.includes('supabase.co') && url.pathname.includes('/auth/')) {
-    return; // لا نُخزِّن Auth
+    return;
   }
 
-  /* ✅ لا نُخزِّن طلبات أسعار الذهب — نحتاج بيانات لحظية دائماً */
   const LIVE_PRICE_HOSTS = [
     'xaus.com',
     'api.goldprice.dev',
     'api.exchangerate.fun',
     'open.er-api.com',
+    'goldprice.org',
+    'gold-api.com',
+    'frankfurter.app',
   ];
   if (LIVE_PRICE_HOSTS.some(h => url.hostname.includes(h))) {
-    return; // pass-through مباشر
+    return;
   }
 
-  /* ─────────────────────────────────────────────────────── */
-  /* Routing                                                   */
-  /* ─────────────────────────────────────────────────────── */
-
-  /* 1 · CDN libraries → Cache-First مع TTL طويل */
   if (CDN_HOSTS.some(h => url.hostname.includes(h))) {
     event.respondWith(handleCDNRequest(request));
     return;
   }
 
-  /* 2 · Supabase API → Network-First (البيانات في IndexedDB) */
   if (url.hostname.includes('supabase.co')) {
     event.respondWith(handleAPIRequest(request));
     return;
   }
 
-  /* 3 · Icons & Images → Cache-First */
   if (
     request.destination === 'image' ||
     url.pathname.startsWith('/icons/')
@@ -255,13 +215,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  /* 4 · Navigation (HTML) → Network-First with Offline Fallback */
   if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(handleNavigationRequest(request));
     return;
   }
 
-  /* 5 · Static assets (JS/CSS/Fonts) → Stale-While-Revalidate */
   if (
     request.destination === 'script' ||
     request.destination === 'style' ||
@@ -272,21 +230,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  /* 6 · افتراضي → Stale-While-Revalidate */
   event.respondWith(handleStaticRequest(request));
 });
 
 /* ─────────────────────────────────────────────────────────────────────
    §6.1 · Stale-While-Revalidate (Static Assets)
-   ─────────────────────────────────────────────────────────────────────
-   1. يرجّع من الكاش فوراً (سريع)
-   2. في نفس الوقت يجلب من الشبكة ويحدّث الكاش للزيارة القادمة
    ───────────────────────────────────────────────────────────────────── */
 async function handleStaticRequest(request) {
   const cache = await caches.open(CACHE_STATIC);
   const cached = await cache.match(request);
 
-  /* Network fetch بالخلفية */
   const networkPromise = fetch(request)
     .then(response => {
       if (response && response.ok && response.type === 'basic') {
@@ -296,17 +249,14 @@ async function handleStaticRequest(request) {
     })
     .catch(() => null);
 
-  /* لو عندنا كاش → رجّعه فوراً */
   if (cached) {
     networkPromise.catch(() => {});
     return cached;
   }
 
-  /* مفيش كاش → انتظر الشبكة */
   const network = await networkPromise;
   if (network) return network;
 
-  /* فشل كل شيء */
   return new Response(
     '/* Offline — Asset unavailable */',
     { status: 503, headers: { 'Content-Type': 'text/plain;charset=utf-8' } }
@@ -315,8 +265,6 @@ async function handleStaticRequest(request) {
 
 /* ─────────────────────────────────────────────────────────────────────
    §6.2 · Cache-First مع TTL (CDN Libraries)
-   ─────────────────────────────────────────────────────────────────────
-   مكتبات ثابتة (lucide, chart.js, xlsx) — لا تتغير كثيراً
    ───────────────────────────────────────────────────────────────────── */
 async function handleCDNRequest(request) {
   const cache = await caches.open(CACHE_CDN);
@@ -374,16 +322,12 @@ async function handleCDNRequest(request) {
 
 /* ─────────────────────────────────────────────────────────────────────
    §6.3 · Network-First (Supabase API)
-   ─────────────────────────────────────────────────────────────────────
-   البيانات الحساسة — نُفضّل الشبكة، وإذا فشلت نرجّع من IndexedDB
-   (IndexedDB يُدار من 04-cache.js في الـ main thread، ليس هنا)
    ───────────────────────────────────────────────────────────────────── */
 async function handleAPIRequest(request) {
   try {
     const response = await fetch(request);
     return response;
   } catch (e) {
-    /* الشبكة فشلت — رجّع استجابة 503 تحمل علامة خاصة */
     return new Response(
       JSON.stringify({
         error: 'OFFLINE',
@@ -414,29 +358,23 @@ async function handleImageRequest(request) {
     }
     return response;
   } catch (e) {
-    /* صورة افتراضية أو خطأ صامت */
     return new Response('', { status: 404 });
   }
 }
 
 /* ─────────────────────────────────────────────────────────────────────
    §6.5 · Network-First (Navigation)
-   ─────────────────────────────────────────────────────────────────────
-   SPA: كل الصفحات تُوجَّه إلى index.html
    ───────────────────────────────────────────────────────────────────── */
 async function handleNavigationRequest(request) {
   const cache = await caches.open(CACHE_PAGES);
   const NETWORK_TIMEOUT_MS = 3000;
 
-  /* ✅ هات النسخة المخزّنة الأول (لو موجودة) — عشان نقدر نرجع لها فورًا
-     لو النت بطيء، بدل ما نستنى بدون حد أقصى */
   const cachedPage = await cache.match(request);
 
   const networkPromise = (async () => {
     const response = await fetch(request);
 
     if (response && response.ok) {
-      /* ✅ ناخد clone قبل استخدام body */
       const copy = response.clone();
       const headers = new Headers(copy.headers);
       headers.set('x-sw-cached-at', String(Date.now()));
@@ -452,8 +390,6 @@ async function handleNavigationRequest(request) {
     return response;
   })();
 
-  /* ما فيش نسخة مخزّنة أصلاً (أول تحميل) — لازم نستنى الشبكة مهما كان،
-     مفيش بديل نرجعله */
   if (!cachedPage) {
     try {
       return await networkPromise;
@@ -474,10 +410,6 @@ async function handleNavigationRequest(request) {
     }
   }
 
-  /* ✅ عندنا نسخة مخزّنة — سباق بينها وبين الشبكة بحد أقصى 3 ثواني.
-     لو النت رد قبل انتهاء المهلة، نستخدم رده (أحدث نسخة).
-     لو النت بطيء/واقف، نورّي النسخة المخزّنة فورًا من غير ما نجمّد
-     الشاشة، والشبكة تكمل في الخلفية وتحدّث الكاش لمرة الجاية. */
   const timeoutPromise = new Promise((resolve) => {
     setTimeout(() => resolve(null), NETWORK_TIMEOUT_MS);
   });
@@ -490,7 +422,6 @@ async function handleNavigationRequest(request) {
 
     if (winner) return winner;
 
-    /* المهلة خلصت قبل النت — سيب النت يكمل في الخلفية (تحديث الكاش) */
     networkPromise.catch(() => {});
     console.log('[SW] ⏱️ الشبكة بطيئة — استخدام النسخة المخزّنة فورًا');
     return cachedPage;
@@ -502,8 +433,6 @@ async function handleNavigationRequest(request) {
 
 /* ─────────────────────────────────────────────────────────────────────
    §7 · MESSAGE HANDLER
-   ─────────────────────────────────────────────────────────────────────
-   التواصل بين main thread والـ SW
    ───────────────────────────────────────────────────────────────────── */
 self.addEventListener('message', (event) => {
   const data = event.data || {};
@@ -537,16 +466,12 @@ self.addEventListener('message', (event) => {
       break;
 
     default:
-      /* console.warn('[SW] Unknown message:', data.type); */
       break;
   }
 });
 
 /* ─────────────────────────────────────────────────────────────────────
    §8 · BACKGROUND SYNC
-   ─────────────────────────────────────────────────────────────────────
-   يعمل عندما يكتشف المتصفح عودة الشبكة حتى لو كان التطبيق مغلقاً.
-   ⚠️ مدعوم في: Chrome/Edge (Android + Desktop). غير مدعوم في iOS Safari.
    ───────────────────────────────────────────────────────────────────── */
 self.addEventListener('sync', (event) => {
   console.log('[SW] 🔄 Background Sync triggered:', event.tag);
@@ -558,14 +483,12 @@ self.addEventListener('sync', (event) => {
 
 async function processBackgroundSync() {
   try {
-    /* أخبر كل التبويبات المفتوحة أن تُشغِّل مزامنتها */
     const clients = await self.clients.matchAll({
       type: 'window',
       includeUncontrolled: true
     });
 
     if (clients.length > 0) {
-      /* التطبيق مفتوح — أرسل رسالة لتشغيل SyncEngine.pushQueue() */
       clients.forEach(client => {
         client.postMessage({
           type: 'TRIGGER_QUEUE_SYNC',
@@ -576,11 +499,7 @@ async function processBackgroundSync() {
       return;
     }
 
-    /* التطبيق مغلق — لا يمكن الوصول إلى IndexedDB بسهولة من هنا */
-    /* الحل: نُظهر إشعار للمستخدم ليفتح التطبيق */
     console.log('[SW] 💤 No active clients — background sync deferred');
-
-    /* يمكن لاحقاً إضافة قراءة IndexedDB مباشرة هنا عبر idb library */
 
   } catch (e) {
     console.error('[SW] Background sync failed:', e);
@@ -590,8 +509,6 @@ async function processBackgroundSync() {
 
 /* ─────────────────────────────────────────────────────────────────────
    §9 · NOTIFICATION CLICK
-   ─────────────────────────────────────────────────────────────────────
-   عند النقر على أي إشعار → افتح التطبيق أو ركّز على التبويب المفتوح
    ───────────────────────────────────────────────────────────────────── */
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
@@ -605,7 +522,6 @@ self.addEventListener('notificationclick', (event) => {
         includeUncontrolled: true
       });
 
-      /* ركّز على تبويب مفتوح إن وُجد */
       for (const client of clients) {
         if (client.url.includes(self.registration.scope)) {
           await client.focus();
@@ -616,7 +532,6 @@ self.addEventListener('notificationclick', (event) => {
         }
       }
 
-      /* افتح تبويب جديد */
       if (self.clients.openWindow) {
         await self.clients.openWindow(targetUrl);
       }
@@ -625,7 +540,7 @@ self.addEventListener('notificationclick', (event) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────
-   §10 · PUSH NOTIFICATIONS (اختياري — للمستقبل)
+   §10 · PUSH NOTIFICATIONS
    ───────────────────────────────────────────────────────────────────── */
 self.addEventListener('push', (event) => {
   if (!event.data) return;
