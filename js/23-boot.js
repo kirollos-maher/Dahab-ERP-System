@@ -237,6 +237,37 @@
     return overlay;
   }
 
+  function showManualLangRecovery() {
+    if (document.getElementById('gms-lang-recover')) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'gms-lang-recover';
+    overlay.style.cssText = `
+      position: fixed; inset: 0; z-index: 99999;
+      display: grid; place-items: center;
+      background: rgba(8,13,24,.92);
+      font-family: 'Cairo', system-ui, sans-serif;
+    `;
+    overlay.innerHTML = `
+      <div style="text-align:center;padding:26px;max-width:320px">
+        <div style="color:#e8eefb;font-weight:800;font-size:15px;margin-bottom:16px;line-height:1.7">
+          التبديل بياخد وقت أطول من المتوقع
+        </div>
+        <button id="gms-lang-manual-reload"
+                style="background:linear-gradient(135deg,#F0D68C 0%,#D4A017 48%,#9C7726 100%);
+                       color:#2a1f05;border:none;padding:11px 26px;border-radius:10px;
+                       font-weight:900;font-size:13px;cursor:pointer">
+          إعادة تحميل الصفحة
+        </button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    document.getElementById('gms-lang-manual-reload')?.addEventListener('click', () => {
+      location.reload();
+    });
+  }
+
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
@@ -254,11 +285,32 @@
     }
 
     BootState.switchingLang = true;
-    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (reload path)`);
+    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (in-place · no reload · no SW)`);
+
+    /* ✅ وقف أي إعادة رسم تلقائية في الخلفية (Sync/Realtime) لحد ما
+       التبديل يخلص، عشان متتصادمش الاتنين مع بعض */
+    try { GMS.Router?.suspendScheduling?.(); } catch (_) {}
+
+    const langBtns = Array.from(document.querySelectorAll('.lang-btn'));
+    langBtns.forEach(b => { b.style.pointerEvents = 'none'; });
+
+    /* ✅ شبكة أمان: لو التبديل فضل شغال أكتر من 4 ثواني (حاجة عالقة
+       فعلاً)، نورّي زرار "إعادة تحميل" يدوي — مفيش أي reload تلقائي */
+    const safetyTimer = setTimeout(() => {
+      if (BootState.switchingLang) {
+        console.warn('[switchLanguage] ⚠️ التبديل عالق — عرض زرار الاسترجاع اليدوي');
+        showManualLangRecovery();
+      }
+    }, 4000);
 
     try {
-      /* 1 · حفظ اللغة الجديدة — البوت القادم هيقرأها ويبني الواجهة بيها
-         بنفس المسار المضمون اللي بيشتغل صح عند أي فتح عادي للموقع */
+      /* 1 · تحديث <html> */
+      const html = document.documentElement;
+      html.setAttribute('lang', lang);
+      html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
+      html.setAttribute('data-lang', lang);
+
+      /* 2 · حفظ اللغة */
       try {
         const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
         localStorage.setItem(key, lang);
@@ -267,25 +319,48 @@
         console.warn('[switchLanguage] localStorage.save failed:', e);
       }
 
-      /* 2 · overlay بسيط يغطي الشاشة لحد ما الصفحة تتحمّل من جديد —
-         مفيش أي محاولة "ذكية" لإعادة رسم الصفحة الحالية، ومفيش
-         Router.go ولا race ولا timeout. reload واحد نضيف بس. */
-      showLanguageSwitchOverlay(lang);
+      /* 3 · تحديث أزرار اللغة */
+      updateLangButtons(lang);
 
-      window.GMS = window.GMS || {};
-      window.GMS._intentionalReload = true;
-      BootState.intentionalReload = true;
+      /* 4 · تحديث حالة I18n */
+      try {
+        if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
+          GMS.I18n.setLang(lang, { silent: true });
+        }
+      } catch (i18nErr) {
+        console.warn('[switchLanguage] ⚠️ I18n.setLang فشل:', i18nErr);
+      }
 
-      /* 3 · نديله فريم يترسم فيه الأوفرلاي، وبعدين reload مباشر */
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      location.reload();
+      /* 5 · إعادة رسم الصفحة الحالية داخليًا فقط — بدون شبكة وبدون
+         reload وبدون Service Worker. Router.go بيعمل cleanup صح
+         (Chart.js/timers) قبل الرسم، وبيتعامل مع أي خطأ داخليًا. */
+      const currentRoute = GMS.Router?.currentId?.();
+      if (currentRoute && GMS.Router?.go) {
+        await GMS.Router.go(currentRoute, { force: true });
+      }
+
+      clearTimeout(safetyTimer);
+      const recover = document.getElementById('gms-lang-recover');
+      if (recover) recover.remove();
+
+      console.log('[switchLanguage] ✅ تم التبديل');
+      GMS.Beep?.info?.();
+      GMS.Toast?.ok?.(
+        lang === 'ar' ? 'تم التبديل للعربية' : 'Switched to English',
+        lang === 'ar' ? 'واجهة RTL' : 'LTR interface'
+      );
       return true;
 
     } catch (err) {
+      clearTimeout(safetyTimer);
       console.error('[switchLanguage] ❌ خطأ خطير:', err);
       showLanguageSwitchError(err, currentLang);
-      BootState.switchingLang = false;
       return false;
+    } finally {
+      clearTimeout(safetyTimer);
+      BootState.switchingLang = false;
+      langBtns.forEach(b => { b.style.pointerEvents = ''; });
+      try { GMS.Router?.resumeScheduling?.(); } catch (_) {}
     }
   }
 
