@@ -2,34 +2,13 @@
    GOLD MS ENTERPRISE — js/29-b2b-sellers.js
    نظام بياعي الجملة المستقلين + عملاء الجملة (Multi-Tenant B2B)
    ─────────────────────────────────────────────────────────────────────
-   المكونات:
-     • إدارة بياعي الجملة (Sales Reps) — كيان معزول لكل بياع
-     • خزينة نقدية مستقلة + خزينة ذهب مستقلة لكل بياع
-     • دفتر عملاء الجملة (B2B Customers) مع أرصدة ذهب+نقد مزدوجة
-     • لوحة رقابة المدير (Manager Audit Dashboard)
-     • إذون تسوية/تصفية (Rep Settlement Vouchers)
-     • عزل بيانات صارم (Data Isolation) حسب الدور
-     • تكامل كامل مع فواتير الجملة و POS
-
-   ✅ v1.1.0 — إصلاحات محاسبية:
-     • FIX #1: الرصيد الافتتاحي للعميل لم يُعد يُحسب مرتين
-       (كان يُقرأ من customer.opening_balance_cash + حركة ledger → تكرار)
+   ✅ v1.2.0 — إضافات:
+     • FIX #1: الرصيد الافتتاحي للعميل لا يُحسب مرتين
      • FIX #2: خزينة البياع لا تتضخم بحركات الرصيد الافتتاحي للعملاء
-       (لأنها ديون على العملاء وليست كاش فعلي في يد البياع)
-     • FIX #3: إضافة تصنيف الحركة (customer_open vs rep_open)
-       لتمييزها بدقة في التقارير
-
-   Data Store (CacheDB):
-     • sales_reps
-     • b2b_customers
-     • rep_ledgers
-     • rep_settlements
-     • wholesale_invoices (مرتبطة بـ rep_id)
-
-   Export:
-     • GMS.Views.b2b
-     • window.B2BView
-     • GMS.B2B
+     • FIX #3: تصنيف الحركات (rep_open vs customer_open)
+     • 🆕 NEW: قسم "المستحقات المتوقعة" (Receivables) منفصل عن الخزينة الفعلية
+     • 🆕 NEW: قسم "الإجمالي المتوقع" (الخزينة + المستحقات)
+     • 🆕 NEW: عرض تفصيلي لكل عميل مدين مع المبلغ
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -197,6 +176,9 @@
       totalCustomerGold: 0,
       pendingSettlements: 0,
       approvedSettlementsValue: 0,
+      /* 🆕 NEW */
+      totalExpectedCash: 0,
+      totalExpectedGold: 0,
     },
 
     draft: null,
@@ -330,28 +312,21 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · KPIs + TREASURY
+     §6 · KPIs + TREASURY + RECEIVABLES
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * ✅ v1.1.0 FIX #2: حساب خزينة البياع
-   * ─────────────────────────────────────────────────────────────────────
-   * استثناء حركات الرصيد الافتتاحي للعملاء لأنها:
-   *   - ديون على العملاء (Receivables)
-   *   - ليست كاش فعلي في يد البياع
-   *
-   * ملاحظة: الرصيد الافتتاحي للبياع نفسه (بدون customer_id) يُحسب عادي.
+   * ✅ v1.2.0: حساب خزينة البياع الفعلية
+   * - تستثني الرصيد الافتتاحي للعملاء (ديون)
+   * - تشمل: rep_open + كل الحركات الفعلية
    */
   function computeRepTreasury(repId) {
     const treasury = JSON.parse(JSON.stringify(DEFAULT_REP_TREASURY));
     const repLedgers = State.ledgers.filter(l => l.rep_id === repId);
 
     repLedgers.forEach(entry => {
-      /* ✅ FIX #2: تجاهل الرصيد الافتتاحي للعملاء */
       const isCustomerOpening = entry.type === 'opening' && entry.customer_id;
       if (isCustomerOpening) return;
-
-      /* تجاهل الحركات الملغاة */
       if (entry.status === 'CANCELLED' || entry.is_cancelled) return;
 
       const cashDelta = numOr(entry.cash_delta, 0);
@@ -383,19 +358,12 @@
   }
 
   /**
-   * ✅ v1.1.0 FIX #1: حساب رصيد العميل
-   * ─────────────────────────────────────────────────────────────────────
-   * لا نضيف `customer.opening_balance_cash` مرة ثانية، لأنها:
-   *   - مسجَّلة بالفعل كحركة في دفتر الأستاذ (`type: 'opening'`)
-   *   - القراءة المزدوجة كانت تسبب مضاعفة الرصيد
-   *
-   * الرصيد الحقيقي = مجموع حركات الدفتر فقط.
+   * ✅ v1.2.0: حساب رصيد العميل (من دفتر الأستاذ فقط)
    */
   function computeCustomerBalance(customerId) {
     const cust = State.customers.find(c => c.id === customerId);
     if (!cust) return { cash: 0, gold_pure: 0, by_karat: {}, custom_pure: 0 };
 
-    /* ✅ FIX #1: ابدأ من صفر — الرصيد الافتتاحي محسوب ضمن الحركات */
     let cash = 0;
     let goldPure = 0;
     const byKarat = { 24: 0, 22: 0, 21: 0, 18: 0, 14: 0 };
@@ -427,15 +395,126 @@
     };
   }
 
+  /**
+   * 🆕 v1.2.0: حساب المستحقات المتوقعة (Receivables) من عملاء البياع
+   * ─────────────────────────────────────────────────────────────────
+   * يجمع فقط المديونيات الموجبة (cash > 0 و gold_pure > 0)
+   * أي: العملاء المدينون للبياع
+   *
+   * @returns {{
+   *   totalCash: number,
+   *   totalGoldPure: number,
+   *   customers: Array<{id, name, code, cash, gold_pure}>,
+   *   customersCount: number
+   * }}
+   */
+  function computeRepReceivables(repId) {
+    const repCustomers = State.customers.filter(c =>
+      c.rep_id === repId && c.is_active !== false
+    );
+
+    let totalCash = 0;
+    let totalGoldPure = 0;
+    const debtors = [];
+
+    repCustomers.forEach(cust => {
+      const balance = computeCustomerBalance(cust.id);
+
+      /* فقط المديونيات الموجبة (العميل مدين لنا) */
+      const cashDebt = Math.max(0, balance.cash);
+      const goldDebt = Math.max(0, balance.gold_pure);
+
+      if (cashDebt > 0.01 || goldDebt > 0.0001) {
+        totalCash += cashDebt;
+        totalGoldPure += goldDebt;
+
+        debtors.push({
+          id: cust.id,
+          code: cust.code,
+          name: cust.name,
+          phone: cust.phone,
+          cash: round(cashDebt, 2),
+          gold_pure: round(goldDebt, 4),
+        });
+      }
+    });
+
+    /* ترتيب حسب أكبر مديونية */
+    debtors.sort((a, b) => b.cash - a.cash);
+
+    return {
+      totalCash: round(totalCash, 2),
+      totalGoldPure: round(totalGoldPure, 4),
+      customers: debtors,
+      customersCount: debtors.length,
+    };
+  }
+
+  /**
+   * 🆕 v1.2.0: حساب الوضعية الكاملة للبياع
+   * = الخزينة الفعلية + المستحقات المتوقعة
+   */
+  function computeRepFullPosition(repId) {
+    const treasury = computeRepTreasury(repId);
+    const receivables = computeRepReceivables(repId);
+    const price24 = getPrice24();
+
+    /* القيم بالجنيه */
+    const treasuryCashValue = treasury.cash;
+    const treasuryGoldValue = round(treasury.gold_pure * price24, 2);
+
+    const receivablesCashValue = receivables.totalCash;
+    const receivablesGoldValue = round(receivables.totalGoldPure * price24, 2);
+
+    return {
+      /* الخزينة الفعلية */
+      treasury: {
+        cash: treasury.cash,
+        gold_pure: treasury.gold_pure,
+        gold_value: treasuryGoldValue,
+        total_value: round(treasuryCashValue + treasuryGoldValue, 2),
+        gold_by_karat: treasury.gold_by_karat,
+      },
+
+      /* المستحقات المتوقعة */
+      receivables: {
+        cash: receivables.totalCash,
+        gold_pure: receivables.totalGoldPure,
+        gold_value: receivablesGoldValue,
+        total_value: round(receivablesCashValue + receivablesGoldValue, 2),
+        customersCount: receivables.customersCount,
+        customers: receivables.customers,
+      },
+
+      /* الإجمالي المتوقع بعد التحصيل الكامل */
+      expected: {
+        cash: round(treasury.cash + receivables.totalCash, 2),
+        gold_pure: round(treasury.gold_pure + receivables.totalGoldPure, 4),
+        gold_value: round(treasuryGoldValue + receivablesGoldValue, 2),
+        total_value: round(
+          treasuryCashValue + treasuryGoldValue +
+          receivablesCashValue + receivablesGoldValue,
+          2
+        ),
+      },
+
+      price24,
+    };
+  }
+
   function computeKPIs() {
     const reps = State.reps.filter(r => r.is_active !== false);
     let totalRepCash = 0;
     let totalRepGold = 0;
+    let totalExpectedCash = 0;
+    let totalExpectedGold = 0;
 
     reps.forEach(r => {
-      const t = computeRepTreasury(r.id);
-      totalRepCash += t.cash;
-      totalRepGold += t.gold_pure;
+      const pos = computeRepFullPosition(r.id);
+      totalRepCash += pos.treasury.cash;
+      totalRepGold += pos.treasury.gold_pure;
+      totalExpectedCash += pos.expected.cash;
+      totalExpectedGold += pos.expected.gold_pure;
     });
 
     let custCash = 0;
@@ -461,6 +540,9 @@
       totalCustomerGold: round(custGold, 4),
       pendingSettlements: pending,
       approvedSettlementsValue: round(approvedValue, 2),
+      /* 🆕 NEW */
+      totalExpectedCash: round(totalExpectedCash, 2),
+      totalExpectedGold: round(totalExpectedGold, 4),
     };
 
     return State.kpis;
@@ -478,7 +560,6 @@
       return { success: false, error: 'غير مصرح' };
     }
 
-    /* ✅ v1.1.0: تصنيف الحركة (customer_open vs rep_open) */
     let entryKind = entry.entry_kind || 'normal';
     if (entry.type === 'opening') {
       entryKind = entry.customer_id ? 'customer_open' : 'rep_open';
@@ -579,7 +660,6 @@
     if (!ok) return { success: false, error: 'فشل الحفظ' };
 
     if (isNew && (payload.opening_cash > 0 || payload.opening_gold_pure > 0)) {
-      /* ✅ رصيد افتتاحي للبياع نفسه — يُحسب في خزينته */
       await addLedgerEntry({
         rep_id: payload.id,
         type: 'opening',
@@ -664,11 +744,6 @@
     if (!ok) return { success: false, error: 'فشل الحفظ' };
 
     if (isNew && (payload.opening_balance_cash !== 0 || payload.opening_balance_gold_pure !== 0)) {
-      /* ✅ v1.1.0: الرصيد الافتتاحي للعميل
-         - مسجَّل مرة واحدة فقط في دفتر الأستاذ
-         - `entry_kind: 'customer_open'` يمنع حسابه في خزينة البياع
-         - يُحسب فقط في رصيد العميل عبر computeCustomerBalance
-      */
       await addLedgerEntry({
         rep_id: payload.rep_id,
         customer_id: payload.id,
@@ -880,6 +955,9 @@
      ═════════════════════════════════════════════════════════════════════ */
   function renderKPIs() {
     const k = State.kpis;
+    const price24 = getPrice24();
+    const expectedGoldValue = round(k.totalExpectedGold * price24, 2);
+    const actualGoldValue = round(k.totalRepGold * price24, 2);
 
     return `
       <div class="kpi-row cols-4">
@@ -894,37 +972,39 @@
           </div>
         </div>
 
-        <div class="kpi gold">
+        <div class="kpi success">
           <div class="kpi-label">
             <i data-lucide="wallet"></i>
-            إجمالي خزائن البياعين (نقد)
+            الخزائن الفعلية (كاش)
           </div>
           <div class="kpi-value">${moneyFmt(k.totalRepCash)} <small>ج.م</small></div>
           <div class="kpi-meta">
-            ذهب: <b>${gramFmt(k.totalRepGold)}</b> جم بندق
+            ذهب فعلي: <b>${gramFmt(k.totalRepGold)}</b> جم
+            (<b>${moneyFmt(actualGoldValue)}</b> ج.م)
           </div>
         </div>
 
-        <div class="kpi info">
+        <div class="kpi warn">
           <div class="kpi-label">
-            <i data-lucide="users"></i>
-            عملاء الجملة
+            <i data-lucide="hand-coins"></i>
+            المستحقات المتوقعة
           </div>
-          <div class="kpi-value">${intFmt(k.totalCustomers)}</div>
+          <div class="kpi-value">${moneyFmt(k.totalExpectedCash - k.totalRepCash)} <small>ج.م</small></div>
           <div class="kpi-meta">
-            مديونيات: <b>${moneyFmt(k.totalCustomerCash)}</b> ج.م
-            · ذهب: <b>${gramFmt(k.totalCustomerGold)}</b> جم
+            ذهب مستحق: <b>${gramFmt(k.totalExpectedGold - k.totalRepGold)}</b> جم
+            · من <b>${intFmt(k.totalCustomers)}</b> عميل
           </div>
         </div>
 
-        <div class="kpi ${k.pendingSettlements > 0 ? 'warn' : 'success'}">
+        <div class="kpi gold">
           <div class="kpi-label">
-            <i data-lucide="vault"></i>
-            إذون التصفية
+            <i data-lucide="trending-up"></i>
+            الإجمالي المتوقع (بعد التحصيل)
           </div>
-          <div class="kpi-value">${intFmt(k.pendingSettlements)} <small>معلّق</small></div>
+          <div class="kpi-value">${moneyFmt(k.totalExpectedCash)} <small>ج.م</small></div>
           <div class="kpi-meta">
-            معتمد: <b>${moneyFmt(k.approvedSettlementsValue)}</b> ج.م
+            ذهب متوقع: <b>${gramFmt(k.totalExpectedGold)}</b> جم
+            (<b>${moneyFmt(expectedGoldValue)}</b> ج.م)
           </div>
         </div>
       </div>
@@ -958,7 +1038,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · REPS TAB
+     §12 · REPS TAB — 🆕 مع قسم المستحقات والإجمالي المتوقع
      ═════════════════════════════════════════════════════════════════════ */
   function renderRepsTab() {
     const visibleReps = isRepRole()
@@ -1000,120 +1080,258 @@
     `;
   }
 
+  /**
+   * 🆕 v1.2.0: بطاقة البياع مع 3 أقسام منفصلة
+   *   1. الخزينة الفعلية (كاش + ذهب موجود فعلاً)
+   *   2. المستحقات المتوقعة (مديونيات العملاء)
+   *   3. الإجمالي المتوقع بعد التحصيل
+   */
   function renderRepCard(rep) {
-    const t = computeRepTreasury(rep.id);
-    const price24 = getPrice24();
-    const goldValue = round(t.gold_pure * price24, 2);
-    const totalValue = round(t.cash + goldValue, 2);
+    const pos = computeRepFullPosition(rep.id);
     const isActive = rep.is_active !== false;
 
     return `
       <div class="queue-item" data-b2b-rep-card="${esc(rep.id)}"
-           style="cursor:default;grid-template-columns:auto 1fr auto;
-                  padding:14px 16px">
-        <div style="width:48px;height:48px;border-radius:12px;
-                    background:${isActive ? 'var(--gold-grad)' : 'var(--surface-3)'};
-                    display:grid;place-items:center;flex-shrink:0;
-                    color:${isActive ? '#2a1f05' : 'var(--muted)'};
-                    font-weight:900;font-size:16px">
-          ${esc((rep.name || '?').slice(0, 2).toUpperCase())}
-        </div>
+           style="cursor:default;display:block;padding:16px">
 
-        <div style="min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;
-                      margin-bottom:4px">
-            <span style="font-weight:900;font-size:14px">
-              ${esc(rep.name)}
-            </span>
-            <span class="chip ${isActive ? 'ok' : ''}" style="font-size:10px">
-              ${isActive ? 'نشط' : 'موقوف'}
-            </span>
-            <span class="mono" style="font-size:10.5px;color:var(--muted);
-                        font-weight:700">
-              ${esc(rep.code)}
-            </span>
+        <!-- ═══ Header: اسم البياع + الأزرار ═══ -->
+        <div style="display:flex;align-items:center;gap:12px;
+                    margin-bottom:14px;flex-wrap:wrap">
+          <div style="width:48px;height:48px;border-radius:12px;
+                      background:${isActive ? 'var(--gold-grad)' : 'var(--surface-3)'};
+                      display:grid;place-items:center;flex-shrink:0;
+                      color:${isActive ? '#2a1f05' : 'var(--muted)'};
+                      font-weight:900;font-size:16px">
+            ${esc((rep.name || '?').slice(0, 2).toUpperCase())}
           </div>
 
-          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;
-                      color:var(--muted);font-weight:700;margin-bottom:8px">
-            ${rep.phone ? `<span>
-              <i data-lucide="phone" style="width:10px;height:10px;
-                         display:inline;vertical-align:-1px"></i>
-              ${esc(rep.phone)}
-            </span>` : ''}
-            <span>
-              <i data-lucide="user-check" style="width:10px;height:10px;
-                         display:inline;vertical-align:-1px"></i>
-              ${esc(rep.branch_id || '—')}
-            </span>
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div style="padding:8px 12px;background:var(--success-bg);
-                        border-radius:8px">
-              <div style="font-size:9.5px;font-weight:800;color:var(--success);
-                          text-transform:uppercase">
-                <i data-lucide="wallet" style="width:10px;height:10px;
-                   display:inline;vertical-align:-1px"></i>
-                خزنة النقدية
-              </div>
-              <div class="mono" style="font-size:14px;font-weight:900;
-                          color:var(--success);margin-top:3px">
-                ${moneyFmt(t.cash)} ج.م
-              </div>
+          <div style="flex:1;min-width:200px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+                        margin-bottom:3px">
+              <span style="font-weight:900;font-size:15px">
+                ${esc(rep.name)}
+              </span>
+              <span class="chip ${isActive ? 'ok' : ''}" style="font-size:10px">
+                ${isActive ? 'نشط' : 'موقوف'}
+              </span>
+              <span class="mono" style="font-size:11px;color:var(--muted);
+                          font-weight:700">
+                ${esc(rep.code)}
+              </span>
             </div>
-
-            <div style="padding:8px 12px;background:var(--gold-soft);
-                        border-radius:8px">
-              <div style="font-size:9.5px;font-weight:800;color:var(--warn);
-                          text-transform:uppercase">
-                <i data-lucide="scale" style="width:10px;height:10px;
-                   display:inline;vertical-align:-1px"></i>
-                خزنة الذهب
-              </div>
-              <div class="mono" style="font-size:14px;font-weight:900;
-                          color:var(--primary);margin-top:3px">
-                ${gramFmt(t.gold_pure)} جم
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
-          <div style="text-align:end">
-            <div style="font-size:10px;color:var(--muted);font-weight:700">
-              إجمالي الخزينة
-            </div>
-            <div class="mono" style="font-size:15px;font-weight:900;
-                        color:var(--primary);direction:ltr">
-              ${moneyFmt(totalValue)} ج.م
+            <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:11px;
+                        color:var(--muted);font-weight:700">
+              ${rep.phone ? `<span>
+                <i data-lucide="phone" style="width:10px;height:10px;
+                           display:inline;vertical-align:-1px"></i>
+                ${esc(rep.phone)}
+              </span>` : ''}
+              <span>
+                <i data-lucide="users" style="width:10px;height:10px;
+                           display:inline;vertical-align:-1px"></i>
+                ${intFmt(pos.receivables.customersCount)} عميل
+              </span>
             </div>
           </div>
 
-          <div style="display:flex;gap:3px">
+          <div style="display:flex;gap:4px">
             <button class="row-act" data-b2b-rep-view="${esc(rep.id)}"
-                    title="عرض التفاصيل" type="button"
-                    style="width:32px;height:32px">
+                    title="عرض التفاصيل الكاملة" type="button"
+                    style="width:34px;height:34px">
               <i data-lucide="eye"></i>
             </button>
             ${isManager() ? `
               <button class="row-act" data-b2b-rep-settle="${esc(rep.id)}"
                       title="تصفية الحساب" type="button"
-                      style="width:32px;height:32px;color:var(--violet)">
+                      style="width:34px;height:34px;color:var(--violet)">
                 <i data-lucide="vault"></i>
               </button>
               <button class="row-act" data-b2b-rep-edit="${esc(rep.id)}"
                       title="تعديل" type="button"
-                      style="width:32px;height:32px">
+                      style="width:34px;height:34px">
                 <i data-lucide="pencil"></i>
               </button>
             ` : `
               <button class="row-act" data-b2b-rep-settle="${esc(rep.id)}"
                       title="طلب تصفية" type="button"
-                      style="width:32px;height:32px;color:var(--violet)">
+                      style="width:34px;height:34px;color:var(--violet)">
                 <i data-lucide="vault"></i>
               </button>
             `}
+          </div>
+        </div>
+
+        <!-- ═══ 3 أقسام مالية منفصلة ═══ -->
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);
+                    gap:10px">
+
+          <!-- ✅ القسم 1: الخزينة الفعلية -->
+          <div style="padding:12px 14px;
+                      background:linear-gradient(135deg,
+                        color-mix(in srgb,var(--success) 8%,var(--surface-2)) 0%,
+                        var(--surface-2) 100%);
+                      border-radius:10px;
+                      border:1.5px solid color-mix(in srgb,var(--success) 35%,var(--border))">
+            <div style="font-size:10px;font-weight:900;color:var(--success);
+                        text-transform:uppercase;letter-spacing:.4px;
+                        margin-bottom:8px;display:flex;align-items:center;gap:5px">
+              <i data-lucide="wallet" style="width:11px;height:11px"></i>
+              الخزينة الفعلية
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">نقدية:</span>
+                <span class="mono" style="font-weight:900;color:var(--success);
+                            font-size:13px">
+                  ${moneyFmt(pos.treasury.cash)} ج.م
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">ذهب:</span>
+                <span class="mono" style="font-weight:900;color:var(--primary);
+                            font-size:13px">
+                  ${gramFmt(pos.treasury.gold_pure)} جم
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">قيمة الذهب:</span>
+                <span class="mono" style="font-weight:800;font-size:12px">
+                  ${moneyFmt(pos.treasury.gold_value)} ج.م
+                </span>
+              </div>
+            </div>
+
+            <div style="margin-top:9px;padding-top:8px;
+                        border-top:1px dashed color-mix(in srgb,var(--success) 30%,var(--border));
+                        display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:10.5px;font-weight:900;color:var(--success)">
+                الإجمالي:
+              </span>
+              <span class="mono" style="font-weight:900;color:var(--success);
+                          font-size:14px">
+                ${moneyFmt(pos.treasury.total_value)} ج.م
+              </span>
+            </div>
+          </div>
+
+          <!-- ✅ القسم 2: المستحقات المتوقعة -->
+          <div style="padding:12px 14px;
+                      background:linear-gradient(135deg,
+                        color-mix(in srgb,var(--warn) 8%,var(--surface-2)) 0%,
+                        var(--surface-2) 100%);
+                      border-radius:10px;
+                      border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border))">
+            <div style="font-size:10px;font-weight:900;color:var(--warn);
+                        text-transform:uppercase;letter-spacing:.4px;
+                        margin-bottom:8px;display:flex;align-items:center;gap:5px">
+              <i data-lucide="hand-coins" style="width:11px;height:11px"></i>
+              المستحقات المتوقعة
+              <span class="chip" style="font-size:9px;padding:1px 6px;
+                          margin-inline-start:auto">
+                ${intFmt(pos.receivables.customersCount)} عميل
+              </span>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">مديونية نقدية:</span>
+                <span class="mono" style="font-weight:900;color:var(--warn);
+                            font-size:13px">
+                  ${moneyFmt(pos.receivables.cash)} ج.م
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">مديونية ذهب:</span>
+                <span class="mono" style="font-weight:900;color:var(--warn);
+                            font-size:13px">
+                  ${gramFmt(pos.receivables.gold_pure)} جم
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">قيمة الذهب:</span>
+                <span class="mono" style="font-weight:800;font-size:12px">
+                  ${moneyFmt(pos.receivables.gold_value)} ج.م
+                </span>
+              </div>
+            </div>
+
+            <div style="margin-top:9px;padding-top:8px;
+                        border-top:1px dashed color-mix(in srgb,var(--warn) 30%,var(--border));
+                        display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:10.5px;font-weight:900;color:var(--warn)">
+                الإجمالي:
+              </span>
+              <span class="mono" style="font-weight:900;color:var(--warn);
+                          font-size:14px">
+                ${moneyFmt(pos.receivables.total_value)} ج.م
+              </span>
+            </div>
+          </div>
+
+          <!-- ✅ القسم 3: الإجمالي المتوقع بعد التحصيل -->
+          <div style="padding:12px 14px;
+                      background:var(--gold-soft);
+                      border-radius:10px;
+                      border:2px solid color-mix(in srgb,var(--primary) 50%,var(--border));
+                      position:relative;overflow:hidden">
+            <div style="position:absolute;inset-block:0;inset-inline-start:0;
+                        width:3px;background:var(--gold-grad)"></div>
+            <div style="font-size:10px;font-weight:900;color:var(--primary);
+                        text-transform:uppercase;letter-spacing:.4px;
+                        margin-bottom:8px;display:flex;align-items:center;gap:5px">
+              <i data-lucide="trending-up" style="width:11px;height:11px"></i>
+              الإجمالي المتوقع
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">نقدية متوقعة:</span>
+                <span class="mono" style="font-weight:900;color:var(--primary);
+                            font-size:13px">
+                  ${moneyFmt(pos.expected.cash)} ج.م
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">ذهب متوقع:</span>
+                <span class="mono" style="font-weight:900;color:var(--primary);
+                            font-size:13px">
+                  ${gramFmt(pos.expected.gold_pure)} جم
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;font-size:11px">
+                <span style="color:var(--muted);font-weight:700">قيمة الذهب:</span>
+                <span class="mono" style="font-weight:800;font-size:12px">
+                  ${moneyFmt(pos.expected.gold_value)} ج.م
+                </span>
+              </div>
+            </div>
+
+            <div style="margin-top:9px;padding-top:8px;
+                        border-top:1.5px solid color-mix(in srgb,var(--primary) 40%,var(--border));
+                        display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:11px;font-weight:900;color:var(--primary)">
+                الإجمالي:
+              </span>
+              <span class="mono" style="font-weight:900;color:var(--primary);
+                          font-size:16px;letter-spacing:-.4px">
+                ${moneyFmt(pos.expected.total_value)} ج.م
+              </span>
+            </div>
+
+            <div style="font-size:9.5px;color:var(--muted);font-weight:700;
+                        text-align:center;margin-top:5px;line-height:1.5">
+              = الخزينة + المستحقات
+            </div>
           </div>
         </div>
       </div>
@@ -1276,7 +1494,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · AUDIT TAB
+     §14 · AUDIT TAB — 🆕 يعرض الأعمدة الثلاثة (فعلي + مستحقات + متوقع)
      ═════════════════════════════════════════════════════════════════════ */
   function renderAuditTab() {
     if (!isManager()) {
@@ -1284,7 +1502,21 @@
     }
 
     const reps = State.reps;
-    const price24 = getPrice24();
+
+    /* الإجماليات */
+    let grandTreasuryCash = 0, grandTreasuryGold = 0;
+    let grandReceivableCash = 0, grandReceivableGold = 0;
+    let grandExpectedCash = 0, grandExpectedGold = 0;
+
+    reps.forEach(rep => {
+      const pos = computeRepFullPosition(rep.id);
+      grandTreasuryCash += pos.treasury.cash;
+      grandTreasuryGold += pos.treasury.gold_pure;
+      grandReceivableCash += pos.receivables.cash;
+      grandReceivableGold += pos.receivables.gold_pure;
+      grandExpectedCash += pos.expected.cash;
+      grandExpectedGold += pos.expected.gold_pure;
+    });
 
     return `
       <div class="card" style="margin-bottom:16px">
@@ -1302,23 +1534,30 @@
             <table class="tbl">
               <thead>
                 <tr>
-                  <th>البياع</th>
-                  <th class="col-num" style="width:130px">خزنة نقدية</th>
-                  <th class="col-num" style="width:140px">خزنة ذهب (جم)</th>
-                  <th class="col-num" style="width:140px">قيمة الذهب</th>
-                  <th class="col-num" style="width:130px">عملاء الجملة</th>
-                  <th class="col-num" style="width:130px">مبيعات الفترة</th>
-                  <th class="col-num" style="width:130px">عدد الفواتير</th>
-                  <th class="col-c" style="width:100px">إجراء</th>
+                  <th rowspan="2" style="vertical-align:middle">البياع</th>
+                  <th colspan="2" style="text-align:center;background:var(--success-bg);color:var(--success)">
+                    الخزينة الفعلية
+                  </th>
+                  <th colspan="2" style="text-align:center;background:var(--warn-bg);color:var(--warn)">
+                    المستحقات المتوقعة
+                  </th>
+                  <th colspan="2" style="text-align:center;background:var(--gold-soft);color:var(--warn)">
+                    الإجمالي المتوقع
+                  </th>
+                  <th rowspan="2" style="vertical-align:middle;width:90px" class="col-c">إجراء</th>
+                </tr>
+                <tr>
+                  <th class="col-num" style="width:120px;background:var(--success-bg);color:var(--success)">كاش</th>
+                  <th class="col-num" style="width:110px;background:var(--success-bg);color:var(--success)">ذهب (جم)</th>
+                  <th class="col-num" style="width:120px;background:var(--warn-bg);color:var(--warn)">كاش</th>
+                  <th class="col-num" style="width:110px;background:var(--warn-bg);color:var(--warn)">ذهب (جم)</th>
+                  <th class="col-num" style="width:130px;background:var(--gold-soft);color:var(--warn)">كاش</th>
+                  <th class="col-num" style="width:120px;background:var(--gold-soft);color:var(--warn)">ذهب (جم)</th>
                 </tr>
               </thead>
               <tbody>
                 ${reps.map(rep => {
-                  const t = computeRepTreasury(rep.id);
-                  const goldValue = round(t.gold_pure * price24, 2);
-                  const custCount = State.customers.filter(c => c.rep_id === rep.id).length;
-                  const repInvoices = State.invoices.filter(i => i.rep_id === rep.id);
-                  const totalSales = repInvoices.reduce((a, i) => a + numOr(i.totals?.grand_total, 0), 0);
+                  const pos = computeRepFullPosition(rep.id);
 
                   return `
                     <tr>
@@ -1329,19 +1568,25 @@
                         </div>
                       </td>
                       <td class="col-num" style="font-weight:900;color:var(--success)">
-                        ${moneyFmt(t.cash)}
+                        ${moneyFmt(pos.treasury.cash)}
                       </td>
                       <td class="col-num" style="font-weight:900;color:var(--primary)">
-                        ${gramFmt(t.gold_pure)}
+                        ${gramFmt(pos.treasury.gold_pure)}
                       </td>
-                      <td class="col-num" style="font-weight:700">
-                        ${moneyFmt(goldValue)}
+                      <td class="col-num" style="font-weight:900;color:var(--warn)">
+                        ${moneyFmt(pos.receivables.cash)}
                       </td>
-                      <td class="col-num">${intFmt(custCount)}</td>
-                      <td class="col-num" style="font-weight:800">
-                        ${moneyFmt(totalSales)}
+                      <td class="col-num" style="font-weight:900;color:var(--warn)">
+                        ${gramFmt(pos.receivables.gold_pure)}
                       </td>
-                      <td class="col-num">${intFmt(repInvoices.length)}</td>
+                      <td class="col-num" style="font-weight:900;color:var(--primary);
+                                  background:color-mix(in srgb,var(--primary) 6%,transparent)">
+                        ${moneyFmt(pos.expected.cash)}
+                      </td>
+                      <td class="col-num" style="font-weight:900;color:var(--primary);
+                                  background:color-mix(in srgb,var(--primary) 6%,transparent)">
+                        ${gramFmt(pos.expected.gold_pure)}
+                      </td>
                       <td class="col-c">
                         <button class="row-act" data-b2b-rep-view="${esc(rep.id)}"
                                 title="تفاصيل" type="button"
@@ -1353,6 +1598,32 @@
                   `;
                 }).join('')}
               </tbody>
+              <tfoot>
+                <tr style="background:var(--surface-2);font-weight:900">
+                  <td>الإجمالي</td>
+                  <td class="col-num" style="color:var(--success)">
+                    ${moneyFmt(grandTreasuryCash)}
+                  </td>
+                  <td class="col-num" style="color:var(--primary)">
+                    ${gramFmt(grandTreasuryGold)}
+                  </td>
+                  <td class="col-num" style="color:var(--warn)">
+                    ${moneyFmt(grandReceivableCash)}
+                  </td>
+                  <td class="col-num" style="color:var(--warn)">
+                    ${gramFmt(grandReceivableGold)}
+                  </td>
+                  <td class="col-num" style="color:var(--primary);
+                              background:color-mix(in srgb,var(--primary) 10%,transparent)">
+                    ${moneyFmt(grandExpectedCash)}
+                  </td>
+                  <td class="col-num" style="color:var(--primary);
+                              background:color-mix(in srgb,var(--primary) 10%,transparent)">
+                    ${gramFmt(grandExpectedGold)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
@@ -2268,7 +2539,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §21 · MODAL — REP DETAILS
+     §21 · MODAL — REP DETAILS — 🆕 مع المستحقات والإجمالي المتوقع
      ═════════════════════════════════════════════════════════════════════ */
   function openRepDetails(repId) {
     if (!canAccessRep(repId)) return GMS.Toast.err('غير مصرح');
@@ -2276,10 +2547,7 @@
     const rep = State.reps.find(r => r.id === repId);
     if (!rep) return;
 
-    const treasury = computeRepTreasury(repId);
-    const price24 = getPrice24();
-    const goldValue = round(treasury.gold_pure * price24, 2);
-
+    const pos = computeRepFullPosition(repId);
     const entries = State.ledgers
       .filter(l => l.rep_id === repId)
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
@@ -2288,83 +2556,286 @@
     const repCustomers = State.customers.filter(c => c.rep_id === repId);
 
     GMS.Modal.open({
-      title: `خزينة البياع — ${rep.name}`,
+      title: `الوضع المالي الكامل — ${rep.name}`,
       icon: 'vault',
       size: 'xl',
       body: `
-        <div style="padding:16px;background:linear-gradient(135deg,
-                    color-mix(in srgb,var(--primary) 12%,var(--surface)) 0%,
-                    var(--surface) 100%);
-                    border-radius:14px;margin-bottom:16px;
-                    border:1.5px solid color-mix(in srgb,var(--primary) 35%,var(--border))">
-          <div style="font-size:11px;font-weight:800;color:var(--warn);
+
+        <!-- ═══════════════════════════════════════════════════════════
+             قسم 1: الخزينة الفعلية
+             ═══════════════════════════════════════════════════════════ -->
+        <div style="padding:16px;
+                    background:linear-gradient(135deg,
+                      color-mix(in srgb,var(--success) 10%,var(--surface)) 0%,
+                      var(--surface) 100%);
+                    border-radius:14px;margin-bottom:14px;
+                    border:2px solid color-mix(in srgb,var(--success) 40%,var(--border))">
+          <div style="font-size:12px;font-weight:900;color:var(--success);
                       text-transform:uppercase;letter-spacing:.4px;
-                      margin-bottom:12px">
-            ملخص الخزينة
+                      margin-bottom:12px;display:flex;align-items:center;gap:7px">
+            <i data-lucide="wallet" style="width:14px;height:14px"></i>
+            الخزينة الفعلية (الموجودة في يد البياع حالياً)
           </div>
 
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-            <div style="padding:14px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;border:1px solid var(--border)">
               <div style="font-size:10.5px;font-weight:800;color:var(--success);
-                          text-transform:uppercase">نقدية</div>
-              <div class="mono" style="font-size:20px;font-weight:900;
+                          text-transform:uppercase">نقدية فعلية</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
                           color:var(--success);margin-top:5px">
-                ${moneyFmt(treasury.cash)}
+                ${moneyFmt(pos.treasury.cash)}
               </div>
-              <div style="font-size:10px;color:var(--muted);font-weight:700;margin-top:3px">
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
                 ج.م
               </div>
             </div>
 
-            <div style="padding:14px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;border:1px solid var(--border)">
               <div style="font-size:10.5px;font-weight:800;color:var(--primary);
-                          text-transform:uppercase">ذهب</div>
-              <div class="mono" style="font-size:20px;font-weight:900;
+                          text-transform:uppercase">ذهب فعلي</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
                           color:var(--primary);margin-top:5px">
-                ${gramFmt(treasury.gold_pure)}
+                ${gramFmt(pos.treasury.gold_pure)}
               </div>
-              <div style="font-size:10px;color:var(--muted);font-weight:700;margin-top:3px">
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
                 جم بندق 24K
               </div>
             </div>
 
-            <div style="padding:14px;background:var(--surface);border-radius:10px;border:1px solid var(--border)">
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;border:1px solid var(--border)">
               <div style="font-size:10.5px;font-weight:800;color:var(--info);
-                          text-transform:uppercase">القيمة</div>
-              <div class="mono" style="font-size:20px;font-weight:900;
+                          text-transform:uppercase">القيمة الفعلية</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
                           color:var(--info);margin-top:5px">
-                ${moneyFmt(treasury.cash + goldValue)}
+                ${moneyFmt(pos.treasury.total_value)}
               </div>
-              <div style="font-size:10px;color:var(--muted);font-weight:700;margin-top:3px">
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
                 ج.م
               </div>
             </div>
           </div>
 
-          ${Object.values(treasury.gold_by_karat).some(v => v !== 0) ? `
-            <div style="margin-top:14px">
+          ${Object.values(pos.treasury.gold_by_karat).some(v => v !== 0) ? `
+            <div style="margin-top:12px;padding-top:10px;
+                        border-top:1px dashed color-mix(in srgb,var(--success) 30%,var(--border))">
               <div style="font-size:10px;font-weight:800;color:var(--muted);
                           text-transform:uppercase;margin-bottom:6px">
-                توزيع الذهب حسب العيار
+                توزيع الذهب الفعلي حسب العيار
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                ${Object.entries(treasury.gold_by_karat).filter(([, v]) => v !== 0).map(([k, v]) => `
+                ${Object.entries(pos.treasury.gold_by_karat).filter(([, v]) => v !== 0).map(([k, v]) => `
                   <span class="pill" style="background:var(--gold-soft);color:var(--warn)">
                     ${k}K: ${gramFmt(v)} جم
                   </span>
                 `).join('')}
-                ${treasury.custom_gold_pure !== 0 ? `
-                  <span class="pill" style="background:var(--warn-bg);color:var(--warn)">
-                    مخصص: ${gramFmt(treasury.custom_gold_pure)} جم
-                  </span>
-                ` : ''}
               </div>
             </div>
           ` : ''}
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;
-                    margin-bottom:16px">
+        <!-- ═══════════════════════════════════════════════════════════
+             قسم 2: المستحقات المتوقعة من العملاء
+             ═══════════════════════════════════════════════════════════ -->
+        <div style="padding:16px;
+                    background:linear-gradient(135deg,
+                      color-mix(in srgb,var(--warn) 10%,var(--surface)) 0%,
+                      var(--surface) 100%);
+                    border-radius:14px;margin-bottom:14px;
+                    border:2px solid color-mix(in srgb,var(--warn) 40%,var(--border))">
+          <div style="font-size:12px;font-weight:900;color:var(--warn);
+                      text-transform:uppercase;letter-spacing:.4px;
+                      margin-bottom:12px;display:flex;align-items:center;gap:7px">
+            <i data-lucide="hand-coins" style="width:14px;height:14px"></i>
+            المستحقات المتوقعة (مديونيات العملاء)
+            <span class="chip" style="font-size:10px;
+                        margin-inline-start:auto">
+              ${intFmt(pos.receivables.customersCount)} عميل مدين
+            </span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;border:1px solid var(--border)">
+              <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                          text-transform:uppercase">مديونية نقدية</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
+                          color:var(--warn);margin-top:5px">
+                ${moneyFmt(pos.receivables.cash)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                ج.م
+              </div>
+            </div>
+
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;border:1px solid var(--border)">
+              <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                          text-transform:uppercase">مديونية ذهب</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
+                          color:var(--warn);margin-top:5px">
+                ${gramFmt(pos.receivables.gold_pure)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                جم بندق 24K
+              </div>
+            </div>
+
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;border:1px solid var(--border)">
+              <div style="font-size:10.5px;font-weight:800;color:var(--warn);
+                          text-transform:uppercase">القيمة المتوقعة</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
+                          color:var(--warn);margin-top:5px">
+                ${moneyFmt(pos.receivables.total_value)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                ج.م
+              </div>
+            </div>
+          </div>
+
+          <!-- قائمة العملاء المدينين -->
+          ${pos.receivables.customers.length ? `
+            <div style="margin-top:14px;padding-top:12px;
+                        border-top:1px dashed color-mix(in srgb,var(--warn) 30%,var(--border))">
+              <div style="font-size:10.5px;font-weight:800;color:var(--muted);
+                          text-transform:uppercase;margin-bottom:8px">
+                تفصيل المديونيات حسب العميل
+              </div>
+              <div style="max-height:220px;overflow-y:auto">
+                <table class="tbl" style="font-size:11.5px">
+                  <thead>
+                    <tr>
+                      <th style="width:100px">الكود</th>
+                      <th>اسم العميل</th>
+                      <th style="width:120px" class="col-num">مديونية نقدية</th>
+                      <th style="width:120px" class="col-num">مديونية ذهب</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${pos.receivables.customers.map(cust => `
+                      <tr>
+                        <td class="mono" style="font-weight:800;font-size:11px">
+                          ${esc(cust.code)}
+                        </td>
+                        <td style="font-weight:700">
+                          ${esc(cust.name)}
+                          ${cust.phone ? `<span class="mono" style="font-size:10px;
+                                   color:var(--muted);font-weight:600;
+                                   margin-inline-start:6px">
+                            ${esc(cust.phone)}
+                          </span>` : ''}
+                        </td>
+                        <td class="col-num" style="font-weight:900;color:var(--danger)">
+                          ${cust.cash > 0 ? moneyFmt(cust.cash) : '—'}
+                        </td>
+                        <td class="col-num" style="font-weight:900;color:var(--warn)">
+                          ${cust.gold_pure > 0 ? gramFmt(cust.gold_pure) : '—'}
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ` : `
+            <div style="margin-top:12px;padding:20px;text-align:center;
+                        color:var(--muted);font-size:12px;font-weight:600">
+              لا يوجد عملاء مدينون حالياً
+            </div>
+          `}
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             قسم 3: الإجمالي المتوقع (بعد التحصيل الكامل)
+             ═══════════════════════════════════════════════════════════ -->
+        <div style="padding:16px;background:var(--gold-soft);
+                    border-radius:14px;margin-bottom:16px;
+                    border:2.5px solid color-mix(in srgb,var(--primary) 50%,var(--border));
+                    position:relative;overflow:hidden">
+          <div style="position:absolute;inset-block:0;inset-inline-start:0;
+                      width:4px;background:var(--gold-grad)"></div>
+          <div style="font-size:12px;font-weight:900;color:var(--primary);
+                      text-transform:uppercase;letter-spacing:.4px;
+                      margin-bottom:12px;display:flex;align-items:center;gap:7px">
+            <i data-lucide="trending-up" style="width:14px;height:14px"></i>
+            الإجمالي المتوقع = الخزينة الفعلية + المستحقات
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;
+                        border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border))">
+              <div style="font-size:10.5px;font-weight:800;color:var(--primary);
+                          text-transform:uppercase">نقدية متوقعة</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
+                          color:var(--primary);margin-top:5px">
+                ${moneyFmt(pos.expected.cash)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                ج.م
+              </div>
+            </div>
+
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;
+                        border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border))">
+              <div style="font-size:10.5px;font-weight:800;color:var(--primary);
+                          text-transform:uppercase">ذهب متوقع</div>
+              <div class="mono" style="font-size:22px;font-weight:900;
+                          color:var(--primary);margin-top:5px">
+                ${gramFmt(pos.expected.gold_pure)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                جم بندق 24K
+              </div>
+            </div>
+
+            <div style="padding:14px;background:var(--surface);
+                        border-radius:10px;
+                        border:1.5px solid var(--primary);
+                        background:color-mix(in srgb,var(--primary) 8%,var(--surface))">
+              <div style="font-size:10.5px;font-weight:900;color:var(--primary);
+                          text-transform:uppercase">الإجمالي الكامل</div>
+              <div class="mono" style="font-size:24px;font-weight:900;
+                          color:var(--primary);margin-top:5px;
+                          letter-spacing:-.5px">
+                ${moneyFmt(pos.expected.total_value)}
+              </div>
+              <div style="font-size:10px;color:var(--muted);
+                          font-weight:700;margin-top:3px">
+                ج.م (قيمة إجمالية)
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px;padding:10px 14px;
+                      background:var(--surface);border-radius:9px;
+                      font-size:11px;font-weight:700;
+                      color:var(--text-2);text-align:center;
+                      line-height:1.6">
+            <i data-lucide="info" style="width:12px;height:12px;
+               display:inline;vertical-align:-2px;color:var(--info)"></i>
+            الرقم أعلاه يمثل الوضع المالي الكامل للبياع
+            <b>إذا تم تحصيل كل المديونيات</b> من عملائه.
+          </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             قسم 4: آخر الحركات
+             ═══════════════════════════════════════════════════════════ -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div class="card">
             <div class="card-head">
               <h3>
@@ -2431,7 +2902,7 @@
           <i data-lucide="plus-circle"></i> حركة يدوية
         </button>
         <button class="btn btn-primary" id="b2b-rep-settle-btn">
-          <i data-lucide="vault"></i> تصفية الحساب
+          <i data-lucide="vault"></i> تصفية الحساب الفعلي
         </button>
       `,
       onMount: (el, close) => {
@@ -2531,7 +3002,7 @@
     const rep = State.reps.find(r => r.id === repId);
     if (!rep) return GMS.Toast.err('البياع غير موجود');
 
-    const treasury = computeRepTreasury(repId);
+    const pos = computeRepFullPosition(repId);
 
     GMS.Modal.open({
       title: `تصفية حساب — ${rep.name}`,
@@ -2544,45 +3015,71 @@
           <div style="font-size:11px;font-weight:800;color:var(--muted);
                       text-transform:uppercase;letter-spacing:.4px;
                       margin-bottom:10px">
-            الرصيد الحالي للخزينة
+            ملخص الوضع المالي
           </div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div style="padding:12px;background:var(--success-bg);border-radius:10px">
+            <div style="padding:12px;background:var(--success-bg);
+                        border-radius:10px">
               <div style="font-size:10.5px;font-weight:800;color:var(--success);
-                          text-transform:uppercase">نقدية متاحة</div>
-              <div class="mono" style="font-size:18px;font-weight:900;
+                          text-transform:uppercase">
+                الخزينة الفعلية
+              </div>
+              <div class="mono" style="font-size:16px;font-weight:900;
                           color:var(--success);margin-top:4px">
-                ${moneyFmt(treasury.cash)} ج.م
+                ${moneyFmt(pos.treasury.cash)} ج.م
+              </div>
+              <div class="mono" style="font-size:13px;font-weight:800;
+                          color:var(--success);margin-top:2px">
+                ${gramFmt(pos.treasury.gold_pure)} جم
               </div>
             </div>
 
-            <div style="padding:12px;background:var(--gold-soft);border-radius:10px">
+            <div style="padding:12px;background:var(--warn-bg);
+                        border-radius:10px">
               <div style="font-size:10.5px;font-weight:800;color:var(--warn);
-                          text-transform:uppercase">ذهب متاح</div>
-              <div class="mono" style="font-size:18px;font-weight:900;
+                          text-transform:uppercase">
+                المستحقات (للعلم فقط)
+              </div>
+              <div class="mono" style="font-size:16px;font-weight:900;
                           color:var(--warn);margin-top:4px">
-                ${gramFmt(treasury.gold_pure)} جم
+                ${moneyFmt(pos.receivables.cash)} ج.م
+              </div>
+              <div class="mono" style="font-size:13px;font-weight:800;
+                          color:var(--warn);margin-top:2px">
+                ${gramFmt(pos.receivables.gold_pure)} جم
               </div>
             </div>
           </div>
+        </div>
+
+        <div style="margin-bottom:14px;padding:12px 14px;
+                    background:var(--info-bg);border-radius:10px;
+                    font-size:11.5px;font-weight:600;line-height:1.7;
+                    color:var(--text-2);
+                    border-inline-start:3px solid var(--info)">
+          <i data-lucide="info" style="width:13px;height:13px;
+             display:inline;vertical-align:-2px;color:var(--info)"></i>
+          <b>ملاحظة مهمة:</b> التصفية تشمل فقط
+          <b>الخزينة الفعلية</b> (الكاش والذهب الموجود في يد البياع).
+          المستحقات على العملاء لا تُصفَّى، لأنها لم تُحصَّل بعد.
         </div>
 
         <div class="grid-form">
           <div class="field">
             <label>مبلغ التصفية النقدي (ج.م)</label>
             <input type="number" id="b2b-stl-cash"
-                   value="${treasury.cash}" step="0.01"
-                   max="${treasury.cash}" min="0" class="mono big">
-            <span class="hint">الحد الأقصى: ${moneyFmt(treasury.cash)} ج.م</span>
+                   value="${pos.treasury.cash}" step="0.01"
+                   max="${pos.treasury.cash}" min="0" class="mono big">
+            <span class="hint">الحد الأقصى: ${moneyFmt(pos.treasury.cash)} ج.م</span>
           </div>
 
           <div class="field">
             <label>وزن التصفية الذهبي (جم بندق)</label>
             <input type="number" id="b2b-stl-gold"
-                   value="${treasury.gold_pure}" step="0.0001"
-                   max="${treasury.gold_pure}" min="0" class="mono big">
-            <span class="hint">الحد الأقصى: ${gramFmt(treasury.gold_pure)} جم</span>
+                   value="${pos.treasury.gold_pure}" step="0.0001"
+                   max="${pos.treasury.gold_pure}" min="0" class="mono big">
+            <span class="hint">الحد الأقصى: ${gramFmt(pos.treasury.gold_pure)} جم</span>
           </div>
 
           <div class="field field-full">
@@ -2590,16 +3087,6 @@
             <input id="b2b-stl-notes"
                    placeholder="ملاحظات على التصفية…">
           </div>
-        </div>
-
-        <div style="margin-top:16px;padding:12px 14px;
-                    background:var(--warn-bg);border-radius:10px;
-                    border:1px solid color-mix(in srgb,var(--warn) 30%,var(--border));
-                    font-size:11.5px;font-weight:600;line-height:1.7">
-          <i data-lucide="info" style="width:13px;height:13px;
-             display:inline;vertical-align:-2px;color:var(--warn)"></i>
-          <b>ملاحظة:</b> بعد الحفظ، يُرسل الإذن للمدير للاعتماد.
-          يتم خصم المبالغ من خزينة البياع فقط بعد الاعتماد.
         </div>
       `,
       footer: `
@@ -2856,6 +3343,8 @@
     addLedgerEntry,
     computeRepTreasury,
     computeCustomerBalance,
+    computeRepReceivables,
+    computeRepFullPosition,
 
     createSettlement,
     approveSettlement,
@@ -2886,6 +3375,8 @@
     attachInvoiceToRep,
     computeRepTreasury,
     computeCustomerBalance,
+    computeRepReceivables,
+    computeRepFullPosition,
 
     createSettlement,
     approveSettlement,
@@ -2901,19 +3392,29 @@
   };
 
   console.log(
-    '%c🏪 B2B Sellers Module v1.1.0 loaded · Multi-Tenant (Accounting Fixes)',
+    '%c🏪 B2B Sellers Module v1.2.0 loaded · Multi-Tenant + Receivables',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#d4c4f0,#6b3fa0);border-radius:4px;'
   );
 
   console.log(
-    '%c✅ FIX #1: Customer opening balance no longer double-counted',
+    '%c✅ FIX: Customer opening balance no longer double-counted',
     'color:#0f7a43;font-weight:800;font-size:11px;'
   );
 
   console.log(
-    '%c✅ FIX #2: Rep treasury excludes customer opening entries (receivables)',
+    '%c✅ FIX: Rep treasury excludes customer opening entries (receivables)',
     'color:#0f7a43;font-weight:800;font-size:11px;'
+  );
+
+  console.log(
+    '%c🆕 NEW: 3-section rep card — Treasury | Receivables | Expected Total',
+    'color:#1c4fd8;font-weight:900;font-size:11px;'
+  );
+
+  console.log(
+    '%c🆕 NEW: computeRepReceivables() + computeRepFullPosition() APIs',
+    'color:#1c4fd8;font-weight:900;font-size:11px;'
   );
 
 })();
