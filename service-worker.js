@@ -23,8 +23,8 @@
      - الكاش القديم يُحذَف تلقائياً في activate
      - يُشعر المستخدم بوجود تحديث جديد
    ───────────────────────────────────────────────────────────────────── */
-const SW_VERSION = 'v1.0.15';       // ✅ NEW: يدعم PriceManager
-const BUILD_DATE = '2026-09-25';    // ✅ NEW: تاريخ البناء
+const SW_VERSION = 'v1.0.12';       // ✅ FIX: timeout على Network-First navigation
+const BUILD_DATE = '2026-09-27';    // ✅ تاريخ البناء
 
 const CACHE_STATIC = `gold-erp-static-${SW_VERSION}`;
 const CACHE_CDN    = `gold-erp-cdn-${SW_VERSION}`;
@@ -426,8 +426,13 @@ async function handleImageRequest(request) {
    ───────────────────────────────────────────────────────────────────── */
 async function handleNavigationRequest(request) {
   const cache = await caches.open(CACHE_PAGES);
+  const NETWORK_TIMEOUT_MS = 3000;
 
-  try {
+  /* ✅ هات النسخة المخزّنة الأول (لو موجودة) — عشان نقدر نرجع لها فورًا
+     لو النت بطيء، بدل ما نستنى بدون حد أقصى */
+  const cachedPage = await cache.match(request);
+
+  const networkPromise = (async () => {
     const response = await fetch(request);
 
     if (response && response.ok) {
@@ -445,24 +450,53 @@ async function handleNavigationRequest(request) {
     }
 
     return response;
+  })();
+
+  /* ما فيش نسخة مخزّنة أصلاً (أول تحميل) — لازم نستنى الشبكة مهما كان،
+     مفيش بديل نرجعله */
+  if (!cachedPage) {
+    try {
+      return await networkPromise;
+    } catch (e) {
+      const fallback = await caches.match('./index.html');
+      if (fallback) return fallback;
+
+      const offline = await caches.match('./offline.html');
+      if (offline) return offline;
+
+      return new Response(
+        '<h1>لا يوجد اتصال</h1><p>يرجى التحقق من الإنترنت وإعادة المحاولة.</p>',
+        {
+          status: 503,
+          headers: { 'Content-Type': 'text/html;charset=utf-8' }
+        }
+      );
+    }
+  }
+
+  /* ✅ عندنا نسخة مخزّنة — سباق بينها وبين الشبكة بحد أقصى 3 ثواني.
+     لو النت رد قبل انتهاء المهلة، نستخدم رده (أحدث نسخة).
+     لو النت بطيء/واقف، نورّي النسخة المخزّنة فورًا من غير ما نجمّد
+     الشاشة، والشبكة تكمل في الخلفية وتحدّث الكاش لمرة الجاية. */
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve(null), NETWORK_TIMEOUT_MS);
+  });
+
+  try {
+    const winner = await Promise.race([
+      networkPromise.catch(() => null),
+      timeoutPromise
+    ]);
+
+    if (winner) return winner;
+
+    /* المهلة خلصت قبل النت — سيب النت يكمل في الخلفية (تحديث الكاش) */
+    networkPromise.catch(() => {});
+    console.log('[SW] ⏱️ الشبكة بطيئة — استخدام النسخة المخزّنة فورًا');
+    return cachedPage;
 
   } catch (e) {
-    const cachedPage = await cache.match(request);
-    if (cachedPage) return cachedPage;
-
-    const fallback = await caches.match('./index.html');
-    if (fallback) return fallback;
-
-    const offline = await caches.match('./offline.html');
-    if (offline) return offline;
-
-    return new Response(
-      '<h1>لا يوجد اتصال</h1><p>يرجى التحقق من الإنترنت وإعادة المحاولة.</p>',
-      {
-        status: 503,
-        headers: { 'Content-Type': 'text/html;charset=utf-8' }
-      }
-    );
+    return cachedPage;
   }
 }
 
