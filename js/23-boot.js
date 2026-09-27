@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v3.5: FIX — language switch via location.replace() + Boot Logger
+   ✅ v3.6: FIX — language switch via viewport-safe hard navigation
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -246,19 +246,22 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ LANGUAGE SWITCHER — v3.5 (LOCATION.REPLACE)
+     §5 · ✅ LANGUAGE SWITCHER — v3.6 (VIEWPORT-SAFE HARD NAVIGATION)
      ─────────────────────────────────────────────────────────────────────
-     ✅ v3.5: الحل النهائي لكراش GPU على Infinix/Tecno/itel
+     ✅ v3.6: حل مشكلة "الشاشة بقياسات غل" بعد تبديل اللغة
 
-     ليه location.replace() بدل reload()؟
-       • reload() بيخلي المتصفح يستخدم نفس الـ renderer process
-       • نفس الـ renderer بيحتفظ بـ GPU cache للـ backdrop-filter
-       • تغيير dir → GPU cache invalidate → Infinix GPU crash
+     المشكلة:
+       • خلال التنقل، الـ Viewport Meta بيتلخبط على بعض الأجهزة
+       • الصفحة الجديدة بتفتح بعرض Desktop (980px) بدل Device width
+       • Media Queries مش بتشتغل صح → Desktop layout على شاشة موبايل
 
-       • location.replace() بيدمر الـ renderer process تماماً
-       • بيعمل renderer process جديد نظيف
-       • ما فيش GPU cache قديم
-       • الصفحة بتفتح باللغة الجديدة من الصفر
+     الحل:
+       1. اخفي كل حاجة (display: none) قبل التنقل
+          → ده بيدمر كل الـ GPU layers
+       2. أعِد ضبط الـ viewport meta لـ Mobile first
+       3. استخدم window.location.href بمسار نظيف تماماً
+          (مش replace و مش reload — href مباشر)
+       4. شيل أي query params قديمة
      ═════════════════════════════════════════════════════════════════════ */
 
   function showLanguageSwitchOverlay(targetLang) {
@@ -354,7 +357,7 @@
     }
 
     BootState.switchingLang = true;
-    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (location.replace mode)`);
+    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (viewport-safe mode)`);
 
     /* 1 · احفظ اللغة */
     try {
@@ -368,26 +371,45 @@
       return false;
     }
 
-    /* 2 · تحقق من الحفظ */
-    try {
-      const verify = localStorage.getItem(
-        (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang'
-      );
-      if (verify !== lang) {
-        throw new Error('Verification failed');
-      }
-    } catch (e) {
-      console.error('[switchLanguage] ❌ التحقق فشل:', e);
-      BootState.switchingLang = false;
-      return false;
-    }
-
-    /* 3 · علّم إن فيه تبديل معلق (يُقرأ في الـ boot) */
+    /* 2 · جهّز sessionStorage للنافذة الجديدة */
     try {
       sessionStorage.setItem('gms._pendingLangSwitch', lang);
+      sessionStorage.setItem('gms._switching', '1');
     } catch (_) {}
 
-    /* 4 · جهّز الـ reload */
+    /* 3 · اعرض overlay */
+    showLanguageSwitchOverlay(lang);
+
+    /* 4 · ✅ VIEWPORT RESET + HIDE EVERYTHING
+       ده أهم جزء — بيدمر كل الـ GPU layers قبل التنقل
+    */
+    try {
+      /* أ) اضبط الـ viewport meta للحجم الصح */
+      let viewportMeta = document.querySelector('meta[name="viewport"]');
+      if (!viewportMeta) {
+        viewportMeta = document.createElement('meta');
+        viewportMeta.setAttribute('name', 'viewport');
+        document.head.appendChild(viewportMeta);
+      }
+      viewportMeta.setAttribute(
+        'content',
+        'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover'
+      );
+      console.log('[switchLanguage] 📐 Viewport reset');
+
+      /* ب) اخفي كل حاجة — بيدمر GPU layers */
+      document.documentElement.style.setProperty('display', 'none', 'important');
+      if (document.body) {
+        document.body.style.setProperty('display', 'none', 'important');
+      }
+
+      console.log('[switchLanguage] 🚫 Content hidden (GPU layers destroyed)');
+
+    } catch (e) {
+      console.warn('[switchLanguage] Viewport reset failed:', e);
+    }
+
+    /* 5 · جهّز التنقل */
     try {
       window.GMS = window.GMS || {};
       window.GMS._intentionalReload = true;
@@ -397,64 +419,53 @@
         GMS.Views.settings.state.dirty = false;
       }
 
+      /* أوقف كل شيء */
       try { GMS.Router?.suspendScheduling?.(); } catch (_) {}
       try { GMS.Router?.cancelScheduledRerender?.(); } catch (_) {}
       try { GMS.Queue?.stopAutoSync?.(); } catch (_) {}
       try { GMS.Sync?.stopAutoSync?.(); } catch (_) {}
       try { GMS.PriceManager?.stopAutoRefresh?.(); } catch (_) {}
       try { GMS.Realtime?.shutdown?.(); } catch (_) {}
+
+      /* أوقف الـ Service Worker مؤقتاً لو ممكن */
+      if (navigator.serviceWorker?.controller) {
+        try {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'SKIP_WAITING'
+          });
+        } catch (_) {}
+      }
+
     } catch (_) {}
 
-    /* 5 · اعرض الـ overlay */
-    showLanguageSwitchOverlay(lang);
-
-    /* 6 · عطّل أزرار اللغة */
-    document.querySelectorAll('.lang-btn').forEach(b => {
-      b.style.pointerEvents = 'none';
-      b.style.opacity = '0.5';
-    });
-
-    /* 7 · ✅ v3.5: location.replace() مع cache-buster
-       ده بيدمر الـ renderer process ويعمل واحد جديد
-       → مفيش GPU crash على Infinix
-    */
+    /* 6 · انتظر شويّة عشان الـ display: none يطبق فعلاً */
     setTimeout(() => {
       try {
-        const url = new URL(window.location.href);
+        /* ✅ ابني URL نظيف تماماً — بدون query params قديمة */
+        const baseUrl = window.location.origin + window.location.pathname;
 
-        /* مسح query params القديمة */
-        url.searchParams.delete('_lang');
-        url.searchParams.delete('_t');
+        /* hash بس لو موجود */
+        const hash = window.location.hash || '';
 
-        /* إضافة params جديدة */
-        url.searchParams.set('_lang', lang);
-        url.searchParams.set('_t', String(Date.now()));
-
-        const finalUrl = url.toString();
-
+        /* ✅ استخدم href مباشر — مش replace ولا reload */
+        const finalUrl = baseUrl + hash;
         console.log('[switchLanguage] 🔀 Navigating to:', finalUrl);
 
-        window.location.replace(finalUrl);
+        /* ✅ window.location.href — بيعمل hard navigation */
+        window.location.href = finalUrl;
 
       } catch (e) {
         console.error('[switchLanguage] ❌ Navigation failed:', e);
-        /* fallback */
-        window.location.replace(
-          window.location.href.split('?')[0] +
-          '?_lang=' + lang + '&_t=' + Date.now() +
-          (window.location.hash || '')
-        );
+        /* fallback مطلق */
+        window.location.href = window.location.pathname || '/';
       }
-    }, 150);
+    }, 200);
 
-    /* 8 · شبكة أمان */
+    /* 7 · Safety net */
     setTimeout(() => {
       console.warn('[switchLanguage] ⚠️ Safety triggered');
       try {
-        window.location.replace(
-          window.location.href.split('?')[0] +
-          '?_lang=' + lang + '&_t=' + Date.now()
-        );
+        window.location.href = window.location.pathname || '/';
       } catch (_) {}
     }, 3000);
 
@@ -1266,17 +1277,18 @@
       }
     }
 
-    /* ✅ v3.5: بعد ما اللغة اتحملت، اعرض أي logs قديمة من جلسة كراشت */
+    /* ✅ v3.6: بعد ما اللغة اتحملت، اعرض أي logs قديمة من جلسة كراشت */
     try {
       const pendingLang = sessionStorage.getItem('gms._pendingLangSwitch');
       if (pendingLang) {
         console.log('%c✅ Language switch succeeded: ' + pendingLang,
           'color:#0f7a43;font-weight:900;font-size:13px;');
         sessionStorage.removeItem('gms._pendingLangSwitch');
+        sessionStorage.removeItem('gms._switching');
       }
     } catch (_) {}
 
-    /* ✅ v3.5: شوف لو فيه log من جلسة سابقة فيها crash */
+    /* ✅ v3.6: شوف لو فيه log من جلسة سابقة فيها crash */
     try {
       const prevLog = sessionStorage.getItem('gms.debug.bootLog');
       if (prevLog) {
@@ -1403,7 +1415,7 @@
      §19 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v3.5 (location.replace + Boot Logger)',
+    '%c⚡ Boot loaded · v3.6 (Viewport-Safe Hard Navigation)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
   );
