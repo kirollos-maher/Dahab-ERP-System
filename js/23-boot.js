@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v3.3: FIX — switchLanguage مع Fallback لـ Hard Reload
+   ✅ v3.4: FIX — language switch via HARD RELOAD (يمنع كراش الموبايل)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -157,11 +157,16 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ LANGUAGE SWITCHER — v3.3
+     §5 · ✅ LANGUAGE SWITCHER — v3.4 (HARD RELOAD)
      ─────────────────────────────────────────────────────────────────────
-     ✅ v3.3: FIX — Fallback to Hard Reload
-       - لو الـ SPA Rerender فشل، نعمل window.location.reload()
-       - يمنع الشاشة السوداء/البيضاء على الموبايل
+     ✅ v3.4: الحل النهائي للكراش على الموبايل
+
+     ليه Hard Reload؟
+       • الموبايل بيقع لما بيعمل Rerender كامل مع Chart.js + RTL
+       • تغيير اتجاه الصفحة (dir) على صفحة فيها charts = crash
+       • Reload كامل = ضمان 100% عدم الكراش
+       • اللغة بتتحفظ في localStorage وبتتحمّل بعد الـ reload
+       • الجلسة بتتحفظ (Session) والمستخدم يفضل داخل
      ═════════════════════════════════════════════════════════════════════ */
 
   function showLanguageSwitchOverlay(targetLang) {
@@ -275,8 +280,9 @@
   async function switchLanguage(lang) {
     if (!lang || !['ar', 'en'].includes(lang)) lang = 'ar';
 
+    /* ✅ حماية ضد الضغط المزدوج */
     if (BootState.switchingLang) {
-      console.log('[switchLanguage] ⏳ في تبديل شغال بالفعل — تجاهل الضغطة دي');
+      console.log('[switchLanguage] ⏳ في تبديل شغال بالفعل');
       return false;
     }
 
@@ -288,87 +294,99 @@
     }
 
     BootState.switchingLang = true;
-    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (in-place · no reload · no SW)`);
+    console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (hard reload mode)`);
 
-    try { GMS.Router?.suspendScheduling?.(); } catch (_) {}
-
-    const langBtns = Array.from(document.querySelectorAll('.lang-btn'));
-    langBtns.forEach(b => { b.style.pointerEvents = 'none'; });
-
-    /* ✅ شبكة أمان — 5 ثواني بدل 4 */
-    const safetyTimer = setTimeout(() => {
-      if (BootState.switchingLang) {
-        console.warn('[switchLanguage] ⚠️ التبديل عالق — عرض زرار الاسترجاع اليدوي');
-        showManualLangRecovery();
-      }
-    }, 5000);
-
+    /* 1 · احفظ اللغة في localStorage BEFORE anything else */
     try {
-      /* 1 · تحديث <html> */
+      const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
+      localStorage.setItem(key, lang);
+      console.log(`[switchLanguage] 💾 حُفظت اللغة: ${lang}`);
+    } catch (e) {
+      console.error('[switchLanguage] ❌ فشل حفظ اللغة:', e);
+      BootState.switchingLang = false;
+      GMS.Toast?.err?.('فشل حفظ اللغة', 'المتصفح رافض التخزين المحلي');
+      return false;
+    }
+
+    /* 2 · تحقق من الحفظ — تأكيد قبل الـ reload */
+    try {
+      const verify = localStorage.getItem(
+        (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang'
+      );
+      if (verify !== lang) {
+        throw new Error('Verification failed: saved=' + verify + ' expected=' + lang);
+      }
+    } catch (e) {
+      console.error('[switchLanguage] ❌ التحقق فشل:', e);
+      BootState.switchingLang = false;
+      GMS.Toast?.err?.('فشل التحقق من اللغة');
+      return false;
+    }
+
+    /* 3 · جهّز الـ reload — امسح أي حاجة عالقة */
+    try {
+      window.GMS = window.GMS || {};
+      window.GMS._intentionalReload = true;
+      window.GMS._intentionalLangReload = true;
+
+      /* امسح dirty state بتاع Settings لو موجودة */
+      if (GMS.Views?.settings?.state) {
+        GMS.Views.settings.state.dirty = false;
+      }
+
+      /* أوقف كل شيء ممكن يعترض الـ reload */
+      try { GMS.Router?.suspendScheduling?.(); } catch (_) {}
+      try { GMS.Router?.cancelScheduledRerender?.(); } catch (_) {}
+      try { GMS.Queue?.stopAutoSync?.(); } catch (_) {}
+      try { GMS.Sync?.stopAutoSync?.(); } catch (_) {}
+      try { GMS.PriceManager?.stopAutoRefresh?.(); } catch (_) {}
+      try { GMS.Realtime?.shutdown?.(); } catch (_) {}
+    } catch (_) {}
+
+    /* 4 · اعرض الـ overlay للمستخدم */
+    showLanguageSwitchOverlay(lang);
+
+    /* 5 · عطّل أزرار اللغة */
+    document.querySelectorAll('.lang-btn').forEach(b => {
+      b.style.pointerEvents = 'none';
+      b.style.opacity = '0.5';
+    });
+
+    /* 6 · تحديث <html> فورًا (رد فعل بصري) */
+    try {
       const html = document.documentElement;
       html.setAttribute('lang', lang);
       html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
       html.setAttribute('data-lang', lang);
+    } catch (_) {}
 
-      /* 2 · حفظ اللغة */
+    /* 7 · HARD RELOAD — بعد تأخير بسيط عشان الـ overlay يظهر */
+    setTimeout(() => {
+      console.log('[switchLanguage] 🔃 جارٍ إعادة التحميل…');
+
       try {
-        const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
-        localStorage.setItem(key, lang);
-        console.log(`[switchLanguage] 💾 حُفظت اللغة: ${lang}`);
+        window.location.reload();
       } catch (e) {
-        console.warn('[switchLanguage] localStorage.save failed:', e);
+        console.error('[switchLanguage] reload failed:', e);
+        window.location.href = window.location.href;
       }
+    }, 250);
 
-      /* 3 · تحديث أزرار اللغة */
-      updateLangButtons(lang);
-
-      /* 4 · تحديث حالة I18n */
+    /* 8 · شبكة أمان إضافية: لو الـ reload ما اشتغلش بعد 3 ثواني */
+    setTimeout(() => {
+      console.warn('[switchLanguage] ⚠️ Reload safety triggered');
       try {
-        if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
-          GMS.I18n.setLang(lang, { silent: true });
-        }
-      } catch (i18nErr) {
-        console.warn('[switchLanguage] ⚠️ I18n.setLang فشل:', i18nErr);
+        window.location.href =
+          window.location.href.split('#')[0] +
+          '?_lang=' + lang +
+          '&_t=' + Date.now() +
+          (window.location.hash || '');
+      } catch (_) {
+        window.location.href = window.location.href;
       }
+    }, 3000);
 
-      /* ✅ 5 · إعادة رسم الصفحة الحالية — v3.3: مع Fallback لإعادة تحميل كاملة */
-      const currentRoute = GMS.Router?.currentId?.();
-      if (currentRoute && GMS.Router?.go) {
-        try {
-          await GMS.Router.go(currentRoute, { force: true });
-        } catch (routerError) {
-          console.error('[switchLanguage] ❌ Router.go failed, forcing reload:', routerError);
-          clearTimeout(safetyTimer);
-          BootState.switchingLang = false;
-          /* إعادة تحميل كاملة كـ Fallback */
-          window.location.reload();
-          return false;
-        }
-      }
-
-      clearTimeout(safetyTimer);
-      const recover = document.getElementById('gms-lang-recover');
-      if (recover) recover.remove();
-
-      console.log('[switchLanguage] ✅ تم التبديل');
-      GMS.Beep?.info?.();
-      GMS.Toast?.ok?.(
-        lang === 'ar' ? 'تم التبديل للعربية' : 'Switched to English',
-        lang === 'ar' ? 'واجهة RTL' : 'LTR interface'
-      );
-      return true;
-
-    } catch (err) {
-      clearTimeout(safetyTimer);
-      console.error('[switchLanguage] ❌ خطأ خطير:', err);
-      showLanguageSwitchError(err, currentLang);
-      return false;
-    } finally {
-      clearTimeout(safetyTimer);
-      BootState.switchingLang = false;
-      langBtns.forEach(b => { b.style.pointerEvents = ''; });
-      try { GMS.Router?.resumeScheduling?.(); } catch (_) {}
-    }
+    return true;
   }
 
   function updateLangButtons(lang) {
@@ -467,7 +485,15 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5.1 · ✅ ربط أزرار اللغة — event delegation آمن
+     §5.1 · ✅ ربط أزرار اللغة — v3.4 (event delegation آمن)
+     ─────────────────────────────────────────────────────────────────────
+     🔴 المشكلة السابقة:
+        كان الـ selector: `.lang-btn, [data-lang]`
+        وعنصر <html> يحمل data-lang — فيلتقط نقرات أي زر في الصفحة
+        ويقتلها بـ stopPropagation().
+
+     ✅ الحل:
+        استخدام `button.lang-btn` — أزرار اللغة الفعلية فقط.
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindLanguageButtons() {
@@ -478,17 +504,22 @@
     window.GMS = window.GMS || {};
     window.GMS._langButtonsBound = true;
 
+    /* ✅ Event Delegation — يلتقط النقر على أزرار اللغة فقط */
     document.addEventListener('click', (e) => {
       const target = e.target;
       if (!target || !target.closest) return;
 
+      /* ✅ FIX: ابحث فقط عن أزرار اللغة الفعلية */
       const btn = target.closest('button.lang-btn');
 
+      /* لم يكن زر لغة → اترك النقرة تمر بشكل طبيعي */
       if (!btn) return;
 
+      /* تأكد أن الزر يحتوي فعلاً على data-lang */
       const lang = btn.dataset.lang;
       if (!lang || !['ar', 'en'].includes(lang)) return;
 
+      /* امنع السلوك الافتراضي فقط لهذا الزر */
       e.preventDefault();
       e.stopPropagation();
 
@@ -496,6 +527,7 @@
       switchLanguage(lang);
     }, true);
 
+    /* حالة أولية */
     const currentLang = document.documentElement.getAttribute('lang') || 'ar';
     updateLangButtons(currentLang);
 
@@ -701,6 +733,7 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindTopbar() {
+    /* Theme toggle */
     const themeBtn = document.getElementById('theme-btn');
     if (themeBtn) {
       themeBtn.onclick = () => {
@@ -727,8 +760,10 @@
       window.lucide?.createIcons();
     }
 
+    /* ✅ Language switcher: Event Delegation آمن */
     bindLanguageButtons();
 
+    /* Sync button */
     const syncBtn = document.getElementById('sync-btn');
     if (syncBtn) {
       syncBtn.onclick = async () => {
@@ -752,6 +787,7 @@
       };
     }
 
+    /* Cache refresh button */
     const cacheBtn = document.getElementById('cache-btn');
     if (cacheBtn) {
       cacheBtn.onclick = async () => {
@@ -781,16 +817,19 @@
       };
     }
 
+    /* Queue button */
     const queueBtn = document.getElementById('queue-btn');
     if (queueBtn) {
       queueBtn.onclick = () => GMS.Router?.go('queue');
     }
 
+    /* Settings button */
     const settingsBtn = document.getElementById('settings-btn');
     if (settingsBtn) {
       settingsBtn.onclick = () => GMS.Router?.go('settings');
     }
 
+    /* Connection chip */
     const connChip = document.getElementById('conn-chip');
     if (connChip) {
       connChip.onclick = () => showConnectionInfo();
@@ -1370,7 +1409,7 @@
      §19 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v3.3 (Login + Lang Switch FIXED + Fallback Reload)',
+    '%c⚡ Boot loaded · v3.4 (Hard Reload Lang Switch)',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e6f6ee;border-radius:4px;'
   );
