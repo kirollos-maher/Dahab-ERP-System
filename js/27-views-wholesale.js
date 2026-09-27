@@ -14,6 +14,10 @@
      • طباعة: إذن توريد / فاتورة جملة / Transfer Manifest
      • Excel Export
      • Realtime Integration
+     • ✅ v2: تكامل كامل مع نظام بياعي الجملة المستقلين (B2B Reps)
+       - اختيار البياع المسؤول
+       - اختيار عميل الجملة المرتبط بالبياع
+       - ربط الفاتورة بدفتر وخزينة البياع تلقائياً
 
    التخزين (CacheDB):
      • wholesale_invoices
@@ -330,6 +334,10 @@
   }
   function getPrice24() {
     try {
+      if (GMS.PriceManager && typeof GMS.PriceManager.current === 'function') {
+        const p = GMS.PriceManager.current();
+        if (p > 0) return p;
+      }
       if (GMS.Cache && GMS.Cache.getPrice) {
         const p = GMS.Cache.getPrice();
         if (p && p.price_24) return Number(p.price_24);
@@ -399,6 +407,55 @@
     });
     State.unsubscribers = [];
     clearTimeout(State.timers.search);
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §5.1 · B2B HELPERS — تكامل بياعي الجملة
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /** قراءة البياعين المتاحين من وحدة B2B */
+  function getB2BReps() {
+    try {
+      if (GMS.B2B && typeof GMS.B2B.getReps === 'function') {
+        return GMS.B2B.getReps() || [];
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  /** قراءة عملاء الجملة حسب البياع */
+  function getB2BCustomers(repId) {
+    try {
+      if (GMS.B2B && typeof GMS.B2B.getCustomers === 'function') {
+        return GMS.B2B.getCustomers(repId) || [];
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  /** هل وحدة B2B متاحة؟ */
+  function isB2BAvailable() {
+    return Boolean(GMS.B2B && typeof GMS.B2B.getReps === 'function');
+  }
+
+  /** هل المستخدم الحالي بياع جملة؟ */
+  function isCurrentUserRep() {
+    try {
+      if (GMS.B2B && typeof GMS.B2B.isRepRole === 'function') {
+        return GMS.B2B.isRepRole();
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /** البياع الافتراضي */
+  function getDefaultRepId() {
+    try {
+      if (GMS.B2B && typeof GMS.B2B.getDefaultRepId === 'function') {
+        return GMS.B2B.getDefaultRepId() || '';
+      }
+    } catch (_) {}
+    return '';
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -500,12 +557,19 @@
     const f = State.filters;
     let rows = State.invoices.slice();
 
+    /* ✅ عزل بيانات البياع */
+    if (isCurrentUserRep()) {
+      const myRepId = getDefaultRepId();
+      rows = rows.filter(r => r.rep_id === myRepId);
+    }
+
     if (f.invSearch) {
       const q = f.invSearch.toLowerCase();
       rows = rows.filter(r =>
         (r.invoice_no || '').toLowerCase().includes(q) ||
         (r.recipient?.name || '').toLowerCase().includes(q) ||
-        (r.recipient?.phone || '').includes(q)
+        (r.recipient?.phone || '').includes(q) ||
+        (r.rep_name || '').toLowerCase().includes(q)
       );
     }
 
@@ -642,7 +706,7 @@
           <div class="search-wrap" style="flex:1;min-width:220px;max-width:380px">
             <i data-lucide="search"></i>
             <input id="wsl-inv-search"
-                   placeholder="بحث برقم الفاتورة، الطرف، الهاتف…"
+                   placeholder="بحث برقم الفاتورة، الطرف، البياع…"
                    value="${esc(State.filters.invSearch)}"
                    autocomplete="off">
           </div>
@@ -705,6 +769,13 @@
             <span class="sku-meta mono">${esc(recipient.phone || '')}</span>
           </div>
         </td>
+        ${inv.rep_name ? `
+          <td style="font-size:11.5px;color:var(--violet);font-weight:700">
+            <i data-lucide="user-check" style="width:11px;height:11px;
+                       display:inline;vertical-align:-1px"></i>
+            ${esc(inv.rep_name)}
+          </td>
+        ` : '<td style="font-size:11px;color:var(--muted)">—</td>'}
         <td>
           <span class="pill" style="background:var(--${mode.color}-bg);
                        color:var(--${mode.color})">
@@ -777,7 +848,8 @@
               <th style="width:150px">رقم الفاتورة</th>
               <th style="width:110px">التاريخ</th>
               <th>الطرف المستلم</th>
-              <th style="width:150px">النمط</th>
+              <th style="width:140px">البياع المسؤول</th>
+              <th style="width:140px">النمط</th>
               <th style="width:100px" class="col-num">بندق (جم)</th>
               <th style="width:120px" class="col-num">الإجمالي</th>
               <th style="width:110px" class="col-num">مدفوع نقداً</th>
@@ -944,8 +1016,9 @@
   function renderPagination(pg, kind) {
     if (pg.totalPages <= 1) return '';
 
-    const startIdx = (pg.page - 1) * (kind === 'inv' ? State.invPageSize : State.trfPageSize) + 1;
-    const endIdx = Math.min(pg.page * (kind === 'inv' ? State.invPageSize : State.trfPageSize), pg.total);
+    const pageSize = kind === 'inv' ? State.invPageSize : State.trfPageSize;
+    const startIdx = (pg.page - 1) * pageSize + 1;
+    const endIdx = Math.min(pg.page * pageSize, pg.total);
 
     const btns = [];
     const win = 2;
@@ -981,7 +1054,6 @@
     btns.push(btn(pg.page + 1, '<i data-lucide="chevron-left" style="width:14px;height:14px"></i>', { disabled: pg.page === pg.totalPages }));
     btns.push(btn(pg.totalPages, '<i data-lucide="chevrons-left" style="width:14px;height:14px"></i>', { disabled: pg.page === pg.totalPages }));
 
-    const pageSize = kind === 'inv' ? State.invPageSize : State.trfPageSize;
     const sizes = [10, 25, 50, 100, 250];
 
     return `
@@ -1047,7 +1119,7 @@
                 فواتير الجملة والتوريد
               </h3>
               <div class="spacer" style="flex:1"></div>
-              <span class="card-sub">${intFmt(State.invoices.length)} فاتورة</span>
+              <span class="card-sub">${intFmt(filterInvoices().length)} فاتورة</span>
             </div>
             <div id="wsl-inv-table-host">${renderInvoicesTable()}</div>
           </div>
@@ -1077,7 +1149,8 @@
           </h2>
           <p>
             نظام موحّد لتوريد المشغولات: بيع بالجملة B2B، تحويل بين الفروع،
-            ومقايضة الذهب الخام — مع ترحيل محاسبي مزدوج (ذهب + نقد).
+            ومقايضة الذهب الخام — مع ترحيل محاسبي مزدوج (ذهب + نقد)
+            وربط تلقائي بخزائن بياعي الجملة.
             <span class="chip violet" style="font-size:10px;margin-inline-start:6px">
               <i data-lucide="split" style="width:10px;height:10px"></i>
               Dual-Ledger · B2B
@@ -1277,7 +1350,8 @@
   function bindPaginationEvents(kind) {
     document.querySelectorAll(`[data-wsl-page-${kind}]`).forEach(btn => {
       btn.onclick = () => {
-        const page = Number(btn.dataset[`wslPage${kind === 'inv' ? 'Inv' : 'Trf'}`]);
+        const attr = `wslPage${kind === 'inv' ? 'Inv' : 'Trf'}`;
+        const page = Number(btn.dataset[attr]);
         if (kind === 'inv') {
           State.invPage = page;
           refreshWholesaleTab();
@@ -1312,8 +1386,12 @@
     const supplyMode = getSupplyMode(mode);
     const branches = getBranches();
 
+    /* ✅ جلب البياع الافتراضي من B2B */
+    const defaultRepId = getDefaultRepId();
+
     State.draft = {
       mode: supplyMode.key,
+      rep_id: defaultRepId,   /* ✅ حقل جديد: البياع المسؤول */
       recipient: {
         type: 'shop',
         id: '',
@@ -1378,11 +1456,73 @@
     const customers = getCustomers();
     const suppliers = getSuppliers();
 
+    /* ✅ قراءة البياعين وعملاء الجملة */
+    const b2bReps = getB2BReps();
+    const b2bCustomers = d.rep_id ? getB2BCustomers(d.rep_id) : [];
+    const b2bAvailable = isB2BAvailable();
+    const userIsRep = isCurrentUserRep();
+
     return `
-      <!-- Section 1: Mode + Recipient -->
+      <!-- Section 1: Rep + Mode + Recipient -->
       <div style="padding:16px 18px;background:var(--surface-2);border-radius:12px;
                   border:1px solid var(--border);margin-bottom:16px">
 
+        <!-- ✅ اختيار البياع المسؤول (B2B) -->
+        ${b2bAvailable && !userIsRep ? `
+          <div style="margin-bottom:16px;padding:14px 16px;
+                      background:linear-gradient(135deg,
+                        color-mix(in srgb,var(--violet) 8%,var(--surface)) 0%,
+                        var(--surface) 100%);
+                      border-radius:11px;
+                      border:1.5px solid color-mix(in srgb,var(--violet) 30%,var(--border))">
+            <div style="font-size:11px;font-weight:800;color:var(--violet);
+                        text-transform:uppercase;letter-spacing:.4px;
+                        margin-bottom:10px;display:flex;align-items:center;gap:6px">
+              <i data-lucide="user-check" style="width:12px;height:12px"></i>
+              البياع المسؤول (B2B)
+              <span class="chip" style="font-size:9.5px;margin-inline-start:auto">
+                يحدد خزينة ودفتر الفاتورة
+              </span>
+            </div>
+
+            <div class="field" style="margin:0">
+              <select id="wsl-rep-id">
+                <option value="">— بدون بياع (بيع جملة عام) —</option>
+                ${b2bReps.map(r => `
+                  <option value="${esc(r.id)}" ${d.rep_id === r.id ? 'selected' : ''}>
+                    ${esc(r.name)} — ${esc(r.code)}
+                  </option>
+                `).join('')}
+              </select>
+              <span class="hint">
+                اختيار بياع يعزل الفاتورة في خزينته ودفتره الخاص
+                ${b2bCustomers.length === 0 && d.rep_id ? ' · لا يوجد عملاء لهذا البياع بعد' : ''}
+              </span>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- ✅ بياع جملة مسجَّل → يعرض نفسه -->
+        ${b2bAvailable && userIsRep && d.rep_id ? `
+          <div style="margin-bottom:16px;padding:12px 14px;
+                      background:var(--violet-bg);border-radius:10px;
+                      border:1px solid color-mix(in srgb,var(--violet) 30%,var(--border));
+                      display:flex;align-items:center;gap:10px">
+            <i data-lucide="user-check"
+               style="width:18px;height:18px;color:var(--violet)"></i>
+            <div style="flex:1">
+              <div style="font-size:11.5px;font-weight:900;color:var(--violet)">
+                الفاتورة ستُسجَّل في خزينتك ودفترك
+              </div>
+              <div style="font-size:10.5px;color:var(--muted);
+                          font-weight:600;margin-top:2px">
+                عرض معزول — لا ترى بيانات بياعين آخرين
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- نمط التوريد -->
         <div style="font-size:11px;font-weight:800;color:var(--muted);
                     text-transform:uppercase;letter-spacing:.4px;
                     margin-bottom:10px;display:flex;align-items:center;gap:6px">
@@ -1480,7 +1620,59 @@
         </div>
       </div>
 
-      <!-- Section 2: Item Picker -->
+      <!-- ✅ Section 2: B2B Customer (لو البياع محدد) -->
+      ${d.rep_id && b2bAvailable ? `
+        <div style="padding:16px 18px;
+                    background:linear-gradient(135deg,
+                      color-mix(in srgb,var(--violet) 6%,var(--surface)) 0%,
+                      var(--surface) 100%);
+                    border-radius:12px;
+                    border:1.5px solid color-mix(in srgb,var(--violet) 25%,var(--border));
+                    margin-bottom:16px">
+          <div style="font-size:11px;font-weight:800;color:var(--violet);
+                      text-transform:uppercase;letter-spacing:.4px;
+                      margin-bottom:10px;display:flex;align-items:center;gap:6px">
+            <i data-lucide="users" style="width:12px;height:12px"></i>
+            عميل الجملة المرتبط بالبياع
+            <span class="chip" style="font-size:9.5px;margin-inline-start:auto">
+              دفتر مستقل لكل عميل
+            </span>
+          </div>
+
+          <div class="grid-form" style="gap:11px">
+            <div class="field">
+              <label>اختر عميل جملة</label>
+              <select id="wsl-b2b-customer">
+                <option value="">— بيع مباشر بدون عميل مسجَّل —</option>
+                ${b2bCustomers.map(c => `
+                  <option value="${esc(c.id)}" ${d.recipient.id === c.id ? 'selected' : ''}
+                          data-phone="${esc(c.phone || '')}"
+                          data-name="${esc(c.name)}">
+                    ${esc(c.code)} — ${esc(c.name)} ${c.phone ? `(${esc(c.phone)})` : ''}
+                  </option>
+                `).join('')}
+              </select>
+              <span class="hint">
+                ${b2bCustomers.length === 0
+                  ? 'لا يوجد عملاء لهذا البياع — أضفهم من تبويب "عملاء الجملة"'
+                  : `${b2bCustomers.length} عميل متاح`}
+              </span>
+            </div>
+
+            <div class="field">
+              <label>أو اكتب اسم عميل جديد</label>
+              <input id="wsl-b2b-customer-name"
+                     placeholder="اسم العميل…"
+                     value="${esc(d.recipient.name)}">
+              <span class="hint">
+                سيُسجَّل في الفاتورة فقط — لإضافته بشكل دائم استخدم تبويب عملاء الجملة
+              </span>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Section 3: Item Picker -->
       <div style="padding:16px 18px;background:var(--gold-soft);border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
                   margin-bottom:16px">
@@ -1510,7 +1702,7 @@
         </div>
       </div>
 
-      <!-- Section 3: Payment -->
+      <!-- Section 4: Payment -->
       <div style="padding:16px 18px;background:var(--surface-2);border-radius:12px;
                   border:1px solid var(--border);margin-bottom:16px">
         <div style="font-size:11px;font-weight:800;color:var(--muted);
@@ -1733,6 +1925,26 @@
 
     const payment = getPaymentMode(pay.mode);
 
+    /* ✅ معلومات البياع */
+    let repInfoHTML = '';
+    if (d.rep_id && isB2BAvailable()) {
+      const rep = getB2BReps().find(r => r.id === d.rep_id);
+      if (rep) {
+        repInfoHTML = `
+          <div style="margin-top:12px;padding:10px 12px;
+                      background:var(--violet-bg);border-radius:10px;
+                      font-size:11px;font-weight:700;
+                      color:var(--violet);display:flex;
+                      align-items:center;gap:8px">
+            <i data-lucide="user-check"
+               style="width:14px;height:14px"></i>
+            <span>سيُسجَّل في خزينة البياع: <b>${esc(rep.name)}</b>
+              (${esc(rep.code)})</span>
+          </div>
+        `;
+      }
+    }
+
     return `
       <div style="padding:16px 18px;background:var(--info-bg);
                   border-radius:12px;
@@ -1832,6 +2044,8 @@
           سعر 24K: ${moneyFmt(price24)} ج.م/جم
           · سعر الكسر: ${moneyFmt(scrapPrice)} ج.م/جم
         </div>
+
+        ${repInfoHTML}
       </div>
     `;
   }
@@ -1928,6 +2142,55 @@
 
   function bindInvoiceForm(root) {
     const $ = (id) => root.querySelector('#' + id);
+
+    /* ✅ Rep selector (B2B) */
+    const repSel = $('wsl-rep-id');
+    if (repSel) {
+      repSel.onchange = (e) => {
+        State.draft.rep_id = e.target.value;
+
+        /* إعادة تعيين الطرف المستلم */
+        State.draft.recipient.id = '';
+        State.draft.recipient.name = '';
+
+        refreshInvoiceForm();
+      };
+    }
+
+    /* ✅ B2B Customer selector */
+    const b2bCustSel = $('wsl-b2b-customer');
+    if (b2bCustSel) {
+      b2bCustSel.onchange = (e) => {
+        const id = e.target.value;
+        const opt = e.target.selectedOptions?.[0];
+
+        State.draft.recipient = {
+          type: 'customer',
+          id: id,
+          name: opt?.dataset?.name || opt?.textContent?.trim() || '',
+          phone: opt?.dataset?.phone || '',
+        };
+
+        /* حدّث حقول الطرف */
+        const nameInput = $('wsl-recipient-name');
+        if (nameInput) nameInput.value = State.draft.recipient.name;
+
+        const phoneInput = $('wsl-recipient-phone');
+        if (phoneInput) phoneInput.value = State.draft.recipient.phone;
+
+        updateSummaryOnly();
+      };
+    }
+
+    /* ✅ B2B Customer name (يدوي) */
+    const b2bCustName = $('wsl-b2b-customer-name');
+    if (b2bCustName) {
+      b2bCustName.oninput = (e) => {
+        if (!State.draft.recipient.id) {
+          State.draft.recipient.name = e.target.value;
+        }
+      };
+    }
 
     /* Mode selection */
     root.querySelectorAll('[data-wsl-mode]').forEach(btn => {
@@ -2125,8 +2388,6 @@
 
     const selectedSkus = new Set(State.draft.items.map(i => i.sku));
     const available = inv.filter(i => !selectedSkus.has(i.sku));
-
-    const host = document.createElement('div');
 
     GMS.Modal.open({
       title: 'اختيار المشغولات من المخزون',
@@ -2337,11 +2598,29 @@
       const sourceBranch = getBranches().find(b => b.id === d.branch_id);
       const recipientType = getRecipientType(d.recipient.type);
 
+      /* ✅ جلب بيانات البياع */
+      let repInfo = null;
+      if (d.rep_id && isB2BAvailable()) {
+        const rep = getB2BReps().find(r => r.id === d.rep_id);
+        if (rep) {
+          repInfo = {
+            rep_id: rep.id,
+            rep_code: rep.code,
+            rep_name: rep.name,
+          };
+        }
+      }
+
       const invoice = {
         id: GMS.uid(),
         invoice_no: invoiceNo,
         mode: d.mode,
         status,
+
+        /* ✅ حقل البياع */
+        rep_id: repInfo?.rep_id || null,
+        rep_code: repInfo?.rep_code || null,
+        rep_name: repInfo?.rep_name || null,
 
         recipient: {
           type: d.recipient.type,
@@ -2414,6 +2693,9 @@
             invoice_no: invoice.invoice_no,
             mode: invoice.mode,
             status: invoice.status,
+            rep_id: invoice.rep_id,
+            rep_code: invoice.rep_code,
+            rep_name: invoice.rep_name,
             recipient_type: invoice.recipient.type,
             recipient_id: invoice.recipient.id,
             recipient_name: invoice.recipient.name,
@@ -2448,14 +2730,25 @@
         console.warn('[WSL.saveInvoice] Ledger failed:', e);
       }
 
-      /* 5 · Audit */
+      /* ✅ 5 · ربط الفاتورة بدفتر البياع (B2B) */
+      if (invoice.rep_id && GMS.B2B?.attachInvoiceToRep) {
+        try {
+          await GMS.B2B.attachInvoiceToRep(invoice, invoice.rep_id);
+          console.log('[WSL.saveInvoice] ✅ Invoice attached to rep:', invoice.rep_code);
+        } catch (e) {
+          console.warn('[WSL.saveInvoice] B2B ledger attach failed:', e);
+        }
+      }
+
+      /* 6 · Audit */
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
             'CREATE',
             'wholesale_invoice',
             invoice.id,
-            `فاتورة جملة ${invoice.invoice_no} — ${invoice.recipient.name} · ${moneyFmt(invoice.totals.grand_total)} ج.م`,
+            `فاتورة جملة ${invoice.invoice_no} — ${invoice.recipient.name} · ${moneyFmt(invoice.totals.grand_total)} ج.م` +
+            (invoice.rep_name ? ` (بياع: ${invoice.rep_name})` : ''),
             {
               invoice_no: invoice.invoice_no,
               mode: invoice.mode,
@@ -2463,29 +2756,36 @@
               total_pure: invoice.totals.total_pure,
               grand_total: invoice.totals.grand_total,
               payment_mode: invoice.payment.mode,
+              rep_id: invoice.rep_id,
+              rep_code: invoice.rep_code,
             }
           );
         } catch (_) {}
       }
 
-      /* 6 · Realtime */
+      /* 7 · Realtime */
       if (GMS.Realtime) {
         try { GMS.Realtime.emit('wholesale_invoices', 'INSERT', invoice); } catch (_) {}
       }
 
-      /* 7 · Success */
+      /* 8 · Success */
       State.invoices.unshift(invoice);
       computeKPIs();
 
       GMS.Beep?.complete?.();
+
+      const successDesc = invoice.rep_name
+        ? `${invoice.recipient.name} · بياع: ${invoice.rep_name} · ${moneyFmt(invoice.totals.grand_total)} ج.م`
+        : `${invoice.recipient.name} · ${moneyFmt(invoice.totals.grand_total)} ج.م`;
+
       GMS.Toast.ok(
         `تم حفظ الفاتورة ${invoice.invoice_no}`,
-        `${invoice.recipient.name} · ${moneyFmt(invoice.totals.grand_total)} ج.م`
+        successDesc
       );
 
       if (typeof closeFn === 'function') closeFn();
 
-      /* 8 · Offer print */
+      /* 9 · Offer print */
       setTimeout(() => {
         GMS.Confirm.ask(
           'هل تريد طباعة الفاتورة؟',
@@ -2504,7 +2804,7 @@
 
       if (saveBtn) {
         saveBtn.disabled = false;
-        saveBtn.innerHTML = originalHtml || '<i data-lucide="save"></i> إعادة المحاولة';
+        saveBtn.innerHTML = originalHTML || '<i data-lucide="save"></i> إعادة المحاولة';
         window.lucide?.createIcons();
       }
     }
@@ -2520,11 +2820,10 @@
       const entryNo = generateInvoiceNo('LG');
 
       const cashDelta = Number(invoice.payment.cash_paid || 0);
-      const goldDelta = -Number(invoice.totals.total_pure || 0); /* يخرج من الخزنة */
+      const goldDelta = -Number(invoice.totals.total_pure || 0);
 
       const entries = [];
 
-      /* Main entry — ذهب + نقد */
       entries.push({
         id: GMS.uid(),
         entry_no: entryNo,
@@ -2544,7 +2843,6 @@
         linked_invoice_id: invoice.id,
       });
 
-      /* If gold exchange — add entry for received gold */
       if (invoice.payment.gold_received && invoice.payment.gold_received.weight_pure > 0) {
         entries.push({
           id: GMS.uid(),
@@ -2569,14 +2867,11 @@
         });
       }
 
-      /* Save entries to accounting ledger */
       for (const entry of entries) {
         try {
-          /* Try GMS.Accounting.CacheDB if available */
           if (window.AccountingView?.CacheDB?.save) {
             await window.AccountingView.CacheDB.save('ledger', entry);
           } else {
-            /* Fallback — direct localStorage */
             const ledgerKey = 'gms.acc.ledger';
             const existing = JSON.parse(localStorage.getItem(ledgerKey) || '[]');
             existing.unshift(entry);
@@ -3236,6 +3531,25 @@
             </span>
           </div>
 
+          ${invoice.rep_name ? `
+            <div style="padding:12px 14px;background:var(--violet-bg);
+                        border-radius:10px;margin-bottom:14px;
+                        display:flex;align-items:center;gap:10px">
+              <i data-lucide="user-check"
+                 style="width:16px;height:16px;color:var(--violet)"></i>
+              <div style="flex:1">
+                <div style="font-size:10.5px;font-weight:800;
+                            color:var(--violet);text-transform:uppercase">
+                  البياع المسؤول
+                </div>
+                <div style="font-size:12.5px;font-weight:900;
+                            color:var(--violet);margin-top:2px">
+                  ${esc(invoice.rep_name)} (${esc(invoice.rep_code || '—')})
+                </div>
+              </div>
+            </div>
+          ` : ''}
+
           <div class="calc-list" style="margin-bottom:14px">
             <div class="cl-row">
               <span class="k"><i data-lucide="user"></i> الطرف</span>
@@ -3644,7 +3958,6 @@
             })
             .eq('transfer_no', trf.transfer_no);
 
-          /* Update items branch in Supabase */
           for (const item of trf.items) {
             if (!item.inventory_id) continue;
             try {
@@ -3721,6 +4034,14 @@
                       margin-bottom:5mm;letter-spacing:.5px">
             ${esc(invoice.invoice_no)}
           </div>
+
+          ${invoice.rep_name ? `
+            <div style="text-align:center;font-size:10pt;font-weight:700;
+                        background:#f0e9fa;padding:2mm;border:1px solid #6b3fa0;
+                        border-radius:1mm;margin-bottom:4mm;color:#6b3fa0">
+              البياع المسؤول: ${esc(invoice.rep_name)} (${esc(invoice.rep_code || '—')})
+            </div>
+          ` : ''}
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4mm;
                       font-size:10pt;margin-bottom:4mm">
@@ -3926,7 +4247,6 @@
         </div>
       `;
 
-      /* A4 page */
       const pageStyle = document.getElementById('gms-page-size-style');
       const original = pageStyle?.textContent || '';
       if (pageStyle) {
@@ -4173,6 +4493,8 @@
         'التاريخ': dateTimeAr(inv.created_at),
         'النمط': getSupplyMode(inv.mode).label,
         'الحالة': getInvoiceStatus(inv.status).label,
+        'البياع': inv.rep_name || '',
+        'كود البياع': inv.rep_code || '',
         'نوع الطرف': inv.recipient.type_label || inv.recipient.type,
         'الطرف': inv.recipient.name,
         'الهاتف': inv.recipient.phone,
@@ -4193,16 +4515,17 @@
       }));
 
       const ws = XLSX.utils.json_to_sheet(data);
-      ws['!cols'] = Array(21).fill({ wch: 16 });
+      ws['!cols'] = Array(23).fill({ wch: 16 });
       ws['!cols'][0] = { wch: 22 };
-      ws['!cols'][5] = { wch: 24 };
+      ws['!cols'][7] = { wch: 24 };
 
       /* Summary sheet */
       const k = State.kpis;
       const summary = [
         ['ملخص فواتير الجملة'],
         ['تاريخ التصدير', new Date().toLocaleString('ar-EG')],
-        [''],
+        ['']
+        ,
         ['المؤشر', 'القيمة'],
         ['إجمالي الفواتير', k.totalInvoices],
         ['القيمة الإجمالية (ج.م)', k.totalWholesaleValue],
@@ -4413,14 +4736,19 @@
      §28 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏭 Wholesale & Transfers View loaded',
+    '%c🏭 Wholesale & Transfers View v2 loaded · B2B Integration',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#e0d4f5,#6b3fa0);border-radius:4px;'
   );
 
   console.log(
-    `%c📦 B2B Wholesale · Inter-Branch Transfers · Gold Exchange · Dual Ledger`,
+    `%c📦 B2B Wholesale · Inter-Branch Transfers · Gold Exchange · Dual Ledger · Rep Linking`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v2: Rep selector · B2B customer selector · Auto-attach to rep ledger`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
