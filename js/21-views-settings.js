@@ -1,9 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/21-views-settings.js
-   الإعدادات الشاملة — النسخة v5.0
-     - إعدادات عامة (الفروع، الماركات)
+   الإعدادات الشاملة — النسخة v6.0
+     - إعدادات عامة (الفروع، الماركات، بياعو الجملة)
      - المظهر واللغة والصوت
-     - ✅ v5: لوحة الأسعار اللحظية (PriceManager)
+     - لوحة الأسعار اللحظية (PriceManager)
      - سياسة الإرجاع
      - حدود الخسس
      - إعدادات Supabase
@@ -13,12 +13,11 @@
      - نسخ احتياطي واستعادة
      - منطقة الخطر
 
-   ✅ v5 التغييرات الرئيسية:
-     • قسم الأسعار يعتمد كلياً على PriceManager
-     • لا يوجد إدخال يدوي لسعر 24K
-     • عرض مباشر للأسعار اللحظية + المصدر + آخر تحديث
-     • التحكم فقط في هامش الصاغة وفترة التحديث وهامش الكسر
-     • تحديث تلقائي عند تغيير السعر
+   ✅ v6 التغييرات الرئيسية:
+     • إضافة كارت "بياعو الجملة (B2B)" في التبويب العام
+     • رابط مباشر لوحدة B2B من الإعدادات
+     • عرض عدد البياعين النشطين + خزائنهم الإجمالية
+     • تحسين عرض الفروع والماركات مع أزرار إدارة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -56,7 +55,7 @@
       supabaseUrl: '',
       supabaseKey: '',
 
-      /* ✅ v5: إعدادات PriceManager */
+      /* ✅ PriceManager */
       offset: 0,
       autoRefreshEnabled: true,
       priceManagerInterval: 60,
@@ -68,7 +67,7 @@
     /* التعديلات غير المحفوظة */
     dirty: false,
 
-    /* Statistiques */
+    /* Statistics */
     stats: {},
 
     /* المستمعون */
@@ -115,21 +114,62 @@
     SetState.unsubscribers = [];
   }
 
+  /* ✅ helpers B2B للاستخدام في التبويب العام */
+  function isManagerRole() {
+    try {
+      const role = GMS.Auth?.profile?.role;
+      return role === 'SUPER_ADMIN' || role === 'BRANCH_MANAGER' || role === 'ACCOUNTANT';
+    } catch (_) { return false; }
+  }
+
+  function getB2BSummary() {
+    try {
+      if (!GMS.B2B) return { repsCount: 0, activeReps: 0, totalCash: 0, totalGold: 0, customersCount: 0 };
+
+      const reps = GMS.B2B.getReps?.() || [];
+      const activeReps = reps.filter(r => r.is_active !== false).length;
+
+      let totalCash = 0;
+      let totalGold = 0;
+      let customersCount = 0;
+
+      const allCustomers = GMS.B2B.getCustomers?.() || [];
+      customersCount = allCustomers.length;
+
+      /* حاول قراءة الإحصائيات من VIEWS إن متاحة */
+      try {
+        const b2bState = GMS.Views?.b2b?.state;
+        if (b2bState?.kpis) {
+          totalCash = b2bState.kpis.totalRepCash || 0;
+          totalGold = b2bState.kpis.totalRepGold || 0;
+        }
+      } catch (_) {}
+
+      return {
+        repsCount: reps.length,
+        activeReps,
+        totalCash,
+        totalGold,
+        customersCount,
+      };
+    } catch (e) {
+      console.warn('[Settings.getB2BSummary]', e);
+      return { repsCount: 0, activeReps: 0, totalCash: 0, totalGold: 0, customersCount: 0 };
+    }
+  }
+
   /* ═════════════════════════════════════════════════════════════════════
      §3 · DATA LOADING
-     ─────────────────────────────────────────────────────────────────────
-     ✅ v5: loadSettings يقرأ السعر من PriceManager
      ═════════════════════════════════════════════════════════════════════ */
 
   function loadSettings() {
-    /* ✅ v5: السعر الآن من PriceManager (لا يوجد إدخال يدوي) */
+    /* ✅ السعر من PriceManager */
     try {
       const PM = window.GMS?.PriceManager || window.PriceManager;
       if (PM && typeof PM.getCurrentPrices === 'function') {
         const live = PM.getCurrentPrices();
         SetState.draft.price24 = live?.price24 || GMS.APP_CONFIG.DEFAULT_PRICE_24;
 
-        /* قراءة إعدادات PriceManager */
         const pmStatus = PM.getStatus?.() || {};
         SetState.draft.offset = pmStatus.offset || 0;
         SetState.draft.autoRefreshEnabled = pmStatus.autoRefresh !== false;
@@ -267,13 +307,15 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · TAB: GENERAL
+     §5 · TAB: GENERAL — ✅ v6 مع كارت B2B
      ═════════════════════════════════════════════════════════════════════ */
 
   function renderGeneralTab() {
     const d = SetState.draft;
     const branches = GMS.Demo?.getBranches() || [];
     const manufacturers = GMS.Demo?.getManufacturers() || [];
+    const b2b = getB2BSummary();
+    const canManageB2B = isManagerRole();
 
     return `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -359,7 +401,7 @@
           </div>
         </div>
 
-        <!-- Right: Branches & Manufacturers -->
+        <!-- Right: Branches & Manufacturers & B2B -->
         <div>
           <div class="card">
             <div class="card-head">
@@ -442,6 +484,96 @@
               `}
             </div>
           </div>
+
+          <!-- ✅ B2B Sellers Card (v6 جديد) -->
+          ${canManageB2B ? `
+            <div class="card" style="
+                        border:1.5px solid color-mix(in srgb,var(--violet) 35%,var(--border));
+                        background:linear-gradient(135deg,
+                          color-mix(in srgb,var(--violet) 6%,var(--surface)) 0%,
+                          var(--surface) 100%)">
+              <div class="card-head">
+                <h3 style="color:var(--violet)">
+                  <i data-lucide="user-check" style="color:var(--violet)"></i>
+                  بياعو الجملة (B2B)
+                </h3>
+                <div class="spacer" style="flex:1"></div>
+                <span class="chip"
+                      style="background:var(--violet-bg);color:var(--violet);
+                             border:1px solid color-mix(in srgb,var(--violet) 30%,transparent)">
+                  ${GMS.intFmt(b2b.activeReps)} / ${GMS.intFmt(b2b.repsCount)} نشط
+                </span>
+              </div>
+
+              <div class="card-body">
+                <p style="font-size:11.5px;color:var(--muted);
+                          font-weight:600;line-height:1.7;margin:0 0 14px">
+                  وحدة إدارية مستقلة لبياعي الجملة —
+                  كل بياع له خزينة نقدية وذهبية خاصة،
+                  وعملاء جملة مستقلون، ودفتر حساباته الخاص.
+                  يمكن للمدير مراجعة أداء كل بياع وتصفية حساباته.
+                </p>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;
+                            gap:8px;margin-bottom:14px">
+                  <div style="padding:10px 12px;background:var(--violet-bg);
+                              border-radius:9px">
+                    <div style="font-size:9.5px;font-weight:800;
+                                color:var(--violet);text-transform:uppercase">
+                      بياعون
+                    </div>
+                    <div class="mono" style="font-size:16px;font-weight:900;
+                                color:var(--violet);margin-top:3px">
+                      ${GMS.intFmt(b2b.repsCount)}
+                    </div>
+                  </div>
+
+                  <div style="padding:10px 12px;background:var(--info-bg);
+                              border-radius:9px">
+                    <div style="font-size:9.5px;font-weight:800;
+                                color:var(--info);text-transform:uppercase">
+                      عملاء
+                    </div>
+                    <div class="mono" style="font-size:16px;font-weight:900;
+                                color:var(--info);margin-top:3px">
+                      ${GMS.intFmt(b2b.customersCount)}
+                    </div>
+                  </div>
+
+                  <div style="padding:10px 12px;background:var(--gold-soft);
+                              border-radius:9px">
+                    <div style="font-size:9.5px;font-weight:800;
+                                color:var(--warn);text-transform:uppercase">
+                      نقدية
+                    </div>
+                    <div class="mono" style="font-size:13px;font-weight:900;
+                                color:var(--primary);margin-top:3px">
+                      ${GMS.moneyFmt(b2b.totalCash)}
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display:flex;gap:9px">
+                  <button class="btn btn-primary"
+                          type="button"
+                          id="set-open-b2b"
+                          style="flex:1;
+                                 background:linear-gradient(135deg,var(--violet),#4c2a7a);
+                                 border-color:transparent">
+                    <i data-lucide="arrow-left"></i>
+                    فتح وحدة بياعي الجملة
+                  </button>
+
+                  <button class="btn"
+                          type="button"
+                          id="set-new-rep-quick"
+                          title="إضافة بياع جملة جديد">
+                    <i data-lucide="plus"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ` : ''}
         </div>
       </div>
     `;
@@ -662,14 +794,13 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · TAB: PRICING — ✅ v5 (الأسعار اللحظية من PriceManager)
+     §7 · TAB: PRICING — PriceManager
      ═════════════════════════════════════════════════════════════════════ */
 
   function renderPricingTab() {
     const d = SetState.draft;
     const buy24 = GMS.round(d.price24 * (1 - d.buyMargin / 100), 2);
 
-    /* ✅ v5: قراءة بيانات PriceManager */
     const PM = window.GMS?.PriceManager || window.PriceManager;
     const pmPrices = PM?.getCurrentPrices?.() || {};
     const pmStatus = PM?.getStatus?.() || {};
@@ -711,9 +842,7 @@
     return `
       <div style="max-width:900px;margin:0 auto">
 
-        <!-- ══════════════════════════════════════════════════════
-             ✅ v5: بطاقة الأسعار اللحظية (LIVE — المصدر الوحيد)
-             ══════════════════════════════════════════════════════ -->
+        <!-- ═══ بطاقة الأسعار اللحظية ═══ -->
         <div class="card" style="margin-bottom:16px;
                     background:linear-gradient(135deg,
                       color-mix(in srgb,var(--success) 8%,var(--surface)) 0%,
@@ -754,7 +883,7 @@
               </div>
             ` : ''}
 
-            <!-- ═══ 4 بطاقات معلومات ═══ -->
+            <!-- 4 بطاقات معلومات -->
             <div style="display:grid;grid-template-columns:repeat(4,1fr);
                         gap:12px;margin-bottom:16px">
               <div style="padding:12px 14px;background:var(--surface);
@@ -810,7 +939,7 @@
               </div>
             </div>
 
-            <!-- ═══ بطاقة الأسعار المُحدَّثة (5 عيارات) ═══ -->
+            <!-- بطاقة الأسعار المُحدَّثة -->
             <div style="padding:16px 18px;background:var(--gold-soft);
                         border-radius:12px;
                         border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
@@ -847,7 +976,6 @@
                 `).join('')}
               </div>
 
-              <!-- سعر شراء الكسر -->
               <div style="margin-top:12px;padding:10px 14px;
                           background:var(--surface);border-radius:10px;
                           display:flex;justify-content:space-between;
@@ -866,7 +994,7 @@
               </div>
             </div>
 
-            <!-- ═══ ضبط الهامش والتحديث ═══ -->
+            <!-- ضبط الهامش والتحديث -->
             <div class="grid-form" style="gap:14px;margin-bottom:16px">
 
               <div class="field">
@@ -901,7 +1029,7 @@
               </div>
             </div>
 
-            <!-- ═══ Toggle التحديث التلقائي ═══ -->
+            <!-- Toggle التحديث التلقائي -->
             <div class="setting-item" style="margin-bottom:16px">
               <div class="si-body">
                 <div class="si-title">
@@ -922,7 +1050,7 @@
               </label>
             </div>
 
-            <!-- ═══ أزرار التحكم ═══ -->
+            <!-- أزرار التحكم -->
             <div style="display:flex;gap:9px;flex-wrap:wrap">
               <button class="btn btn-primary" id="set-pm-sync-now"
                       type="button">
@@ -960,9 +1088,7 @@
           </div>
         </div>
 
-        <!-- ══════════════════════════════════════════════════════
-             هامش شراء الكسر
-             ══════════════════════════════════════════════════════ -->
+        <!-- هامش شراء الكسر -->
         <div class="card">
           <div class="card-head">
             <h3>
@@ -1015,9 +1141,7 @@
           </div>
         </div>
 
-        <!-- ══════════════════════════════════════════════════════
-             قائمة المصادر
-             ══════════════════════════════════════════════════════ -->
+        <!-- مصادر البيانات -->
         <div class="card">
           <div class="card-head">
             <h3>
@@ -1560,6 +1684,52 @@
                   ${table}
                 </div>
               `).join('')}
+
+              <!-- ✅ جداول B2B -->
+              <div style="padding:9px 12px;background:var(--violet-bg);
+                          border-radius:9px;
+                          border:1px solid color-mix(in srgb,var(--violet) 30%,transparent);
+                          font-family:var(--font-mono);
+                          font-size:11px;font-weight:700;
+                          display:flex;align-items:center;gap:7px;
+                          color:var(--violet)">
+                <i data-lucide="table"
+                   style="width:12px;height:12px;flex-shrink:0"></i>
+                sales_reps
+              </div>
+              <div style="padding:9px 12px;background:var(--violet-bg);
+                          border-radius:9px;
+                          border:1px solid color-mix(in srgb,var(--violet) 30%,transparent);
+                          font-family:var(--font-mono);
+                          font-size:11px;font-weight:700;
+                          display:flex;align-items:center;gap:7px;
+                          color:var(--violet)">
+                <i data-lucide="table"
+                   style="width:12px;height:12px;flex-shrink:0"></i>
+                b2b_customers
+              </div>
+              <div style="padding:9px 12px;background:var(--violet-bg);
+                          border-radius:9px;
+                          border:1px solid color-mix(in srgb,var(--violet) 30%,transparent);
+                          font-family:var(--font-mono);
+                          font-size:11px;font-weight:700;
+                          display:flex;align-items:center;gap:7px;
+                          color:var(--violet)">
+                <i data-lucide="table"
+                   style="width:12px;height:12px;flex-shrink:0"></i>
+                rep_ledgers
+              </div>
+              <div style="padding:9px 12px;background:var(--violet-bg);
+                          border-radius:9px;
+                          border:1px solid color-mix(in srgb,var(--violet) 30%,transparent);
+                          font-family:var(--font-mono);
+                          font-size:11px;font-weight:700;
+                          display:flex;align-items:center;gap:7px;
+                          color:var(--violet)">
+                <i data-lucide="table"
+                   style="width:12px;height:12px;flex-shrink:0"></i>
+                rep_settlements
+              </div>
             </div>
           </div>
         </div>
@@ -1594,7 +1764,6 @@
     return `
       <div style="max-width:900px;margin:0 auto">
 
-        <!-- Profile card -->
         <div class="card">
           <div class="card-head">
             <h3>
@@ -1645,6 +1814,13 @@
                       كل الفروع
                     </span>
                   `}
+                  ${profile.rep_id ? `
+                    <span class="pill pill-violet">
+                      <i data-lucide="user-check"
+                         style="width:10px;height:10px"></i>
+                      بياع: ${GMS.esc(profile.rep_id)}
+                    </span>
+                  ` : ''}
                 </div>
               </div>
             </div>
@@ -1682,7 +1858,6 @@
           </div>
         </div>
 
-        <!-- Permissions -->
         <div class="card">
           <div class="card-head">
             <h3>
@@ -1713,7 +1888,6 @@
           </div>
         </div>
 
-        <!-- Session Actions -->
         <div class="card">
           <div class="card-head">
             <h3>
@@ -1794,7 +1968,8 @@
                         color:var(--text-2);font-weight:600">
               <b style="color:var(--info)">ملاحظة:</b>
               النسخة الاحتياطية تحتوي على:
-              الإعدادات، الموردين المحليين، طابور المزامنة، وسجل الحركات.
+              الإعدادات، الموردين المحليين، طابور المزامنة،
+              سجل الحركات، وبيانات B2B.
               <b>لا</b> تحتوي على المخزون الكامل (يُزامَن من Supabase).
             </div>
           </div>
@@ -1890,7 +2065,6 @@
               تأكد من عمل نسخة احتياطية قبل المتابعة.
             </p>
 
-            <!-- Clear LocalStorage -->
             <div style="padding:14px 16px;background:var(--surface-2);
                         border-radius:11px;margin-bottom:12px;
                         border:1px solid var(--border);
@@ -1916,7 +2090,6 @@
               </button>
             </div>
 
-            <!-- Clear IndexedDB -->
             <div style="padding:14px 16px;background:var(--surface-2);
                         border-radius:11px;margin-bottom:12px;
                         border:1px solid var(--border);
@@ -1942,7 +2115,6 @@
               </button>
             </div>
 
-            <!-- Clear Queue -->
             <div style="padding:14px 16px;background:var(--surface-2);
                         border-radius:11px;margin-bottom:12px;
                         border:1px solid var(--border);
@@ -1969,7 +2141,34 @@
               </button>
             </div>
 
-            <!-- Full Reset -->
+            <!-- ✅ تفريغ B2B -->
+            <div style="padding:14px 16px;background:var(--violet-bg);
+                        border-radius:11px;margin-bottom:12px;
+                        border:1px solid color-mix(in srgb,var(--violet) 35%,var(--border));
+                        display:flex;align-items:center;gap:14px">
+              <div style="width:42px;height:42px;border-radius:11px;
+                          display:grid;place-items:center;flex-shrink:0;
+                          background:var(--violet);color:#fff">
+                <i data-lucide="user-check"
+                   style="width:20px;height:20px"></i>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:800;font-size:13px;
+                            color:var(--violet)">
+                  تفريغ بيانات بياعي الجملة (B2B)
+                </div>
+                <div style="font-size:11.5px;color:var(--text-2);
+                            font-weight:600;margin-top:3px">
+                  حذف جميع بياعي الجملة، عملائهم، دفاترهم،
+                  وإذون التصفية. <b style="color:var(--danger)">لا يمكن التراجع.</b>
+                </div>
+              </div>
+              <button class="btn btn-danger btn-sm" id="danger-clear-b2b">
+                <i data-lucide="trash-2"></i>
+                تفريغ
+              </button>
+            </div>
+
             <div style="padding:16px;background:var(--danger-bg);
                         border-radius:11px;
                         border:1.5px solid var(--danger-border)">
@@ -1988,7 +2187,8 @@
                               font-weight:600;margin-top:4px;
                               line-height:1.7">
                     حذف <b>كل</b> البيانات المحلية:
-                    LocalStorage، IndexedDB، الإعدادات، الطابور، سجل الحركات.
+                    LocalStorage، IndexedDB، الإعدادات، الطابور،
+                    سجل الحركات، بيانات B2B.
                     سيسجّل النظام خروجك فوراً.
                     <b>لا يمكن التراجع.</b>
                   </div>
@@ -2104,7 +2304,6 @@
         const key = tab.dataset.setTab;
         if (key === SetState.activeTab) return;
 
-        /* Warn if dirty */
         if (SetState.dirty) {
           const ok = await GMS.Confirm.ask(
             'لديك تعديلات غير محفوظة. هل تريد المتابعة بدون حفظ؟',
@@ -2203,6 +2402,29 @@
         markDirty();
       };
     }
+
+    /* ✅ B2B Actions */
+    const openB2BBtn = document.getElementById('set-open-b2b');
+    if (openB2BBtn) {
+      openB2BBtn.onclick = () => {
+        GMS.Router?.go('b2b');
+      };
+    }
+
+    const newRepQuickBtn = document.getElementById('set-new-rep-quick');
+    if (newRepQuickBtn) {
+      newRepQuickBtn.onclick = () => {
+        /* انتقل لـ B2B وافتح نافذة الإضافة */
+        GMS.Router?.go('b2b');
+        setTimeout(() => {
+          try {
+            GMS.Views?.b2b?.openRepModal?.();
+          } catch (e) {
+            console.warn('[Settings] openRepModal failed:', e);
+          }
+        }, 500);
+      };
+    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -2278,14 +2500,10 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · BIND PRICING TAB — ✅ v5
+     §19 · BIND PRICING TAB
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindPricingTab() {
-
-    /* ══════════════════════════════════════════════════════
-       ✅ v5: أزرار PriceManager
-       ══════════════════════════════════════════════════════ */
 
     /* 1 · تحديث فوري */
     const syncBtn = document.getElementById('set-pm-sync-now');
@@ -2332,7 +2550,7 @@
       };
     }
 
-    /* 3 · هامش الصاغة — عند التغيير */
+    /* 3 · هامش الصاغة */
     const offsetInput = document.getElementById('set-pm-offset');
     if (offsetInput) {
       offsetInput.oninput = () => {
@@ -2350,7 +2568,7 @@
       };
     }
 
-    /* 4 · فترة التحديث التلقائي */
+    /* 4 · فترة التحديث */
     const intervalInput = document.getElementById('set-pm-interval');
     if (intervalInput) {
       intervalInput.onchange = () => {
@@ -2388,10 +2606,7 @@
       };
     }
 
-    /* ══════════════════════════════════════════════════════
-       هامش شراء الكسر (يبقى يدوي — إعداد عمل)
-       ══════════════════════════════════════════════════════ */
-
+    /* هامش شراء الكسر */
     const marginInput = document.getElementById('set-buy-margin');
 
     function recalcBuyMargin() {
@@ -2415,9 +2630,7 @@
       };
     }
 
-    /* ══════════════════════════════════════════════════════
-       ✅ v5: مستمع PriceManager — يحدّث الصفحة تلقائياً
-       ══════════════════════════════════════════════════════ */
+    /* مستمع PriceManager */
     const PM = window.GMS?.PriceManager || window.PriceManager;
     if (PM?.on) {
       const unsub = PM.on(() => {
@@ -2428,9 +2641,7 @@
       SetState.unsubscribers.push(unsub);
     }
 
-    /* ══════════════════════════════════════════════════════
-       استمع لحدث goldPriceUpdated (fallback)
-       ══════════════════════════════════════════════════════ */
+    /* استمع لحدث goldPriceUpdated */
     const priceHandler = (e) => {
       if (GMS.Router?.currentId?.() !== 'settings') return;
       if (SetState.activeTab !== 'pricing') return;
@@ -2443,7 +2654,6 @@
       window.removeEventListener('goldPriceUpdated', priceHandler);
     });
 
-    /* رجّع حساب الهامش الأولي */
     recalcBuyMargin();
   }
 
@@ -2521,7 +2731,6 @@
       };
     }
 
-    /* Delta sync */
     const deltaBtn = document.getElementById('set-force-delta-sync');
     if (deltaBtn) {
       deltaBtn.onclick = async () => {
@@ -2540,7 +2749,6 @@
       };
     }
 
-    /* Full sync */
     const fullBtn = document.getElementById('set-force-full-sync');
     if (fullBtn) {
       fullBtn.onclick = async () => {
@@ -2565,7 +2773,6 @@
       };
     }
 
-    /* Push queue */
     const pushBtn = document.getElementById('set-push-queue');
     if (pushBtn) {
       pushBtn.onclick = async () => {
@@ -2740,7 +2947,6 @@
       excelBtn.onclick = () => exportAllDataExcel();
     }
 
-    /* Dropzone */
     const dropzone = document.getElementById('set-backup-dropzone');
     const fileInput = document.getElementById('set-backup-file-input');
 
@@ -2835,6 +3041,54 @@
       };
     }
 
+    /* ✅ Clear B2B */
+    const clearB2B = document.getElementById('danger-clear-b2b');
+    if (clearB2B) {
+      clearB2B.onclick = async () => {
+        const ok = await GMS.Confirm.danger(
+          '⚠ سيتم حذف جميع بيانات بياعي الجملة: البياعون، عملاء الجملة، دفاترهم، وإذون التصفية.\n' +
+          'لا يمكن التراجع.'
+        );
+        if (!ok) return;
+
+        /* تأكيد إضافي */
+        const confirmText = await GMS.Prompt.ask({
+          title: 'تأكيد نهائي',
+          label: 'اكتب كلمة "حذف" للمتابعة',
+          placeholder: 'حذف',
+          icon: 'skull',
+        });
+
+        if (confirmText !== 'حذف') {
+          return GMS.Toast.warn('تم إلغاء العملية');
+        }
+
+        try {
+          if (GMS.B2B?.CacheDB) {
+            const stores = ['sales_reps', 'b2b_customers', 'rep_ledgers', 'rep_settlements'];
+
+            for (const store of stores) {
+              const key = 'gms.b2b.' + store;
+              try {
+                localStorage.removeItem(key);
+                if (GMS.IDB?.metaDelete) {
+                  await GMS.IDB.metaDelete(key);
+                }
+              } catch (_) {}
+            }
+
+            console.log('[Settings] B2B data cleared');
+          }
+
+          GMS.Toast.warn('تم تفريغ بيانات B2B', 'جارٍ إعادة التحميل');
+          setTimeout(() => location.reload(), 1000);
+        } catch (e) {
+          console.error('[Settings.clearB2B]', e);
+          GMS.Toast.err('فشل التفريغ', e.message);
+        }
+      };
+    }
+
     /* Full Reset */
     const fullReset = document.getElementById('danger-full-reset');
     if (fullReset) {
@@ -2885,23 +3139,20 @@
     try {
       const d = SetState.draft;
 
-      /* 1 · ✅ v5: السعر يُدار عبر PriceManager — لا نحفظه يدوياً */
+      /* 1 · PriceManager */
       try {
         const PM = window.GMS?.PriceManager || window.PriceManager;
         if (PM) {
-          /* هامش الصاغة */
           if (typeof d.offset === 'number') {
             PM.setOffset(d.offset);
           }
 
-          /* فترة التحديث */
           if (typeof d.priceManagerInterval === 'number' && d.priceManagerInterval > 0) {
             const wasActive = PM.getStatus().autoRefresh;
             PM.startAutoRefresh(d.priceManagerInterval * 1000);
             if (!wasActive) PM.stopAutoRefresh();
           }
 
-          /* حالة التحديث التلقائي */
           if (typeof d.autoRefreshEnabled === 'boolean') {
             PM.setAutoRefresh(d.autoRefreshEnabled);
           }
@@ -2982,7 +3233,6 @@
           'أعد تحميل الصفحة لتطبيق الاتصال الجديد');
       }
 
-      /* Sync with saved state */
       SetState.saved = { ...d };
       SetState.dirty = false;
       updateDirtyIndicator();
@@ -2990,7 +3240,6 @@
       GMS.Beep?.success();
       GMS.Toast.ok('تم حفظ الإعدادات بنجاح');
 
-      /* Audit */
       if (GMS.Audit) {
         await GMS.Audit.log(
           'UPDATE',
@@ -3076,7 +3325,6 @@
           lang: SetState.draft.lang,
           columnPrefs: GMS.LS?.get?.(GMS.LS_KEYS.COLUMNS) || null,
 
-          /* ✅ v5: إعدادات PriceManager */
           priceManager: {
             offset: SetState.draft.offset,
             autoRefreshEnabled: SetState.draft.autoRefreshEnabled,
@@ -3090,6 +3338,14 @@
           melting: [],
           polish: [],
           assay: [],
+        },
+
+        /* ✅ B2B data */
+        b2b: {
+          reps: [],
+          customers: [],
+          ledgers: [],
+          settlements: [],
         },
       };
 
@@ -3123,7 +3379,18 @@
         );
       } catch (_) {}
 
-      /* Download */
+      /* ✅ B2B data export */
+      try {
+        if (GMS.B2B?.CacheDB) {
+          backup.b2b.reps = await GMS.B2B.CacheDB.getAll('sales_reps');
+          backup.b2b.customers = await GMS.B2B.CacheDB.getAll('b2b_customers');
+          backup.b2b.ledgers = await GMS.B2B.CacheDB.getAll('rep_ledgers');
+          backup.b2b.settlements = await GMS.B2B.CacheDB.getAll('rep_settlements');
+        }
+      } catch (e) {
+        console.warn('[Settings.exportBackup] B2B export failed:', e);
+      }
+
       const filename = `gold_ms_backup_${GMS.todayISO()}.json`;
       const json = JSON.stringify(backup, null, 2);
 
@@ -3202,7 +3469,6 @@
             JSON.stringify(s.columnPrefs));
         }
 
-        /* ✅ v5: استعادة إعدادات PriceManager */
         if (s.priceManager) {
           try {
             const PM = window.GMS?.PriceManager || window.PriceManager;
@@ -3265,6 +3531,33 @@
               JSON.stringify(data.records.assay.slice(0, 100)));
           }
         } catch (_) {}
+      }
+
+      /* ✅ Restore B2B */
+      if (data.b2b && GMS.B2B?.CacheDB) {
+        try {
+          const b2bStores = ['reps', 'customers', 'ledgers', 'settlements'];
+          const storeNames = {
+            reps: 'sales_reps',
+            customers: 'b2b_customers',
+            ledgers: 'rep_ledgers',
+            settlements: 'rep_settlements',
+          };
+
+          let b2bRestored = 0;
+
+          for (const key of b2bStores) {
+            const items = data.b2b[key] || [];
+            for (const item of items) {
+              await GMS.B2B.CacheDB.save(storeNames[key], item);
+              b2bRestored++;
+            }
+          }
+
+          console.log(`[Restore] B2B items restored: ${b2bRestored}`);
+        } catch (e) {
+          console.warn('[Restore] B2B restore failed:', e);
+        }
       }
 
       GMS.Loading.hide();
@@ -3335,17 +3628,13 @@
     bindPriceManagerEvents();
   }
 
-  /* ✅ v5: أحداث PriceManager العامة */
   function bindPriceManagerEvents() {
     if (!window || !document) return;
 
-    /* استمع لحدث الأسعار اللحظية */
     window.addEventListener('goldPriceUpdated', (e) => {
-      /* تجاهل إذا لم نكن في صفحة الإعدادات → الأسعار */
       if (GMS.Router?.currentId?.() !== 'settings') return;
       if (SetState.activeTab !== 'pricing') return;
 
-      /* السعر يتحدّث تلقائياً بواسطة PriceManager */
       const prices = e.detail?.prices || {};
       if (prices.price24 > 0) {
         SetState.draft.price24 = prices.price24;
@@ -3372,19 +3661,14 @@
     cleanup,
     state: SetState,
 
-    /* Data */
     load: loadSettings,
-
-    /* Actions */
     save: saveAll,
     reset: resetAll,
 
-    /* Backup */
     exportBackup,
     importBackup,
     exportAllDataExcel,
 
-    /* Helpers */
     markDirty,
   };
 
@@ -3392,18 +3676,18 @@
      §31 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚙️  Settings View v5.0 loaded · 10 tabs',
+    '%c⚙️  Settings View v6.0 loaded · 10 tabs + B2B Integration',
     'color:#6b7a95;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#eef2f8;border-radius:4px;'
   );
 
   console.log(
-    `%c🎛️  General · Appearance · Pricing (LIVE) · Returns · Losses · Sync · Supabase · Session · Backup · Danger`,
+    `%c🎛️  General · Appearance · Pricing · Returns · Losses · Sync · Supabase · Session · Backup · Danger`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🆕 v5: PriceManager integration · Live gold prices · No manual 24K input`,
+    `%c🆕 v6: B2B card in General tab · Quick open · Live stats · B2B backup/restore/clear`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
