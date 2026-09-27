@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v4.0: ADAPTIVE — language switch بدون viewport recalculation
+   ✅ v5.0: ADAPTIVE + B2B Sellers Module Integration
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -10,7 +10,7 @@
   const GMS = window.GMS = window.GMS || {};
 
   /* ═════════════════════════════════════════════════════════════════════
-     §0 · BOOT LOGGER — يلتقط كل رسائل الـ Console ويحفظها
+     §0 · BOOT LOGGER
      ═════════════════════════════════════════════════════════════════════ */
   (function installBootLogger() {
     const LOG_KEY = 'gms.debug.bootLog';
@@ -110,6 +110,7 @@
       router: false,
       ui: false,
       repair: false,
+      b2b: false,      /* ✅ جديد */
       sw: false,
       pwa: false,
     },
@@ -233,25 +234,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · ✅ LANGUAGE SWITCHER — v4.0 (ADAPTIVE)
-     ─────────────────────────────────────────────────────────────────────
-     ✅ v4.0: الحل النهائي — يستفيد من Adaptive Layout
-
-     المبدأ:
-       • الـ layout مثبت من أول boot ([data-layout="mobile"])
-       • الـ CSS مش بيعتمد على @media queries
-       • لما نغير dir على <html>:
-         - الـ CSS مش محتاج يتقيّم من جديد
-         - الـ browser بيحدّث logical properties فقط
-         - مفيش GPU recalc ضخم
-         - مفيش crash
-
-     الاستراتيجية:
-       1. حفظ اللغة في localStorage
-       2. تغيير <html> lang و dir مباشرة
-       3. تحديث I18n state
-       4. إعادة تصيير الصفحة الحالية (Router.go force)
-       5. لا reload، لا navigation، لا crash
+     §5 · LANGUAGE SWITCHER
      ═════════════════════════════════════════════════════════════════════ */
 
   function showLanguageSwitchOverlay(targetLang) {
@@ -331,10 +314,8 @@
     BootState.switchingLang = true;
     console.log(`[switchLanguage] 🔄 ${currentLang} → ${lang} (adaptive mode)`);
 
-    /* 1 · عرض overlay */
     showLanguageSwitchOverlay(lang);
 
-    /* 2 · احفظ اللغة في localStorage */
     try {
       const key = (GMS.LS_KEYS && GMS.LS_KEYS.LANG) || 'gms.lang';
       localStorage.setItem(key, lang);
@@ -347,11 +328,9 @@
       return false;
     }
 
-    /* 3 · انتظر شويّة عشان الـ overlay يظهر */
     await GMS.sleep(150);
 
     try {
-      /* 4 · ✅ تغيير <html> attributes مباشرة — بدون reload */
       const html = document.documentElement;
       html.setAttribute('lang', lang);
       html.setAttribute('dir', lang === 'ar' ? 'rtl' : 'ltr');
@@ -362,10 +341,8 @@
         dir: html.getAttribute('dir')
       });
 
-      /* 5 · تحديث أزرار اللغة */
       updateLangButtons(lang);
 
-      /* 6 · ✅ تحديث I18n state */
       if (GMS.I18n && typeof GMS.I18n.setLang === 'function') {
         try {
           GMS.I18n.setLang(lang, { silent: true });
@@ -375,7 +352,6 @@
         }
       }
 
-      /* 7 · ✅ تحديث data-i18n elements */
       if (GMS.I18n && typeof GMS.I18n.applyTo === 'function') {
         try {
           GMS.I18n.applyTo(document);
@@ -385,10 +361,8 @@
         }
       }
 
-      /* 8 · ✅ انتظر شويّة عشان الـ CSS يتحدّث */
       await GMS.sleep(100);
 
-      /* 9 · ✅ إعادة تصيير الصفحة الحالية */
       const currentRoute = GMS.Router?.currentId?.();
       if (currentRoute && GMS.Router?.go) {
         try {
@@ -397,7 +371,6 @@
           console.log('[switchLanguage] ✅ Route re-rendered');
         } catch (routerError) {
           console.error('[switchLanguage] ❌ Router.go failed:', routerError);
-          /* لا نعمل reload — بس نعرض تحذير */
           GMS.Toast?.warn?.(
             'تم تغيير اللغة',
             'أعد تحميل الصفحة لتحديث المخططات'
@@ -405,7 +378,6 @@
         }
       }
 
-      /* 10 · ✅ أكّد النجاح */
       removeLanguageSwitchOverlay();
 
       GMS.Beep?.info?.();
@@ -420,8 +392,6 @@
     } catch (err) {
       console.error('[switchLanguage] ❌ خطأ:', err);
       removeLanguageSwitchOverlay();
-
-      /* لا reload — بس نعرض تحذير */
       GMS.Toast?.err?.('فشل تبديل اللغة', err.message || 'حاول مرة أخرى');
       return false;
 
@@ -435,10 +405,6 @@
       b.classList.toggle('active', b.dataset.lang === lang);
     });
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §5.1 · ربط أزرار اللغة
-     ═════════════════════════════════════════════════════════════════════ */
 
   function bindLanguageButtons() {
     if (window.GMS && window.GMS._langButtonsBound) {
@@ -556,7 +522,11 @@
             await GMS.Audit.log(
               'LOGIN', 'session', profile.id,
               `تسجيل دخول — ${profile.full_name}`,
-              { email: profile.email, role: profile.role }
+              {
+                email: profile.email,
+                role: profile.role,
+                rep_id: profile.rep_id || null,
+              }
             );
           } catch (auditErr) {
             console.warn('[Boot.login] Audit log failed:', auditErr);
@@ -833,7 +803,108 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · STARTUP SEQUENCE
+     §9 · ✅ B2B BOOTSTRAP — تهيئة بيانات بياعي الجملة
+     ═════════════════════════════════════════════════════════════════════ */
+
+  async function bootstrapB2B() {
+    try {
+      if (!GMS.B2B?.CacheDB) {
+        console.log('[Boot] B2B module not available — skipping bootstrap');
+        return;
+      }
+
+      console.log('[Boot] 🏪 Bootstrapping B2B data…');
+
+      /* 1 · فحص هل البيانات موجودة */
+      let existingReps = [];
+      try {
+        existingReps = await GMS.B2B.CacheDB.getAll('sales_reps');
+      } catch (e) {
+        console.warn('[Boot] Failed to read sales_reps:', e);
+      }
+
+      /* 2 · لو فاضي، ازرع البيانات التجريبية */
+      if (!existingReps || existingReps.length === 0) {
+        if (GMS.Demo?.getB2BReps && GMS.Demo?.getB2BCustomers) {
+          const demoReps = GMS.Demo.getB2BReps();
+          const demoCustomers = GMS.Demo.getB2BCustomers();
+          const demoLedgers = GMS.Demo.getRepLedgers?.() || [];
+
+          for (const rep of demoReps) {
+            await GMS.B2B.CacheDB.save('sales_reps', rep);
+          }
+          for (const cust of demoCustomers) {
+            await GMS.B2B.CacheDB.save('b2b_customers', cust);
+          }
+          for (const entry of demoLedgers) {
+            await GMS.B2B.CacheDB.save('rep_ledgers', entry);
+          }
+
+          console.log(
+            `[Boot] ✅ Seeded B2B: ${demoReps.length} reps, ` +
+            `${demoCustomers.length} customers, ${demoLedgers.length} ledger entries`
+          );
+        } else {
+          console.warn('[Boot] Demo B2B data not available');
+        }
+      } else {
+        console.log(`[Boot] B2B store already has ${existingReps.length} reps`);
+      }
+
+      /* 3 · فحص إذا المستخدم الحالي بياع جملة — التحقق من rep_id */
+      if (GMS.Auth?.profile?.role === 'B2B_REP') {
+        if (!GMS.Auth.profile.rep_id) {
+          console.warn('[Boot] ⚠️ B2B_REP بدون rep_id — عزل البيانات لن يعمل');
+
+          if (GMS.Toast) {
+            GMS.Toast.warn(
+              'تحذير: حسابك غير مرتبط ببياع',
+              'تواصل مع المدير لربط حسابك'
+            );
+          }
+        } else {
+          console.log(
+            `[Boot] ✅ B2B Rep logged in: ` +
+            `${GMS.Auth.profile.full_name} (rep_id: ${GMS.Auth.profile.rep_id})`
+          );
+
+          /* التحقق من وجود البياع في المخزن */
+          const reps = await GMS.B2B.CacheDB.getAll('sales_reps');
+          const myRep = reps.find(r => r.id === GMS.Auth.profile.rep_id);
+
+          if (!myRep) {
+            console.warn(`[Boot] ⚠️ Rep ${GMS.Auth.profile.rep_id} not found in store`);
+
+            /* إنشاء سجل بياع بسيط */
+            await GMS.B2B.CacheDB.save('sales_reps', {
+              id: GMS.Auth.profile.rep_id,
+              code: 'REP-' + GMS.Auth.profile.rep_id.slice(-3).toUpperCase(),
+              name: GMS.Auth.profile.full_name,
+              phone: GMS.Auth.profile.phone || '',
+              branch_id: GMS.Auth.profile.branch_id,
+              opening_cash: 0,
+              opening_gold_pure: 0,
+              is_active: true,
+              created_at: new Date().toISOString(),
+            });
+
+            console.log('[Boot] ✅ Auto-created rep record for user');
+          } else {
+            console.log(`[Boot] ✅ Rep record found: ${myRep.name}`);
+          }
+        }
+      }
+
+      markSystem('b2b');
+
+    } catch (e) {
+      recordError('b2b', e);
+      console.warn('[Boot] B2B bootstrap failed:', e);
+    }
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10 · STARTUP SEQUENCE
      ═════════════════════════════════════════════════════════════════════ */
 
   async function startApp() {
@@ -865,26 +936,31 @@
         try {
           await GMS.Sync.init({ autoSync: true, realtime: false, initialSync: false });
           markSystem('sync');
-          updateBootProgress('المزامنة جاهزة', 75);
+          updateBootProgress('المزامنة جاهزة', 72);
         } catch (e) {
           recordError('sync', e);
         }
       }
 
-      updateBootProgress('تفعيل التحديثات المباشرة…', 82);
+      /* ✅ B2B Bootstrap (بعد Auth + Cache) */
+      updateBootProgress('تهيئة بياعي الجملة…', 78);
+      await bootstrapB2B();
+      updateBootProgress('بياعو الجملة جاهزون', 82);
+
+      updateBootProgress('تفعيل التحديثات المباشرة…', 85);
 
       if (GMS.Realtime) {
         try {
           await GMS.Realtime.init({ autoSubscribe: true, loadFeed: true });
           markSystem('realtime');
-          updateBootProgress('التحديثات المباشرة جاهزة', 88);
+          updateBootProgress('التحديثات المباشرة جاهزة', 90);
         } catch (e) {
           recordError('realtime', e);
         }
       }
 
       bindRealtimeToUI();
-      updateBootProgress('تحضير الواجهة…', 92);
+      updateBootProgress('تحضير الواجهة…', 93);
 
       if (GMS.Router) {
         try {
@@ -947,7 +1023,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · REALTIME → UI BINDING
+     §11 · REALTIME → UI BINDING
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindRealtimeToUI() {
@@ -978,7 +1054,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · VISIBILITY HANDLER
+     §12 · VISIBILITY HANDLER
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindVisibilityHandler() {
@@ -1007,7 +1083,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · PERIODIC MAINTENANCE
+     §13 · PERIODIC MAINTENANCE
      ═════════════════════════════════════════════════════════════════════ */
 
   function startPeriodicMaintenance() {
@@ -1042,7 +1118,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · BOOT SCREEN HTML
+     §14 · BOOT SCREEN HTML
      ═════════════════════════════════════════════════════════════════════ */
 
   function createBootScreen() {
@@ -1103,7 +1179,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · RESTORE SESSION OR LOGIN
+     §15 · RESTORE SESSION OR LOGIN
      ═════════════════════════════════════════════════════════════════════ */
 
   async function determineStartMode() {
@@ -1138,7 +1214,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · INITIALIZE NON-AUTH SYSTEMS
+     §16 · INITIALIZE NON-AUTH SYSTEMS
      ═════════════════════════════════════════════════════════════════════ */
 
   async function initNonAuthSystems() {
@@ -1182,7 +1258,7 @@
       }
     }
 
-    /* ✅ v4.0: عرض logs من جلسة سابقة */
+    /* عرض logs من جلسة سابقة */
     try {
       const prevLog = sessionStorage.getItem('gms.debug.bootLog');
       if (prevLog) {
@@ -1197,7 +1273,7 @@
       }
     } catch (_) {}
 
-    /* ✅ v4.0: طباعة معلومات الـ adaptive layout */
+    /* معلومات الـ adaptive layout */
     console.log(
       `%c📐 Adaptive Layout: ${window.GMS.DeviceLayout || 'unknown'} (${window.GMS.DeviceSize || 'unknown'}) | Touch: ${window.GMS.DeviceTouch ? 'yes' : 'no'}`,
       'color:#0f7a43;font-weight:900;font-size:12px;'
@@ -1207,7 +1283,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · MAIN BOOT
+     §17 · MAIN BOOT
      ═════════════════════════════════════════════════════════════════════ */
 
   async function boot() {
@@ -1264,7 +1340,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · PUBLIC API
+     §18 · PUBLIC API
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Boot = {
     boot,
@@ -1273,6 +1349,7 @@
     bindLoginForm,
     switchLanguage,
     updateLangButtons,
+    bootstrapB2B,   /* ✅ معرّض للاختبار اليدوي */
 
     getState: () => ({ ...BootState }),
 
@@ -1291,7 +1368,7 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · AUTO START
+     §19 · AUTO START
      ═════════════════════════════════════════════════════════════════════ */
 
   if (document.readyState === 'loading') {
@@ -1311,10 +1388,10 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · LOADED CONFIRMATION
+     §20 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot loaded · v4.0 (Adaptive Layout)',
+    '%c⚡ Boot v5.0 loaded · Adaptive + B2B Integration',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;background:#e6f6ee;border-radius:4px;'
   );
 
