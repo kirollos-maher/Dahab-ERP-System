@@ -1,8 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/03-i18n.js
    نظام الترجمة: عربي (مصري) + إنجليزي مع RTL/LTR والجمع
-   ✅ v2: إضافة nav.accounting · nav.repair · nav.wholesale
-   ✅ v3: تحصين setLang + applyTo ضد أخطاء الشاشة البيضاء
+   ✅ v4: إضافة nav.b2b + role.B2B_REP + B2B translations كاملة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -12,13 +11,11 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · TRANSLATIONS DICTIONARY
-     ─────────────────────────────────────────────────────────────────────
-     كامل شامل كل النصوص في النظام
      ═════════════════════════════════════════════════════════════════════ */
   const TRANSLATIONS = {
 
     /* ═══════════════════════════════════════════════════════════════════
-       ARABIC (المصرية الفصحى المبسطة للتعامل اليومي)
+       ARABIC
        ═══════════════════════════════════════════════════════════════════ */
     ar: {
 
@@ -56,6 +53,7 @@
       'role.ACCOUNTANT':             'محاسب',
       'role.DATA_ENTRY':             'مدخل بيانات',
       'role.SALESPERSON':            'بائع',
+      'role.B2B_REP':                'بياع جملة',
 
       /* ─── Navigation ─────────────────────────────────────────────── */
       'nav.dashboard':               'لوحة التحكم',
@@ -76,6 +74,7 @@
       'nav.ledger':                  'دفتر الأستاذ',
       'nav.accounting':              'المحاسبة والمالية',
       'nav.wholesale':               'التوريد والجملة',
+      'nav.b2b':                     'بياعو الجملة',
       'nav.transfers':               'التحويلات بين الفروع',
       'nav.shifts':                  'الورديات',
       'nav.queue':                   'المزامنة',
@@ -161,6 +160,8 @@
       'carat.14':                    'عيار 14',
       'carat.short':                 'عيار',
       'carat.purity':                'النقاء',
+      'carat.custom':                'عيار مخصص',
+      'carat.customHint':            'من 300 إلى 999 (سبائك، مستورد، كسر)',
 
       /* ─── Manufacturers ──────────────────────────────────────────── */
       'manu.nile':                   'مصنع النيل للذهب',
@@ -260,6 +261,9 @@
       'label.reason':                'السبب',
       'label.method':                'الطريقة',
       'label.performance':           'الأداء',
+      'label.rep':                   'البياع',
+      'label.repCode':               'كود البياع',
+      'label.treasury':              'الخزينة',
 
       /* ─── Dashboard ──────────────────────────────────────────────── */
       'dash.title':                  'لوحة التحكم التنفيذية',
@@ -519,6 +523,8 @@
       'emp.passwordRequirements':    'يجب أن تحتوي على 8 أحرف، حرف كبير، حرف صغير، رقم، ورمز',
       'emp.onlyAdminsCanManage':     'الإدارة فقط تستطيع إضافة الموظفين',
       'emp.cannotEdit':              'غير مصرح لك بتعديل الموظفين',
+      'emp.repId':                   'كود البياع المرتبط',
+      'emp.repIdHint':               'للبياعين فقط — يُربط بحساب B2B',
 
       /* ─── Shifts ─────────────────────────────────────────────────── */
       'shift.title':                 'إغلاق الوردية',
@@ -702,6 +708,7 @@
       'ph.selectSupplier':           'اختر المورد…',
       'ph.selectCustomer':           'اختر العميل…',
       'ph.selectRole':               'اختر الدور…',
+      'ph.selectRep':                'اختر البياع…',
 
       /* ─── Wholesale & Transfers ──────────────────────────────────── */
       'wsl.title':                   'التوريد والجملة والتحويلات',
@@ -724,6 +731,161 @@
       'wsl.action.newTransfer':      'أمر تحويل جديد',
       'wsl.action.printInvoice':     'طباعة الفاتورة',
       'wsl.action.printManifest':    'طباعة إذن التوريد',
+
+      /* ─── ✅ B2B Sellers (v4 جديد) ──────────────────────────────── */
+      'b2b.title':                   'نظام بياعي الجملة المستقلين',
+      'b2b.subtitle':                'كيانات B2B مستقلة بخزائن نقدية وذهبية منفصلة',
+      'b2b.tab.reps':                'بياعو الجملة',
+      'b2b.tab.customers':           'عملاء الجملة',
+      'b2b.tab.audit':               'رقابة المدير',
+      'b2b.tab.settlements':         'إذون التصفية',
+
+      /* Reps */
+      'b2b.rep.title':               'بياعو الجملة',
+      'b2b.rep.new':                 'بياع جملة جديد',
+      'b2b.rep.edit':                'تعديل بياع',
+      'b2b.rep.code':                'كود البياع',
+      'b2b.rep.name':                'اسم البياع',
+      'b2b.rep.phone':               'رقم الهاتف',
+      'b2b.rep.pin':                 'رمز PIN',
+      'b2b.rep.pinHint':             '4-6 أرقام للدخول السريع',
+      'b2b.rep.branch':              'الفرع التابع له',
+      'b2b.rep.openingCash':         'الرصيد الافتتاحي النقدي (ج.م)',
+      'b2b.rep.openingGold':         'الرصيد الافتتاحي الذهبي (جم بندق)',
+      'b2b.rep.treasury':            'الخزينة',
+      'b2b.rep.cashDrawer':          'خزنة النقدية',
+      'b2b.rep.goldDrawer':          'خزنة الذهب',
+      'b2b.rep.totalValue':          'إجمالي الخزينة',
+      'b2b.rep.settle':              'تصفية الحساب',
+      'b2b.rep.settleRequest':       'طلب تصفية',
+      'b2b.rep.manualEntry':         'حركة يدوية',
+      'b2b.rep.active':              'نشط',
+      'b2b.rep.inactive':            'موقوف',
+      'b2b.rep.myTreasury':          'خزينتي',
+      'b2b.rep.isolatedView':        'عرض معزول — أنت ترى بياناتك فقط',
+      'b2b.rep.deleteWarning':       'سيتم حذف البياع. لا يمكن التراجع.',
+      'b2b.rep.deleteWarningSoft':   'لديه حركات — سيتم تعطيله بدل حذفه.',
+      'b2b.rep.autoDisabled':        'تم تعطيل البياع',
+
+      /* Customers */
+      'b2b.customer.title':          'عملاء الجملة',
+      'b2b.customer.new':            'عميل جملة جديد',
+      'b2b.customer.edit':           'تعديل عميل',
+      'b2b.customer.code':           'الكود',
+      'b2b.customer.name':           'اسم العميل',
+      'b2b.customer.phone':          'رقم الهاتف',
+      'b2b.customer.address':        'العنوان',
+      'b2b.customer.taxId':          'السجل الضريبي',
+      'b2b.customer.responsibleRep': 'البياع المسؤول',
+      'b2b.customer.openingCash':    'مديونية افتتاحية نقدية (ج.م)',
+      'b2b.customer.openingGold':    'مديونية افتتاحية ذهبية (جم بندق)',
+      'b2b.customer.creditLimit':    'حد الائتمان (ج.م)',
+      'b2b.customer.balance':        'الرصيد',
+      'b2b.customer.cashDebt':       'المديونية النقدية',
+      'b2b.customer.goldDebt':       'المديونية الذهبية',
+      'b2b.customer.totalValue':     'القيمة الإجمالية',
+      'b2b.customer.ledger':         'دفتر الحساب',
+      'b2b.customer.ledgerTitle':    'دفتر حساب العميل',
+      'b2b.customer.addMovement':    'تسجيل حركة',
+      'b2b.customer.noCustomers':    'لا يوجد عملاء جملة',
+      'b2b.customer.noCustomersHint':'ابدأ بإضافة عميل جملة جديد',
+
+      /* Ledger Types */
+      'b2b.ledger.invoice':          'فاتورة جملة',
+      'b2b.ledger.invoiceCredit':    'فاتورة آجلة',
+      'b2b.ledger.cashReceived':     'استلام نقدي',
+      'b2b.ledger.cashPayment':      'سداد نقدي',
+      'b2b.ledger.goldReceived':     'استلام ذهب',
+      'b2b.ledger.goldDelivered':    'تسليم ذهب',
+      'b2b.ledger.adjustment':       'تسوية يدوية',
+      'b2b.ledger.settlement':       'تصفية مع المحل',
+      'b2b.ledger.opening':          'رصيد افتتاحي',
+
+      /* Movement Types */
+      'b2b.movement.cashFromCustomer': 'استلام نقدي من العميل',
+      'b2b.movement.cashToCustomer':   'دفع نقدي للعميل',
+      'b2b.movement.goldFromCustomer': 'استلام ذهب من العميل',
+      'b2b.movement.goldToCustomer':   'تسليم ذهب للعميل',
+      'b2b.movement.notes':            'ملاحظات',
+      'b2b.movement.notesPlaceholder': 'وصف الحركة…',
+      'b2b.movement.save':             'حفظ الحركة',
+      'b2b.movement.saved':            'تم تسجيل الحركة',
+
+      /* Treasury */
+      'b2b.treasury.cash':           'نقدية',
+      'b2b.treasury.gold':           'ذهب',
+      'b2b.treasury.value':          'القيمة',
+      'b2b.treasury.distribution':   'توزيع الذهب حسب العيار',
+      'b2b.treasury.customGold':     'مخصص',
+      'b2b.treasury.availableCash':  'نقدية متاحة',
+      'b2b.treasury.availableGold':  'ذهب متاح',
+      'b2b.treasury.totalCash':      'إجمالي خزائن البياعين (نقد)',
+      'b2b.treasury.goldAvailable':  'ذهب متاح',
+
+      /* Settlement */
+      'b2b.settlement.title':        'إذون التصفية',
+      'b2b.settlement.new':          'إذن تصفية جديد',
+      'b2b.settlement.no':           'رقم الإذن',
+      'b2b.settlement.status':       'الحالة',
+      'b2b.settlement.amount':       'المبلغ النقدي',
+      'b2b.settlement.goldWeight':   'الوزن الذهبي',
+      'b2b.settlement.approve':      'اعتماد',
+      'b2b.settlement.reject':       'رفض',
+      'b2b.settlement.approved':     'تم الاعتماد',
+      'b2b.settlement.rejected':     'تم الرفض',
+      'b2b.settlement.sendToManager':'إرسال للمدير',
+      'b2b.settlement.sent':         'تم إرسال الإذن للمدير',
+      'b2b.settlement.awaitingApproval': 'بانتظار اعتماد المدير',
+      'b2b.settlement.confirmApprove': 'سيتم اعتماد التصفية وخصم المبالغ من خزينة البياع. متابعة؟',
+      'b2b.settlement.rejectReason': 'سبب الرفض',
+      'b2b.settlement.pending':      'معلّق',
+      'b2b.settlement.approved_value': 'معتمد',
+      'b2b.settlement.details':      'تفاصيل إذن التصفية',
+      'b2b.settlement.before':       'الرصيد قبل التصفية',
+      'b2b.settlement.createdBy':    'أُنشئ بواسطة',
+      'b2b.settlement.approvedBy':   'اعتمد بواسطة',
+
+      /* Audit Dashboard */
+      'b2b.audit.title':             'لوحة رقابة المدير',
+      'b2b.audit.subtitle':          'مقارنة أداء البياعين',
+      'b2b.audit.repName':           'البياع',
+      'b2b.audit.cashTreasury':      'خزنة نقدية',
+      'b2b.audit.goldTreasury':      'خزنة ذهب',
+      'b2b.audit.goldValue':         'قيمة الذهب',
+      'b2b.audit.customersCount':    'عملاء الجملة',
+      'b2b.audit.salesTotal':        'مبيعات الفترة',
+      'b2b.audit.invoicesCount':     'عدد الفواتير',
+      'b2b.audit.action':            'إجراء',
+
+      /* KPI Cards */
+      'b2b.kpi.reps':                'بياعو الجملة',
+      'b2b.kpi.activeReps':          'نشط',
+      'b2b.kpi.totalReps':           'إجمالي البياعين',
+      'b2b.kpi.totalRepCash':        'إجمالي خزائن البياعين (نقد)',
+      'b2b.kpi.totalRepGold':        'إجمالي خزائن البياعين (ذهب)',
+      'b2b.kpi.customers':           'عملاء الجملة',
+      'b2b.kpi.customerDebts':       'مديونيات',
+      'b2b.kpi.pendingSettlements':  'إذون التصفية',
+      'b2b.kpi.approvedValue':       'معتمد',
+      'b2b.kpi.goldLabel':           'ذهب',
+      'b2b.kpi.cashLabel':           'نقدية',
+
+      /* Errors & Warnings */
+      'b2b.err.repRequired':         'البياع مطلوب',
+      'b2b.err.customerRequired':    'العميل مطلوب',
+      'b2b.err.accessDenied':        'غير مصرح بالوصول لبيانات هذا البياع',
+      'b2b.err.noRepAssigned':       'حسابك غير مرتبط ببياع',
+      'b2b.err.noRepAssignedHint':   'تواصل مع المدير لربط حسابك',
+      'b2b.err.insufficientCash':    'المبلغ يتجاوز رصيد الخزينة النقدية',
+      'b2b.err.insufficientGold':    'الوزن يتجاوز رصيد خزينة الذهب',
+      'b2b.err.treasuryChanged':     'الخزينة تغيرت — أعد المحاولة',
+      'b2b.err.cannotDisableSelf':   'لا يمكنك تعطيل حسابك الخاص',
+      'b2b.warn.isolatedView':       'عرض معزول — أنت ترى بياناتك فقط',
+
+      /* Confirmations */
+      'b2b.confirm.clearData':       'تحذير أخير: سيتم حذف كل بيانات B2B. اكتب "حذف" للمتابعة.',
+      'b2b.confirm.deleteRep':       'سيتم حذف البياع نهائياً. متابعة؟',
+      'b2b.confirm.deleteCustomer':  'سيتم حذف العميل نهائياً. متابعة؟',
 
       /* ─── Pluralization (6 Arabic forms) ─────────────────────────── */
       'plural.items.zero':           'لا توجد قطع',
@@ -760,15 +922,6 @@
       'plural.pieces.few':           '{{count}} قطع',
       'plural.pieces.many':          '{{count}} قطعة',
       'plural.pieces.other':         '{{count}} قطعة',
-
-      /* ─── Pluralization (English 2 forms) ────────────────────────── */
-      'pluralE.items.zero':          'No items',
-      'pluralE.items.one':           '1 item',
-      'pluralE.items.other':         '{{count}} items',
-
-      'pluralE.invoices.zero':       'No invoices',
-      'pluralE.invoices.one':        '1 invoice',
-      'pluralE.invoices.other':      '{{count}} invoices',
 
       /* ─── Number Formatting Labels ───────────────────────────────── */
       'fmt.number':                  'رقم كبير',
@@ -843,6 +996,7 @@
       'role.ACCOUNTANT':             'Accountant',
       'role.DATA_ENTRY':             'Data Entry',
       'role.SALESPERSON':            'Salesperson',
+      'role.B2B_REP':                'B2B Sales Rep',
 
       /* ─── Navigation ─────────────────────────────────────────────── */
       'nav.dashboard':               'Dashboard',
@@ -863,6 +1017,7 @@
       'nav.ledger':                  'General Ledger',
       'nav.accounting':              'Accounting',
       'nav.wholesale':               'Wholesale & Supply',
+      'nav.b2b':                     'B2B Reps',
       'nav.transfers':               'Branch Transfers',
       'nav.shifts':                  'Shifts',
       'nav.queue':                   'Sync Queue',
@@ -948,6 +1103,8 @@
       'carat.14':                    'Carat 14',
       'carat.short':                 'Karat',
       'carat.purity':                'Purity',
+      'carat.custom':                'Custom Karat',
+      'carat.customHint':            '300 to 999 (bullion, imports, scrap)',
 
       /* ─── Manufacturers ──────────────────────────────────────────── */
       'manu.nile':                   'Nile Gold Factory',
@@ -1047,6 +1204,9 @@
       'label.reason':                'Reason',
       'label.method':                'Method',
       'label.performance':           'Performance',
+      'label.rep':                   'Sales Rep',
+      'label.repCode':               'Rep Code',
+      'label.treasury':              'Treasury',
 
       /* ─── Dashboard ──────────────────────────────────────────────── */
       'dash.title':                  'Executive Dashboard',
@@ -1306,6 +1466,8 @@
       'emp.passwordRequirements':    '8+ chars, upper, lower, digit, symbol',
       'emp.onlyAdminsCanManage':     'Only admins can add employees',
       'emp.cannotEdit':              'Not authorized to edit employees',
+      'emp.repId':                   'Linked Rep Code',
+      'emp.repIdHint':               'For B2B reps only — links to B2B account',
 
       /* ─── Shifts ─────────────────────────────────────────────────── */
       'shift.title':                 'Shift Close',
@@ -1489,6 +1651,7 @@
       'ph.selectSupplier':           'Select supplier…',
       'ph.selectCustomer':           'Select customer…',
       'ph.selectRole':               'Select role…',
+      'ph.selectRep':                'Select rep…',
 
       /* ─── Wholesale & Transfers ──────────────────────────────────── */
       'wsl.title':                   'Wholesale & Branch Transfers',
@@ -1511,6 +1674,161 @@
       'wsl.action.newTransfer':      'New Transfer Order',
       'wsl.action.printInvoice':     'Print Invoice',
       'wsl.action.printManifest':    'Print Manifest',
+
+      /* ─── ✅ B2B Sellers (v4 new) ──────────────────────────────── */
+      'b2b.title':                   'B2B Sales Representatives',
+      'b2b.subtitle':                'Independent B2B entities with isolated cash & gold treasuries',
+      'b2b.tab.reps':                'Sales Reps',
+      'b2b.tab.customers':           'B2B Customers',
+      'b2b.tab.audit':               'Manager Audit',
+      'b2b.tab.settlements':         'Settlements',
+
+      /* Reps */
+      'b2b.rep.title':               'Sales Reps',
+      'b2b.rep.new':                 'New B2B Rep',
+      'b2b.rep.edit':                'Edit Rep',
+      'b2b.rep.code':                'Rep Code',
+      'b2b.rep.name':                'Rep Name',
+      'b2b.rep.phone':               'Phone',
+      'b2b.rep.pin':                 'PIN Code',
+      'b2b.rep.pinHint':             '4-6 digits for quick access',
+      'b2b.rep.branch':              'Assigned Branch',
+      'b2b.rep.openingCash':         'Opening Cash (EGP)',
+      'b2b.rep.openingGold':         'Opening Gold (Pure 24K)',
+      'b2b.rep.treasury':            'Treasury',
+      'b2b.rep.cashDrawer':          'Cash Drawer',
+      'b2b.rep.goldDrawer':          'Gold Drawer',
+      'b2b.rep.totalValue':          'Total Treasury Value',
+      'b2b.rep.settle':              'Settle Account',
+      'b2b.rep.settleRequest':       'Request Settlement',
+      'b2b.rep.manualEntry':         'Manual Entry',
+      'b2b.rep.active':              'Active',
+      'b2b.rep.inactive':            'Inactive',
+      'b2b.rep.myTreasury':          'My Treasury',
+      'b2b.rep.isolatedView':        'Isolated view — you only see your data',
+      'b2b.rep.deleteWarning':       'Rep will be deleted. Cannot be undone.',
+      'b2b.rep.deleteWarningSoft':   'Has transactions — will be disabled instead.',
+      'b2b.rep.autoDisabled':        'Rep disabled',
+
+      /* Customers */
+      'b2b.customer.title':          'B2B Customers',
+      'b2b.customer.new':            'New B2B Customer',
+      'b2b.customer.edit':           'Edit Customer',
+      'b2b.customer.code':           'Code',
+      'b2b.customer.name':           'Customer Name',
+      'b2b.customer.phone':          'Phone',
+      'b2b.customer.address':        'Address',
+      'b2b.customer.taxId':          'Tax ID',
+      'b2b.customer.responsibleRep': 'Responsible Rep',
+      'b2b.customer.openingCash':    'Opening Cash Debt (EGP)',
+      'b2b.customer.openingGold':    'Opening Gold Debt (Pure)',
+      'b2b.customer.creditLimit':    'Credit Limit (EGP)',
+      'b2b.customer.balance':        'Balance',
+      'b2b.customer.cashDebt':       'Cash Debt',
+      'b2b.customer.goldDebt':       'Gold Debt',
+      'b2b.customer.totalValue':     'Total Value',
+      'b2b.customer.ledger':         'Ledger',
+      'b2b.customer.ledgerTitle':    'Customer Ledger',
+      'b2b.customer.addMovement':    'Add Movement',
+      'b2b.customer.noCustomers':    'No B2B customers',
+      'b2b.customer.noCustomersHint':'Start by adding a new B2B customer',
+
+      /* Ledger Types */
+      'b2b.ledger.invoice':          'Wholesale Invoice',
+      'b2b.ledger.invoiceCredit':    'Credit Invoice',
+      'b2b.ledger.cashReceived':     'Cash Received',
+      'b2b.ledger.cashPayment':      'Cash Payment',
+      'b2b.ledger.goldReceived':     'Gold Received',
+      'b2b.ledger.goldDelivered':    'Gold Delivered',
+      'b2b.ledger.adjustment':       'Manual Adjustment',
+      'b2b.ledger.settlement':       'Shop Settlement',
+      'b2b.ledger.opening':          'Opening Balance',
+
+      /* Movement Types */
+      'b2b.movement.cashFromCustomer': 'Cash From Customer',
+      'b2b.movement.cashToCustomer':   'Cash To Customer',
+      'b2b.movement.goldFromCustomer': 'Gold From Customer',
+      'b2b.movement.goldToCustomer':   'Gold To Customer',
+      'b2b.movement.notes':            'Notes',
+      'b2b.movement.notesPlaceholder': 'Movement description…',
+      'b2b.movement.save':             'Save Movement',
+      'b2b.movement.saved':            'Movement recorded',
+
+      /* Treasury */
+      'b2b.treasury.cash':           'Cash',
+      'b2b.treasury.gold':           'Gold',
+      'b2b.treasury.value':          'Value',
+      'b2b.treasury.distribution':   'Gold Distribution by Karat',
+      'b2b.treasury.customGold':     'Custom',
+      'b2b.treasury.availableCash':  'Available Cash',
+      'b2b.treasury.availableGold':  'Available Gold',
+      'b2b.treasury.totalCash':      'Total Reps Treasury (Cash)',
+      'b2b.treasury.goldAvailable':  'Available Gold',
+
+      /* Settlement */
+      'b2b.settlement.title':        'Settlements',
+      'b2b.settlement.new':          'New Settlement',
+      'b2b.settlement.no':           'Settlement No.',
+      'b2b.settlement.status':       'Status',
+      'b2b.settlement.amount':       'Cash Amount',
+      'b2b.settlement.goldWeight':   'Gold Weight',
+      'b2b.settlement.approve':      'Approve',
+      'b2b.settlement.reject':       'Reject',
+      'b2b.settlement.approved':     'Approved',
+      'b2b.settlement.rejected':     'Rejected',
+      'b2b.settlement.sendToManager':'Send to Manager',
+      'b2b.settlement.sent':         'Settlement sent to manager',
+      'b2b.settlement.awaitingApproval': 'Awaiting manager approval',
+      'b2b.settlement.confirmApprove': 'Settlement will be approved and deducted from rep treasury. Continue?',
+      'b2b.settlement.rejectReason': 'Rejection Reason',
+      'b2b.settlement.pending':      'Pending',
+      'b2b.settlement.approved_value': 'Approved',
+      'b2b.settlement.details':      'Settlement Details',
+      'b2b.settlement.before':       'Balance Before Settlement',
+      'b2b.settlement.createdBy':    'Created By',
+      'b2b.settlement.approvedBy':   'Approved By',
+
+      /* Audit Dashboard */
+      'b2b.audit.title':             'Manager Audit Dashboard',
+      'b2b.audit.subtitle':          'Rep performance comparison',
+      'b2b.audit.repName':           'Rep',
+      'b2b.audit.cashTreasury':      'Cash Treasury',
+      'b2b.audit.goldTreasury':      'Gold Treasury',
+      'b2b.audit.goldValue':         'Gold Value',
+      'b2b.audit.customersCount':    'B2B Customers',
+      'b2b.audit.salesTotal':        'Period Sales',
+      'b2b.audit.invoicesCount':     'Invoices',
+      'b2b.audit.action':            'Action',
+
+      /* KPI Cards */
+      'b2b.kpi.reps':                'B2B Reps',
+      'b2b.kpi.activeReps':          'Active',
+      'b2b.kpi.totalReps':           'Total Reps',
+      'b2b.kpi.totalRepCash':        'Total Reps Treasury (Cash)',
+      'b2b.kpi.totalRepGold':        'Total Reps Treasury (Gold)',
+      'b2b.kpi.customers':           'B2B Customers',
+      'b2b.kpi.customerDebts':       'Debts',
+      'b2b.kpi.pendingSettlements':  'Settlements',
+      'b2b.kpi.approvedValue':       'Approved',
+      'b2b.kpi.goldLabel':           'Gold',
+      'b2b.kpi.cashLabel':           'Cash',
+
+      /* Errors & Warnings */
+      'b2b.err.repRequired':         'Rep is required',
+      'b2b.err.customerRequired':    'Customer is required',
+      'b2b.err.accessDenied':        'Not authorized to access this rep data',
+      'b2b.err.noRepAssigned':       'Your account is not linked to a rep',
+      'b2b.err.noRepAssignedHint':   'Contact manager to link your account',
+      'b2b.err.insufficientCash':    'Amount exceeds cash treasury balance',
+      'b2b.err.insufficientGold':    'Weight exceeds gold treasury balance',
+      'b2b.err.treasuryChanged':     'Treasury changed — please retry',
+      'b2b.err.cannotDisableSelf':   'You cannot disable your own account',
+      'b2b.warn.isolatedView':       'Isolated view — you only see your data',
+
+      /* Confirmations */
+      'b2b.confirm.clearData':       'Final warning: all B2B data will be deleted. Type "حذف" to continue.',
+      'b2b.confirm.deleteRep':       'Rep will be permanently deleted. Continue?',
+      'b2b.confirm.deleteCustomer':  'Customer will be permanently deleted. Continue?',
 
       /* ─── Pluralization (English) ────────────────────────────────── */
       'plural.items.zero':           'No items',
@@ -1602,12 +1920,6 @@
      §3 · INTERPOLATION
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * استبدال {{key}} بقيم params
-   * @param {string} str
-   * @param {Object} [params]
-   * @returns {string}
-   */
   function interpolate(str, params) {
     if (!params || typeof str !== 'string') return str;
     return str.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
@@ -1620,11 +1932,6 @@
      §4 · PLURAL RULES
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قاعدة الجمع العربية (CLDR-compatible)
-   * @param {number} n
-   * @returns {'zero'|'one'|'two'|'few'|'many'|'other'}
-   */
   function arabicPluralForm(n) {
     const abs = Math.abs(Number(n) || 0);
     if (abs === 0) return 'zero';
@@ -1635,11 +1942,6 @@
     return 'other';
   }
 
-  /**
-   * قاعدة الجمع الإنجليزية
-   * @param {number} n
-   * @returns {'zero'|'one'|'two'|'other'}
-   */
   function englishPluralForm(n) {
     const abs = Math.abs(Number(n) || 0);
     if (abs === 0) return 'zero';
@@ -1653,33 +1955,20 @@
      ═════════════════════════════════════════════════════════════════════ */
   const I18n = {
 
-    /* ─── Public getters ──────────────────────────────────────────── */
     get lang() { return STATE.lang; },
     get dir() { return STATE.dir; },
     get locale() { return STATE.locale; },
     get isRTL() { return STATE.dir === 'rtl'; },
     get isLTR() { return STATE.dir === 'ltr'; },
 
-    /**
-     * ترجمة مفتاح
-     * ✅ مُحصَّن: يرجع المفتاح أو العربي دائماً — لا undefined
-     * @param {string} key
-     * @param {Object} [params]
-     * @returns {string}
-     */
     t(key, params) {
       try {
         if (!key) return '';
 
         let str = TRANSLATIONS[STATE.lang]?.[key];
 
-        /* fallback → الإنجليزية */
         if (str === undefined) str = TRANSLATIONS.en?.[key];
-
-        /* fallback → العربية (لأن المستخدم عربي غالباً) */
         if (str === undefined) str = TRANSLATIONS.ar?.[key];
-
-        /* fallback نهائي → المفتاح نفسه */
         if (str === undefined) str = key;
 
         return interpolate(str, params);
@@ -1689,13 +1978,6 @@
       }
     },
 
-    /**
-     * ترجمة مع جمع
-     * @param {string} baseKey
-     * @param {number} count
-     * @param {Object} [extraParams]
-     * @returns {string}
-     */
     tn(baseKey, count, extraParams) {
       try {
         const n = Number(count) || 0;
@@ -1706,7 +1988,6 @@
         let key = `${baseKey}.${form}`;
         let str = TRANSLATIONS[STATE.lang]?.[key];
 
-        /* fallback سلسلة كاملة */
         if (str === undefined) str = TRANSLATIONS[STATE.lang]?.[`${baseKey}.other`];
         if (str === undefined) str = TRANSLATIONS[STATE.lang]?.[baseKey];
         if (str === undefined) str = TRANSLATIONS.en?.[key];
@@ -1722,12 +2003,6 @@
       }
     },
 
-    /**
-     * ✅ تبديل اللغة — النسخة المُحصَّنة
-     * @param {'ar'|'en'} lang
-     * @param {Object} [opts]
-     * @param {boolean} [opts.silent=false]
-     */
     setLang(lang, opts = {}) {
       const { silent = false } = opts;
 
@@ -1742,12 +2017,10 @@
       STATE.dir = meta.dir;
       STATE.locale = meta.locale;
 
-      /* الحفظ */
       try {
         localStorage.setItem(GMS.LS_KEYS.LANG, lang);
       } catch (_) {}
 
-      /* 1 · تحديث <html> أولاً — قبل أي شيء آخر */
       try {
         const html = document.documentElement;
         html.setAttribute('lang', lang);
@@ -1757,13 +2030,11 @@
         console.error('[I18n.setLang] <html> update failed:', e);
       }
 
-      /* 2 · تطبيق الترجمة — بمحاولة آمنة مع rollback */
       try {
         I18n.applyTo(document);
       } catch (e) {
         console.error('[I18n.setLang] applyTo failed:', e);
 
-        /* rollback فوري */
         STATE.lang = prevLang;
         STATE.dir = prevDir;
         STATE.locale = LANG_META[prevLang].locale;
@@ -1778,7 +2049,6 @@
         throw e;
       }
 
-      /* 3 · إبلاغ المستمعين — كل واحد بمحاولة مستقلة */
       STATE.listeners.forEach(fn => {
         try {
           fn(lang, STATE.dir);
@@ -1788,19 +2058,10 @@
       });
     },
 
-    /**
-     * تبديل اللغة (عربي ↔ إنجليزي)
-     */
     toggle() {
       I18n.setLang(STATE.lang === 'ar' ? 'en' : 'ar');
     },
 
-    /**
-     * الاشتراك في تغيير اللغة
-     * @param {'change'} event
-     * @param {Function} fn
-     * @returns {Function} unsubscribe
-     */
     on(event, fn) {
       if (event === 'change' && typeof fn === 'function') {
         STATE.listeners.add(fn);
@@ -1809,16 +2070,10 @@
       return () => {};
     },
 
-    /**
-     * ✅ ترجمة DOM subtree — النسخة المُحصَّنة
-     * لا تُوقف التنفيذ لو عنصر واحد فشل
-     * @param {Element|Document} [root=document]
-     */
     applyTo(root) {
       root = root || document;
       if (!root) return;
 
-      /* حماية — لو GMS.$$ غير متاح */
       if (typeof GMS.$$ !== 'function') {
         console.warn('[I18n.applyTo] GMS.$$ غير متاح — تم التخطي');
         return;
@@ -1833,15 +2088,13 @@
         }
       };
 
-      /* 1 · data-i18n */
       safeQuery('[data-i18n]').forEach(el => {
         try {
           const key = el.getAttribute('data-i18n');
           if (key) el.textContent = I18n.t(key);
-        } catch (_) { /* تجاهل العنصر التالف */ }
+        } catch (_) {}
       });
 
-      /* 2 · data-i18n-html */
       safeQuery('[data-i18n-html]').forEach(el => {
         try {
           const key = el.getAttribute('data-i18n-html');
@@ -1849,7 +2102,6 @@
         } catch (_) {}
       });
 
-      /* 3 · data-i18n-attr="placeholder:key,title:key" */
       safeQuery('[data-i18n-attr]').forEach(el => {
         try {
           const spec = el.getAttribute('data-i18n-attr');
@@ -1861,7 +2113,6 @@
         } catch (_) {}
       });
 
-      /* 4 · data-i18n-placeholder */
       safeQuery('[data-i18n-placeholder]').forEach(el => {
         try {
           const key = el.getAttribute('data-i18n-placeholder');
@@ -1869,7 +2120,6 @@
         } catch (_) {}
       });
 
-      /* 5 · data-i18n-title */
       safeQuery('[data-i18n-title]').forEach(el => {
         try {
           const key = el.getAttribute('data-i18n-title');
@@ -1877,7 +2127,6 @@
         } catch (_) {}
       });
 
-      /* 6 · data-i18n-aria */
       safeQuery('[data-i18n-aria]').forEach(el => {
         try {
           const key = el.getAttribute('data-i18n-aria');
@@ -1885,7 +2134,6 @@
         } catch (_) {}
       });
 
-      /* 7 · data-i18n-plural */
       safeQuery('[data-i18n-plural]').forEach(el => {
         try {
           const base = el.getAttribute('data-i18n-plural');
@@ -1895,14 +2143,6 @@
       });
     },
 
-    /* ─── Formatters ──────────────────────────────────────────────── */
-
-    /**
-     * تنسيق رقم حسب اللغة
-     * @param {number} n
-     * @param {number} [decimals=0]
-     * @returns {string}
-     */
     formatNumber(n, decimals = 0) {
       const v = Number(n);
       if (!isFinite(v)) return '—';
@@ -1912,13 +2152,6 @@
       }).format(v);
     },
 
-    /**
-     * تنسيق مبلغ مالي
-     * @param {number} n
-     * @param {string} [currency='EGP']
-     * @param {number} [decimals=2]
-     * @returns {string}
-     */
     formatCurrency(n, currency = 'EGP', decimals = 2) {
       const v = Number(n);
       if (!isFinite(v)) return '—';
@@ -1934,12 +2167,6 @@
       }
     },
 
-    /**
-     * تنسيق نسبة مئوية
-     * @param {number} n
-     * @param {number} [decimals=1]
-     * @returns {string}
-     */
     formatPercent(n, decimals = 1) {
       const v = Number(n);
       if (!isFinite(v)) return '—';
@@ -1950,12 +2177,6 @@
       }).format(v / 100);
     },
 
-    /**
-     * تنسيق تاريخ
-     * @param {Date|string} d
-     * @param {Object} [opts]
-     * @returns {string}
-     */
     formatDate(d, opts = {}) {
       const date = d instanceof Date ? d : new Date(d);
       if (isNaN(date.getTime())) return '—';
@@ -1963,11 +2184,6 @@
       return new Intl.DateTimeFormat(STATE.locale, { ...defaults, ...opts }).format(date);
     },
 
-    /**
-     * تنسيق تاريخ ووقت
-     * @param {Date|string} d
-     * @returns {string}
-     */
     formatDateTime(d) {
       const date = d instanceof Date ? d : new Date(d);
       if (isNaN(date.getTime())) return '—';
@@ -1980,11 +2196,6 @@
       }).format(date);
     },
 
-    /**
-     * تنسيق وقت
-     * @param {Date|string} d
-     * @returns {string}
-     */
     formatTime(d) {
       const date = d instanceof Date ? d : new Date(d);
       if (isNaN(date.getTime())) return '—';
@@ -1995,11 +2206,6 @@
       }).format(date);
     },
 
-    /**
-     * تنسيق وقت نسبي
-     * @param {Date|string} d
-     * @returns {string}
-     */
     formatRelative(d) {
       const date = d instanceof Date ? d : new Date(d);
       if (isNaN(date.getTime())) return '—';
@@ -2021,11 +2227,6 @@
       return I18n.formatDate(date);
     },
 
-    /* ─── Initialization ──────────────────────────────────────────── */
-
-    /**
-     * تهيئة نظام الترجمة
-     */
     init() {
       let saved = null;
       try {
@@ -2042,7 +2243,6 @@
         I18n.applyTo(document);
       } catch (e) {
         console.error('[I18n.init] failed:', e);
-        /* fallback: على الأقل عيّن <html> */
         try {
           document.documentElement.setAttribute('lang', 'ar');
           document.documentElement.setAttribute('dir', 'rtl');
@@ -2052,10 +2252,6 @@
       return I18n;
     },
 
-    /**
-     * قائمة اللغات المتاحة
-     * @returns {Array<{key:string, name:string, flag:string}>}
-     */
     getAvailableLangs() {
       return Object.entries(LANG_META).map(([key, meta]) => ({
         key,
@@ -2071,7 +2267,6 @@
   GMS.I18n = I18n;
   GMS.TRANSLATIONS = TRANSLATIONS;
 
-  /* اختصارات سريعة — مُحصَّنة */
   GMS.t = (key, params) => {
     try {
       return I18n.t(key, params);
@@ -2094,7 +2289,7 @@
      §7 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🌍 i18n loaded · AR + EN · RTL/LTR · Pluralization',
+    '%c🌍 i18n v4 loaded · AR + EN · RTL/LTR · Pluralization · B2B',
     'color:#6b3fa0;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#f0e9fa;border-radius:4px;'
   );
@@ -2107,7 +2302,7 @@
   );
 
   console.log(
-    `%c✅ v3: Hardened setLang (rollback) · Safe applyTo · t/tn fallback`,
+    `%c🆕 v4: B2B translations (reps, customers, treasuries, settlements) · nav.b2b · role.B2B_REP`,
     'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
