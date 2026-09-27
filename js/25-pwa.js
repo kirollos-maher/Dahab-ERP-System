@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/25-pwa.js
    PWA Manager — إدارة التثبيت، التحديثات، والمزامنة الخلفية
+   ✅ v1.1.0: زر التثبيت دائم الظهور + إرشادات يدوية
 
    - Install Prompt (beforeinstallprompt)
    - Update Notifications (SW updates)
@@ -9,6 +10,8 @@
    - Badge API (App Icon Badge)
    - Standalone Detection
    - iOS Manual Install Guide
+   - ✅ Manual Install Instructions (fallback)
+   - ✅ Always-visible Install Button
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -32,7 +35,7 @@
     installDismissed: false,
 
     /* Platform detection */
-    platform: 'unknown',       // 'android' | 'ios' | 'desktop'
+    platform: 'unknown',
     isStandalone: false,
 
     /* Network */
@@ -56,9 +59,13 @@
       onlineChange: new Set(),
     },
 
-    /* Keys */
-    LS_DISMISSED: 'gms.pwa.installDismissed',
-    LS_INSTALLED: 'gms.pwa.installed',
+    /* ✅ v1.1.0: مفاتيح جديدة — تعمل reset تلقائي للمستخدمين القدام */
+    LS_DISMISSED: 'gms.pwa.installDismissed.v2',
+    LS_INSTALLED: 'gms.pwa.installed.v2',
+    LS_LAST_DISMISS: 'gms.pwa.lastDismissAt.v2',
+
+    /* مدة تجاهل الرفض = 7 أيام */
+    DISMISS_COOLDOWN_MS: 7 * 24 * 60 * 60 * 1000,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -80,9 +87,6 @@
     return () => set.delete(fn);
   }
 
-  /**
-   * قراءة قيمة Boolean من LocalStorage
-   */
   function lsBoolGet(key, fallback = false) {
     try {
       const v = localStorage.getItem(key);
@@ -99,9 +103,6 @@
     } catch (_) {}
   }
 
-  /**
-   * كشف المنصة
-   */
   function detectPlatform() {
     const ua = navigator.userAgent || '';
 
@@ -114,15 +115,12 @@
     }
   }
 
-  /**
-   * كشف وضع Standalone
-   */
   function detectStandalone() {
     const modes = [
       window.matchMedia('(display-mode: standalone)').matches,
       window.matchMedia('(display-mode: fullscreen)').matches,
       window.matchMedia('(display-mode: minimal-ui)').matches,
-      window.navigator.standalone === true, // iOS
+      window.navigator.standalone === true,
     ];
     PWAState.isStandalone = modes.some(v => v === true);
 
@@ -139,18 +137,17 @@
 
   async function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) {
-      console.warn('[PWA] Service Worker غير مدعوم في هذا المتصفح');
+      console.warn('[PWA] Service Worker غير مدعوم');
       return null;
     }
 
-    /* لا نُسجِّل SW في file:// أو localhost بدون https (ما عدا التطوير) */
     const isLocalhost =
       location.hostname === 'localhost' ||
       location.hostname === '127.0.0.1';
     const isHttps = location.protocol === 'https:';
 
     if (!isHttps && !isLocalhost) {
-      console.warn('[PWA] Service Worker يتطلب HTTPS (أو localhost)');
+      console.warn('[PWA] Service Worker يتطلب HTTPS');
       return null;
     }
 
@@ -168,22 +165,18 @@
         'color:#0f7a43;font-weight:800;font-size:11px;'
       );
 
-      /* فحص التحديثات */
       setupUpdateDetection(registration);
 
-      /* فحص ما إذا كان هناك worker في الانتظار */
       if (registration.waiting) {
         handleUpdateFound(registration.waiting);
       }
 
-      /* مراقبة تحديثات مستقبلية */
       registration.addEventListener('updatefound', () => {
         const installing = registration.installing;
         if (!installing) return;
 
         installing.addEventListener('statechange', () => {
           if (installing.state === 'installed' && navigator.serviceWorker.controller) {
-            /* SW جديد تم تثبيته — يُنتظر التنشيط */
             handleUpdateFound(installing);
           }
         });
@@ -197,9 +190,6 @@
     }
   }
 
-  /**
-   * الاستماع للرسائل القادمة من الـ SW
-   */
   function setupServiceWorkerMessages() {
     navigator.serviceWorker.addEventListener('message', (event) => {
       const data = event.data || {};
@@ -217,16 +207,11 @@
     });
   }
 
-  /**
-   * إعداد اكتشاف التحديثات
-   */
   function setupUpdateDetection(registration) {
-    /* نبحث عن تحديث كل 30 دقيقة */
     setInterval(() => {
       registration.update().catch(() => {});
     }, 30 * 60 * 1000);
 
-    /* ومرة أخرى عند تغيير الصفحة */
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) {
         registration.update().catch(() => {});
@@ -234,23 +219,19 @@
     });
   }
 
-  /**
-   * عند وجود SW جديد جاهز
-   */
   function handleUpdateFound(worker) {
     PWAState.updateAvailable = true;
     PWAState.waitingWorker = worker;
 
     console.log('[PWA] تحديث جديد متاح');
 
-    /* أظهر إشعار للمستخدم */
     if (GMS.Toast) {
       GMS.Toast.show({
         title: 'تحديث جديد متاح',
         desc: 'يتوفر إصدار أحدث — أعد التحميل للحصول على آخر الميزات',
         type: 'info',
         icon: 'download-cloud',
-        ms: 0, // لا تُغلقه تلقائياً
+        ms: 0,
         closable: true,
         action: () => applyUpdate(),
         actionLabel: 'تحديث الآن',
@@ -260,9 +241,6 @@
     emit('updated', { available: true });
   }
 
-  /**
-   * تفعيل SW الجديد وإعادة تحميل الصفحة
-   */
   function applyUpdate() {
     const worker = PWAState.waitingWorker;
     if (!worker) {
@@ -270,47 +248,57 @@
       return;
     }
 
-    /* أخبر SW بتخطي الانتظار */
     worker.postMessage({ type: 'SKIP_WAITING' });
 
-    /* أعد التحميل عند تفعيل SW الجديد */
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       window.location.reload();
     }, { once: true });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · INSTALL PROMPT
+     §4 · INSTALL PROMPT — ✅ v1.1.0 (ALWAYS VISIBLE)
      ═════════════════════════════════════════════════════════════════════ */
 
   function setupInstallPrompt() {
-    /* نتحقق من الحالة المحفوظة أولاً */
-    PWAState.installDismissed = lsBoolGet(PWAState.LS_DISMISSED, false);
-    PWAState.isInstalled = lsBoolGet(PWAState.LS_INSTALLED, false);
+    /* اقرأ الحالة */
+    PWAState.isInstalled = lsBoolGet(PWAState.LS_INSTALLED, false) || detectStandalone();
 
-    /* إذا كان مثبَّتاً بالفعل */
-    if (detectStandalone()) {
-      PWAState.isInstalled = true;
-      lsBoolSet(PWAState.LS_INSTALLED, true);
+    /* ✅ reset dismiss flag لو مر عليه 7 أيام */
+    try {
+      const lastDismiss = Number(localStorage.getItem(PWAState.LS_LAST_DISMISS));
+      if (lastDismiss && Date.now() - lastDismiss > PWAState.DISMISS_COOLDOWN_MS) {
+        localStorage.removeItem(PWAState.LS_DISMISSED);
+        localStorage.removeItem(PWAState.LS_LAST_DISMISS);
+        PWAState.installDismissed = false;
+        console.log('[PWA] 🔄 Reset install dismiss (cooldown expired)');
+      } else {
+        PWAState.installDismissed = lsBoolGet(PWAState.LS_DISMISSED, false);
+      }
+    } catch (_) {
+      PWAState.installDismissed = false;
     }
 
-    /* التقاط beforeinstallprompt */
+    if (PWAState.isInstalled || PWAState.isStandalone) {
+      hideInstallButton();
+    } else {
+      /* ✅ v1.1.0: أظهر الزر دائمًا لو غير مثبت */
+      showInstallButton();
+    }
+
+    /* ✅ التقاط beforeinstallprompt */
     window.addEventListener('beforeinstallprompt', (event) => {
-      /* منع السلوك الافتراضي (baner المتصفح) */
       event.preventDefault();
 
       PWAState.installPrompt = event;
       PWAState.isInstallable = true;
 
-      console.log('[PWA] 📲 Install prompt متاح');
+      console.log('[PWA] 📲 beforeinstallprompt fired — install available');
 
-      /* أظهر زر التثبيت */
       showInstallButton();
-
       emit('installAvailable', { available: true });
     });
 
-    /* التقاط حدث appinstalled */
+    /* ✅ التقاط appinstalled */
     window.addEventListener('appinstalled', () => {
       console.log('[PWA] ✅ التطبيق تم تثبيته');
 
@@ -320,10 +308,8 @@
 
       lsBoolSet(PWAState.LS_INSTALLED, true);
 
-      /* اخفِ الزر */
       hideInstallButton();
 
-      /* إشعار */
       if (GMS.Toast) {
         GMS.Toast.ok(
           'تم تثبيت Gold ERP Pro',
@@ -336,21 +322,26 @@
       emit('installed', { installed: true });
     });
 
-    /* iOS: لا يُطلق beforeinstallprompt — نظهر إرشادات يدوية */
-    if (PWAState.platform === 'ios' && !PWAState.isStandalone && !PWAState.installDismissed) {
-      showIOSInstallHint();
+    /* iOS: ما بيطلقش beforeinstallprompt */
+    if (PWAState.platform === 'ios' && !PWAState.isStandalone) {
+      console.log('[PWA] iOS detected — manual install via Share menu');
     }
   }
 
   /**
    * عرض زر التثبيت في الـ Topbar
+   * ✅ v1.1.0: بيظهر دائمًا لو غير مثبت
    */
   function showInstallButton() {
     const btn = document.getElementById('pwa-install-btn');
-    if (!btn) return;
+    if (!btn) {
+      console.warn('[PWA] #pwa-install-btn غير موجود في DOM');
+      return;
+    }
 
     btn.style.display = '';
     btn.classList.add('pwa-install-pulse');
+    console.log('[PWA] 📲 Install button shown');
   }
 
   function hideInstallButton() {
@@ -362,35 +353,38 @@
   }
 
   /**
-   * تنفيذ التثبيت
+   * تنفيذ التثبيت — مع Fallback للإرشادات اليدوية
+   * ✅ v1.1.0: لو مفيش prompt، نعرض الإرشادات بدل ما نرفض
    */
   async function promptInstall() {
     const prompt = PWAState.installPrompt;
 
-    if (!prompt) {
-      /* ربما iOS أو التطبيق مثبَّت بالفعل */
-      if (PWAState.platform === 'ios') {
-        showIOSInstallHint(true);
-        return;
-      }
-      if (PWAState.isInstalled) {
-        if (GMS.Toast) GMS.Toast.info('التطبيق مثبَّت بالفعل');
-        return;
-      }
-      if (GMS.Toast) {
-        GMS.Toast.warn(
-          'التثبيت غير متاح حالياً',
-          'افتح القائمة في المتصفح واختر "تثبيت التطبيق"'
-        );
-      }
+    /* iOS → إرشادات Share menu */
+    if (PWAState.platform === 'ios') {
+      showIOSInstallHint(true);
       return;
     }
 
+    /* مثبت بالفعل */
+    if (PWAState.isInstalled || PWAState.isStandalone) {
+      if (GMS.Toast) {
+        GMS.Toast.info('التطبيق مثبَّت بالفعل', 'مفتوح من الشاشة الرئيسية');
+      }
+      hideInstallButton();
+      return;
+    }
+
+    /* مفيش prompt متاح → إرشادات يدوية */
+    if (!prompt) {
+      console.log('[PWA] No install prompt available — showing instructions');
+      showManualInstallInstructions();
+      return;
+    }
+
+    /* استخدم الـ prompt */
     try {
-      /* اعرض نافذة التثبيت */
       prompt.prompt();
 
-      /* انتظر اختيار المستخدم */
       const choice = await prompt.userChoice;
 
       console.log(`[PWA] Install choice: ${choice.outcome}`);
@@ -399,13 +393,20 @@
         console.log('[PWA] المستخدم وافق على التثبيت');
       } else {
         console.log('[PWA] المستخدم رفض التثبيت');
+
         PWAState.installDismissed = true;
         lsBoolSet(PWAState.LS_DISMISSED, true);
-        hideInstallButton();
+
+        try {
+          localStorage.setItem(PWAState.LS_LAST_DISMISS, String(Date.now()));
+        } catch (_) {}
+
+        /* ✅ ما نخفيش الزر — نخليه يظهر تاني لو رجع */
+        /* hideInstallButton(); — لا نستخدمها */
       }
 
-      /* يمكن استدعاء prompt مرة واحدة فقط */
       PWAState.installPrompt = null;
+      PWAState.isInstallable = false;
 
     } catch (e) {
       console.error('[PWA] Install failed:', e);
@@ -507,13 +508,117 @@
         el.querySelector('#pwa-ios-dismiss').onclick = () => {
           PWAState.installDismissed = true;
           lsBoolSet(PWAState.LS_DISMISSED, true);
+          try {
+            localStorage.setItem(PWAState.LS_LAST_DISMISS, String(Date.now()));
+          } catch (_) {}
           close();
         };
         el.querySelector('#pwa-ios-ok').onclick = () => {
           PWAState.installDismissed = true;
           lsBoolSet(PWAState.LS_DISMISSED, true);
+          try {
+            localStorage.setItem(PWAState.LS_LAST_DISMISS, String(Date.now()));
+          } catch (_) {}
           close();
         };
+      },
+    });
+  }
+
+  /**
+   * ✅ v1.1.0: إرشادات التثبيت اليدوية (Android/Desktop)
+   */
+  function showManualInstallInstructions() {
+    if (!GMS.Modal) return;
+
+    const isAndroid = PWAState.platform === 'android';
+    const isDesktop = PWAState.platform === 'desktop';
+
+    GMS.Modal.open({
+      title: 'تثبيت Gold ERP Pro',
+      icon: 'download',
+      size: 'sm',
+      body: `
+        <div style="text-align:center;padding:8px 0 20px">
+          <div style="width:72px;height:72px;border-radius:22px;
+                      background:var(--gold-grad);display:grid;
+                      place-items:center;margin:0 auto 14px;color:#2a1f05;
+                      box-shadow:0 14px 34px -12px rgba(184,145,47,.9)">
+            <i data-lucide="download" style="width:32px;height:32px"></i>
+          </div>
+          <h3 style="font-size:16px;margin-bottom:6px">
+            تثبيت التطبيق على جهازك
+          </h3>
+          <p style="font-size:12px;color:var(--muted);font-weight:600;
+                    line-height:1.7">
+            اتبع الخطوات حسب نوع المتصفح
+          </p>
+        </div>
+
+        ${isAndroid ? `
+          <div style="padding:14px;background:var(--info-bg);
+                      border-radius:11px;margin-bottom:12px;
+                      border-inline-start:3px solid var(--info)">
+            <div style="font-size:12.5px;font-weight:900;margin-bottom:8px;
+                        color:var(--info)">
+              <i data-lucide="chrome" style="width:14px;height:14px;
+                 display:inline;vertical-align:-2px"></i>
+              Google Chrome / Edge (Android)
+            </div>
+            <ol style="margin:0;padding-inline-start:18px;
+                       font-size:11.5px;line-height:1.9;font-weight:600">
+              <li>اضغط على قائمة المتصفح (3 نقاط) في الأعلى</li>
+              <li>اختر "تثبيت التطبيق" أو "Add to Home screen"</li>
+              <li>أكّد التثبيت</li>
+            </ol>
+          </div>
+        ` : ''}
+
+        ${isDesktop ? `
+          <div style="padding:14px;background:var(--info-bg);
+                      border-radius:11px;margin-bottom:12px;
+                      border-inline-start:3px solid var(--info)">
+            <div style="font-size:12.5px;font-weight:900;margin-bottom:8px;
+                        color:var(--info)">
+              <i data-lucide="monitor" style="width:14px;height:14px;
+                 display:inline;vertical-align:-2px"></i>
+              على الكمبيوتر
+            </div>
+            <ol style="margin:0;padding-inline-start:18px;
+                       font-size:11.5px;line-height:1.9;font-weight:600">
+              <li>ابحث عن أيقونة التثبيت في شريط العنوان (⊕)</li>
+              <li>أو افتح القائمة واختر "Install Gold ERP Pro"</li>
+              <li>أكّد التثبيت</li>
+            </ol>
+          </div>
+        ` : ''}
+
+        <div style="padding:12px 14px;background:var(--surface-2);
+                    border-radius:10px;border:1px solid var(--border);
+                    font-size:11.5px;font-weight:600;
+                    line-height:1.7;color:var(--text-2);
+                    margin-top:12px">
+          <i data-lucide="info" style="width:13px;height:13px;
+             display:inline;vertical-align:-2px;color:var(--info)"></i>
+          <b>ملاحظة:</b> إذا لم تجد خيار التثبيت، فالمتصفح قد لا يدعم
+          التثبيت في الوقت الحالي. جرّب تحديث الصفحة أو استخدام
+          متصفح Chrome / Edge.
+        </div>
+      `,
+      footer: `
+        <button class="btn" data-close>حسناً</button>
+        <button class="btn btn-primary" id="pwa-reload-try">
+          <i data-lucide="refresh-cw"></i> إعادة تحميل الصفحة
+        </button>
+      `,
+      onMount: (el, close) => {
+        const reloadBtn = el.querySelector('#pwa-reload-try');
+        if (reloadBtn) {
+          reloadBtn.onclick = () => {
+            close();
+            window.location.reload();
+          };
+        }
       },
     });
   }
@@ -551,10 +656,7 @@
         );
       }
 
-      /* شغّل المزامنة بعد 1.5 ثانية (لضمان استقرار الاتصال) */
       setTimeout(() => triggerQueueSync('online-event'), 1500);
-
-      /* سجّل Background Sync للاحتياط */
       registerBackgroundSync();
     });
 
@@ -572,20 +674,15 @@
       }
     });
 
-    /* التهيئة الأولية */
     updateUI(navigator.onLine);
   }
 
-  /**
-   * مزامنة الطابور — تستدعي SyncEngine.pushQueue()
-   */
   async function triggerQueueSync(source = 'manual') {
     if (!navigator.onLine) {
       console.log('[PWA] لا يمكن المزامنة — لا يوجد اتصال');
       return;
     }
 
-    /* استخدم GMS.Sync لو متاح */
     if (GMS.Sync && typeof GMS.Sync.pushQueue === 'function') {
       try {
         console.log(`[PWA] 🔄 Triggering queue sync (${source})`);
@@ -613,7 +710,6 @@
             if (GMS.Beep) GMS.Beep.complete();
           }
 
-          /* حدّث الـ Badge */
           updateBadge();
         }
       } catch (e) {
@@ -666,7 +762,6 @@
   }
 
   async function updateBadge() {
-    /* اقرأ عدد العمليات في الطابور */
     try {
       let count = 0;
 
@@ -676,7 +771,6 @@
 
       await setBadge(count);
 
-      /* حدّث الـ topbar badge */
       const queueBadge = document.getElementById('queue-badge');
       const tabQueueBadge = document.getElementById('tab-queue-badge');
 
@@ -703,11 +797,50 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · PUBLIC API
+     §8 · ✅ v1.1.0: RESET / FORCE INSTALL API
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * إعادة ضبط حالة الرفض — يدويًا
+   * مفيد لو المستخدم رفض بالغلط
+   */
+  function resetInstallDismissed() {
+    try {
+      localStorage.removeItem(PWAState.LS_DISMISSED);
+      localStorage.removeItem(PWAState.LS_LAST_DISMISS);
+      PWAState.installDismissed = false;
+      showInstallButton();
+      console.log('[PWA] 🔄 Install dismissed flag reset');
+      return true;
+    } catch (e) {
+      console.warn('[PWA] resetInstallDismissed failed:', e);
+      return false;
+    }
+  }
+
+  /**
+   * معلومات التشخيص — لعرضها في Settings
+   */
+  function getInstallDiagnostics() {
+    return {
+      isInstalled: PWAState.isInstalled,
+      isStandalone: PWAState.isStandalone,
+      isInstallable: PWAState.isInstallable,
+      hasPrompt: Boolean(PWAState.installPrompt),
+      installDismissed: PWAState.installDismissed,
+      platform: PWAState.platform,
+      swRegistered: PWAState.registered,
+      swSupported: PWAState.supported,
+      online: PWAState.online,
+      version: '1.1.0',
+    };
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §9 · PUBLIC API
      ═════════════════════════════════════════════════════════════════════ */
 
   const PWA = {
-    /* State */
     get state() { return PWAState; },
     get supported() { return PWAState.supported; },
     get isInstallable() { return PWAState.isInstallable; },
@@ -715,60 +848,50 @@
     get isStandalone() { return PWAState.isStandalone; },
     get isOnline() { return PWAState.online; },
     get platform() { return PWAState.platform; },
-    get version() { return '1.0.0'; },
+    get version() { return '1.1.0'; },
 
-    /* Init */
     init,
-
-    /* Install */
     promptInstall,
     showInstallButton,
     hideInstallButton,
     showIOSInstallHint,
+    showManualInstallInstructions,
+    resetInstallDismissed,
+    getInstallDiagnostics,
 
-    /* Service Worker */
     registerServiceWorker,
     applyUpdate,
     getRegistration: () => PWAState.registration,
 
-    /* Background Sync */
     registerBackgroundSync,
     triggerSync: triggerQueueSync,
 
-    /* Badge */
     setBadge,
     updateBadge,
 
-    /* Utilities */
     detectStandalone,
 
-    /* Events */
     on,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · INITIALIZATION
+     §10 · INITIALIZATION
      ═════════════════════════════════════════════════════════════════════ */
 
   async function init() {
     console.log(
-      '%c📱 PWA Manager initializing…',
+      '%c📱 PWA Manager v1.1.0 initializing…',
       'color:#D4A017;font-weight:800;font-size:12px;'
     );
 
-    /* 1 · كشف المنصة */
     detectPlatform();
     detectStandalone();
 
     console.log(`[PWA] Platform: ${PWAState.platform} | Standalone: ${PWAState.isStandalone}`);
 
-    /* 2 · شبكة */
     setupNetworkWatcher();
-
-    /* 3 · Install prompt */
     setupInstallPrompt();
 
-    /* 4 · Service Worker */
     if (PWAState.supported) {
       setupServiceWorkerMessages();
 
@@ -777,36 +900,32 @@
       if (reg) {
         console.log('[PWA] ✅ SW registered successfully');
 
-        /* سجّل Background Sync للاحتياط */
         if (navigator.onLine) {
           registerBackgroundSync().catch(() => {});
         }
       }
     }
 
-    /* 5 · ربط زر التثبيت */
     bindInstallButton();
 
-    /* 6 · تحديث الـ Badge الأولي */
     setTimeout(() => updateBadge(), 2000);
-
-    /* 7 · راقب تغييرات الطابور لتحديث الـ Badge */
     setInterval(() => updateBadge(), 30000);
 
-    /* 8 · أحجام الشاشة (install button visibility) */
-    observeInstallability();
-
     console.log(
-      `%c[PWA] ✅ Initialized · v1.0.0 · Platform: ${PWAState.platform}`,
+      `%c[PWA] ✅ Initialized · v1.1.0 · Platform: ${PWAState.platform}`,
       'color:#0f7a43;font-weight:800;font-size:12px;'
     );
+
+    /* ✅ v1.1.0: أظهر الزر بعد 1 ثانية — حتى لو لم يطلق beforeinstallprompt */
+    setTimeout(() => {
+      if (!PWAState.isInstalled && !PWAState.isStandalone) {
+        showInstallButton();
+      }
+    }, 1000);
 
     return PWA;
   }
 
-  /**
-   * ربط زر التثبيت
-   */
   function bindInstallButton() {
     const btn = document.getElementById('pwa-install-btn');
     if (!btn) {
@@ -816,36 +935,22 @@
 
     btn.onclick = () => promptInstall();
 
-    /* إذا كان مثبَّتاً بالفعل — أخفِ الزر */
     if (PWAState.isInstalled) {
       btn.style.display = 'none';
     }
   }
 
-  /**
-   * راقب قابلية التثبيت
-   */
-  function observeInstallability() {
-    /* إذا كان installPrompt متاح، أظهر الزر */
-    if (PWAState.installPrompt && !PWAState.isInstalled) {
-      showInstallButton();
-    }
-  }
-
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · EXPORT
+     §11 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PWA = PWA;
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · AUTO-INIT
-     ═════════════════════════════════════════════════════════════════════
-     ننتظر حتى ينتهي تحميل DOM ثم نبدأ
+     §12 · AUTO-INIT
      ═════════════════════════════════════════════════════════════════════ */
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-      /* تأخير بسيط لضمان تحميل باقي الموديولات */
       setTimeout(() => init().catch(e => console.error('[PWA] Init failed:', e)), 100);
     });
   } else {
@@ -853,16 +958,16 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · LOADED CONFIRMATION
+     §13 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📱 PWA Module loaded · Install + Update + Background Sync',
+    '%c📱 PWA Module v1.1.0 loaded · Always-Visible Install',
     'color:#D4A017;font-weight:800;font-size:12px;padding:2px 6px;' +
     'background:#121212;border-radius:4px;'
   );
 
   console.log(
-    `%c🔧 beforeinstallprompt · Update notifications · Network watcher · Badge API`,
+    `%c🔧 Always-visible install button · Manual instructions fallback · Auto-reset after 7 days`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
