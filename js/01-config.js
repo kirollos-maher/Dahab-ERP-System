@@ -1,60 +1,39 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/01-config.js
    الثوابت العامة، الأدوار، الصلاحيات، وإعدادات النظام
-   ✅ النسخة v4: 3 عيارات قياسية + دعم عيارات مخصصة (Custom Karat)
+   ✅ النسخة v5: 3 عيارات قياسية + دعم عيارات مخصصة + B2B_REP
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
   'use strict';
 
-  /* ═════════════════════════════════════════════════════════════════════
-     تهيئة الحاوية الرئيسية
-     ═════════════════════════════════════════════════════════════════════ */
   window.GMS = window.GMS || {};
-
   const GMS = window.GMS;
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · نظام العيارات (CARAT SYSTEM)
-     ─────────────────────────────────────────────────────────────────────
-     ✅ 3 عيارات قياسية: 24K, 21K, 18K
-     ✅ v4: دعم عيارات مخصصة لأي قيمة بين 300 و 999
-     
-     🔑 الفلسفة الجديدة:
-        المصدر الوحيد للحقيقة = purity_ratio
-        العيار = مجرد واجهة عرض
-        
-        • 21K       → purity_ratio = 0.8750 (قياسي)
-        • سبيكة 888 → purity_ratio = 0.8880 (مخصص)
-        • سبيكة 999 → purity_ratio = 0.9990 (مخصص)
-        • سويسري    → purity_ratio = 0.9999 (مخصص)
      ═════════════════════════════════════════════════════════════════════ */
 
-  /* ─── العيارات القياسية ─── */
   GMS.KARAT_RATIO = Object.freeze({
     24: 1.0000,
     21: 0.8750,
     18: 0.7500,
   });
 
-  /* ترتيب تنازلي للعرض */
   GMS.KARAT_ORDER = Object.freeze([24, 21, 18]);
 
-  /* ألوان العيارات للمخططات */
   GMS.KARAT_COLORS = Object.freeze({
     24: '#c8a24a',
     21: '#9c7726',
     18: '#6b7a95',
   });
 
-  /* أسماء العيارات بالعربي */
   GMS.KARAT_LABELS = Object.freeze({
     24: 'عيار 24',
     21: 'عيار 21',
     18: 'عيار 18',
   });
 
-  /* ✅ v4: إعدادات العيارات المخصصة */
   GMS.CUSTOM_KARAT = Object.freeze({
     enabled: true,
     label: 'مخصص',
@@ -64,7 +43,6 @@
     description: 'عيار من 300 إلى 999 (سبائك، مستورد، كسر)',
   });
 
-  /* ✅ v4: حدود العيار المخصص */
   GMS.KARAT_LIMITS = Object.freeze({
     min: 300,
     max: 999,
@@ -123,6 +101,28 @@
       level: 20,
       description: 'بيع الأصناف المتوفرة وإنشاء فواتير بحالة PENDING',
     },
+    /* ═══════════════════════════════════════════════════════════════════
+       B2B_REP · بياع جملة مستقل
+       ─────────────────────────────────────────────────────────────────
+       كيان B2B معزول — يرى فقط:
+         • عملاءه الخاصين (b2b_customers حيث rep_id === user.rep_id)
+         • خزينته النقدية المستقلة
+         • خزينته الذهبية المستقلة
+         • دفتراته وحساباته الخاصة
+       يُمنع منعاً باتاً من:
+         • عرض بيانات بياعين آخرين
+         • تعديل المخزون المركزي
+         • الوصول للسجل الكامل
+       ═══════════════════════════════════════════════════════════════════ */
+    B2B_REP: {
+      key: 'B2B_REP',
+      label: 'بياع جملة',
+      labelEn: 'B2B Sales Rep',
+      icon: 'user-check',
+      color: 'violet',
+      level: 30,
+      description: 'بياع جملة مستقل — يرى بياناته فقط (عملاءه، خزينته، دفتره)',
+    },
   });
 
   GMS.ROLE_KEYS = Object.freeze([
@@ -131,6 +131,7 @@
     'ACCOUNTANT',
     'DATA_ENTRY',
     'SALESPERSON',
+    'B2B_REP',
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -173,6 +174,11 @@
       'manageRealtime',
       'viewReports',
       'manageBackups',
+      /* B2B */
+      'viewB2BCustomers',
+      'manageB2BReps',
+      'viewAllRepsTreasury',
+      'approveSettlement',
     ]),
 
     BRANCH_MANAGER: Object.freeze([
@@ -198,6 +204,11 @@
       'exportData',
       'viewRealtime',
       'viewReports',
+      /* B2B */
+      'viewB2BCustomers',
+      'manageB2BReps',
+      'viewAllRepsTreasury',
+      'approveSettlement',
     ]),
 
     ACCOUNTANT: Object.freeze([
@@ -218,6 +229,10 @@
       'exportData',
       'viewRealtime',
       'viewReports',
+      /* B2B */
+      'viewB2BCustomers',
+      'viewAllRepsTreasury',
+      'approveSettlement',
     ]),
 
     DATA_ENTRY: Object.freeze([
@@ -239,12 +254,54 @@
       'viewOwnSales',
       'closeShift',
     ]),
+
+    /* ═══════════════════════════════════════════════════════════════════
+       B2B_REP · بياع جملة مستقل
+       ─────────────────────────────────────────────────────────────────
+       ✅ يرى:
+         - لوحة تحكم (بإحصائيات شخصية)
+         - مخزون (قراءة فقط)
+         - نقطة بيع (لبيع الجملة)
+         - عملاءه فقط
+         - خزينته فقط
+         - دفتره فقط
+         - فواتيره فقط
+       ❌ محجوب:
+         - إدارة الموظفين
+         - سجل التدقيق الكامل
+         - تعديل المخزون المركزي
+         - إدارة الموردين
+         - تقارير الأرباح الشاملة
+         - اعتماد التصفيات (يحتاج موافقة المدير)
+       ═══════════════════════════════════════════════════════════════════ */
+    B2B_REP: Object.freeze([
+      /* ─── أساسي ─── */
+      'viewDashboard',
+      'viewInventory',
+      'viewOwnInventory',
+
+      /* ─── المبيعات ─── */
+      'createSale',
+      'viewOwnSales',
+
+      /* ─── B2B محدود ─── */
+      'viewB2BCustomers',      /* يرى عميله فقط (مُفلتر تلقائياً) */
+      'manageOwnCustomers',    /* إدارة عملائه فقط */
+      'viewOwnTreasury',       /* خزينته النقدية والذهبية فقط */
+      'viewOwnLedger',         /* دفتره فقط */
+      'createSettlement',      /* طلب تصفية (بحاجة اعتماد) */
+      'viewOwnInvoices',       /* فواتيره فقط */
+      'manageOwnB2BInvoices',  /* إنشاء/تعديل فواتير جملة */
+      'printReceipt',
+      'closeShift',
+    ]),
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · تسميات الصلاحيات بالعربي (PERMISSION LABELS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PERM_LABELS = Object.freeze({
+    /* ─── System & Security ─── */
     viewDashboard:      'عرض لوحة التحكم',
     viewEmployees:      'عرض الموظفين',
     manageEmployees:    'إدارة الموظفين (إضافة/تعديل/حذف)',
@@ -257,6 +314,7 @@
     manageManufacturers:'إدارة المصانع والماركات',
     manageBackups:      'إدارة النسخ الاحتياطي',
 
+    /* ─── Sales ─── */
     viewAllBranches:    'عرض جميع الفروع',
     viewAllSales:       'عرض جميع الفواتير',
     viewOwnSales:       'عرض فواتيره فقط',
@@ -265,6 +323,7 @@
     editSale:           'تعديل الفواتير',
     deleteSale:         'حذف الفواتير',
 
+    /* ─── Inventory & Vault ─── */
     viewInventory:      'عرض المخزون',
     viewOwnInventory:   'عرض مخزون فرعه فقط',
     editInventory:      'تعديل المخزون',
@@ -272,11 +331,13 @@
     viewInventoryCost:  'عرض تكلفة المخزون',
     viewVault:          'عرض الخزنة',
 
+    /* ─── Suppliers & Customers ─── */
     viewSuppliers:      'عرض الموردين',
     editSupplierLedger: 'تعديل دفتر الموردين',
     viewCustomers:      'عرض العملاء',
     editCustomers:      'تعديل العملاء',
 
+    /* ─── Accounting & Reports ─── */
     viewProfitReport:   'عرض تقارير الأرباح',
     editPriceBoard:     'تعديل أسعار السوق',
     editGeneralLedger:  'تعديل دفتر الأستاذ',
@@ -285,8 +346,22 @@
     exportData:         'تصدير البيانات',
     viewReports:        'عرض التقارير',
 
+    /* ─── Realtime ─── */
     viewRealtime:       'عرض التحديثات المباشرة',
     manageRealtime:     'إدارة اشتراكات Realtime',
+
+    /* ─── B2B (v5 جديد) ─── */
+    viewB2BCustomers:   'عرض عملاء الجملة',
+    manageB2BReps:      'إدارة بياعي الجملة',
+    viewAllRepsTreasury:'عرض خزائن جميع البياعين',
+    viewOwnTreasury:    'عرض خزينته الخاصة',
+    viewOwnLedger:      'عرض دفتره الخاص',
+    viewOwnInvoices:    'عرض فواتيره الخاصة',
+    manageOwnCustomers: 'إدارة عملائه الخاصين',
+    manageOwnB2BInvoices:'إدارة فواتير الجملة الخاصة',
+    createSettlement:   'طلب تصفية مع المحل',
+    approveSettlement:  'اعتماد التصفيات',
+    printReceipt:       'طباعة الإيصالات',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -307,7 +382,7 @@
       icon: 'receipt',
       perms: [
         'viewAllSales', 'viewOwnSales', 'createSale',
-        'approveSale', 'editSale', 'deleteSale',
+        'approveSale', 'editSale', 'deleteSale', 'printReceipt',
       ],
     },
     {
@@ -324,6 +399,16 @@
       perms: [
         'viewSuppliers', 'editSupplierLedger',
         'viewCustomers', 'editCustomers',
+      ],
+    },
+    {
+      title: 'بياعي الجملة (B2B)',
+      icon: 'user-check',
+      perms: [
+        'viewB2BCustomers', 'manageB2BReps', 'viewAllRepsTreasury',
+        'viewOwnTreasury', 'viewOwnLedger', 'viewOwnInvoices',
+        'manageOwnCustomers', 'manageOwnB2BInvoices',
+        'createSettlement', 'approveSettlement',
       ],
     },
     {
@@ -418,6 +503,80 @@
     REJECTED:         { key: 'REJECTED',         label: 'مرفوض',         labelEn: 'Rejected',         cls: 'pill-red',   icon: 'x-circle' },
     COMPLETED:        { key: 'COMPLETED',        label: 'مكتمل',         labelEn: 'Completed',        cls: 'pill-blue',  icon: 'badge-check' },
     CANCELLED:        { key: 'CANCELLED',        label: 'ملغى',          labelEn: 'Cancelled',        cls: 'pill-gray',  icon: 'ban' },
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10.1 · ✅ حالات فواتير الجملة (WHOLESALE INVOICE STATUSES) - v5
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.WHOLESALE_INVOICE_STATUS = Object.freeze({
+    DRAFT:     { key: 'DRAFT',     label: 'مسودة',         labelEn: 'Draft',       cls: 'pill-gray',   icon: 'file-edit',      color: 'muted'   },
+    CONFIRMED: { key: 'CONFIRMED', label: 'مؤكدة',         labelEn: 'Confirmed',   cls: 'pill-green',  icon: 'check-circle-2', color: 'success' },
+    PARTIAL:   { key: 'PARTIAL',   label: 'مسددة جزئياً',  labelEn: 'Partially Paid', cls: 'pill-amber', icon: 'clock',        color: 'warn'    },
+    PAID:      { key: 'PAID',      label: 'مسددة',         labelEn: 'Paid',        cls: 'pill-blue',   icon: 'badge-check',    color: 'info'    },
+    CANCELLED: { key: 'CANCELLED', label: 'ملغاة',         labelEn: 'Cancelled',   cls: 'pill-red',    icon: 'x-circle',       color: 'danger'  },
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10.2 · ✅ حالات أوامر التحويل (TRANSFER STATUSES) - v5
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.TRANSFER_STATUS = Object.freeze({
+    PENDING:    { key: 'PENDING',    label: 'قيد التحضير', labelEn: 'Preparing',    cls: 'pill-amber',  icon: 'clock',          color: 'warn'    },
+    IN_TRANSIT: { key: 'IN_TRANSIT', label: 'قيد النقل',   labelEn: 'In Transit',   cls: 'pill-blue',   icon: 'truck',          color: 'info'    },
+    DELIVERED:  { key: 'DELIVERED',  label: 'تم التسليم',  labelEn: 'Delivered',    cls: 'pill-violet', icon: 'package-check',  color: 'violet'  },
+    RECEIVED:   { key: 'RECEIVED',   label: 'تم الاستلام', labelEn: 'Received',     cls: 'pill-green',  icon: 'check-circle-2', color: 'success' },
+    CANCELLED:  { key: 'CANCELLED',  label: 'ملغى',        labelEn: 'Cancelled',    cls: 'pill-red',    icon: 'x-circle',       color: 'danger'  },
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10.3 · ✅ حالات إذون التصفية (SETTLEMENT STATUSES) - v5
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.SETTLEMENT_STATUS = Object.freeze({
+    DRAFT:     { key: 'DRAFT',     label: 'مسودة',            labelEn: 'Draft',        cls: 'pill-gray',   icon: 'file-edit',      color: 'muted'   },
+    PENDING:   { key: 'PENDING',   label: 'بانتظار الاعتماد', labelEn: 'Pending Approval', cls: 'pill-amber', icon: 'clock',        color: 'warn'    },
+    APPROVED:  { key: 'APPROVED',  label: 'معتمدة',           labelEn: 'Approved',     cls: 'pill-green',  icon: 'check-circle-2', color: 'success' },
+    REJECTED:  { key: 'REJECTED',  label: 'مرفوضة',           labelEn: 'Rejected',     cls: 'pill-red',    icon: 'x-circle',       color: 'danger'  },
+    CANCELLED: { key: 'CANCELLED', label: 'ملغاة',            labelEn: 'Cancelled',    cls: 'pill-gray',   icon: 'ban',            color: 'muted'   },
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10.4 · ✅ أنماط دفع فواتير الجملة (B2B PAYMENT MODES) - v5
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.B2B_PAYMENT_MODES = Object.freeze({
+    cash: {
+      key: 'cash', label: 'دفع نقدي', labelEn: 'Cash',
+      icon: 'banknote', color: 'success',
+      description: 'سداد كامل الفاتورة نقداً',
+    },
+    gold_exchange: {
+      key: 'gold_exchange', label: 'مقايضة ذهب خام', labelEn: 'Gold Exchange',
+      icon: 'repeat', color: 'warn',
+      description: 'تسليم ذهب كسر/صافي + فرق المصنعية نقداً',
+    },
+    credit: {
+      key: 'credit', label: 'على الحساب', labelEn: 'Credit',
+      icon: 'clock', color: 'danger',
+      description: 'قيد الفاتورة كمديونية جملة',
+    },
+    mixed: {
+      key: 'mixed', label: 'دفع مختلط', labelEn: 'Mixed',
+      icon: 'split', color: 'violet',
+      description: 'جزء ذهب + جزء نقدي',
+    },
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10.5 · ✅ أنواع سطور دفتر البياع (REP LEDGER TYPES) - v5
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.REP_LEDGER_TYPES = Object.freeze({
+    invoice:        { key: 'invoice',        label: 'فاتورة جملة',    icon: 'receipt',       cashSign: +1, goldSign: -1, color: 'success' },
+    invoice_credit: { key: 'invoice_credit', label: 'فاتورة آجلة',    icon: 'clock',         cashSign: 0,  goldSign: -1, color: 'warn' },
+    cash_received:  { key: 'cash_received',  label: 'استلام نقدي',    icon: 'hand-coins',    cashSign: +1, goldSign: 0,  color: 'success' },
+    cash_payment:   { key: 'cash_payment',   label: 'سداد نقدي',      icon: 'banknote',      cashSign: -1, goldSign: 0,  color: 'danger' },
+    gold_received:  { key: 'gold_received',  label: 'استلام ذهب',     icon: 'package-plus',  cashSign: 0,  goldSign: +1, color: 'success' },
+    gold_delivered: { key: 'gold_delivered', label: 'تسليم ذهب',      icon: 'package-minus', cashSign: 0,  goldSign: -1, color: 'danger' },
+    adjustment:     { key: 'adjustment',     label: 'تسوية يدوية',    icon: 'sliders',       cashSign: +1, goldSign: +1, color: 'violet' },
+    settlement:     { key: 'settlement',     label: 'تصفية مع المحل', icon: 'vault',         cashSign: -1, goldSign: -1, color: 'violet' },
+    opening:        { key: 'opening',        label: 'رصيد افتتاحي',   icon: 'flag',          cashSign: +1, goldSign: +1, color: 'muted' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -529,7 +688,9 @@
     { code: '1020', name_ar: 'النقدية بالبنك',     account_type: 'ASSET' },
     { code: '1100', name_ar: 'مخزون الذهب',        account_type: 'ASSET' },
     { code: '1150', name_ar: 'خزنة الذهب (Vault)', account_type: 'ASSET' },
+    { code: '1160', name_ar: 'خزائن بياعي الجملة',  account_type: 'ASSET' },
     { code: '1200', name_ar: 'العملاء (مدينون)',   account_type: 'ASSET' },
+    { code: '1250', name_ar: 'عملاء الجملة (B2B)',  account_type: 'ASSET' },
     { code: '2010', name_ar: 'الموردون (دائنون)',  account_type: 'LIABILITY' },
     { code: '2020', name_ar: 'أرصدة ذهب مستحقة',   account_type: 'LIABILITY' },
     { code: '2050', name_ar: 'ضرائب مستحقة',       account_type: 'LIABILITY' },
@@ -537,6 +698,7 @@
     { code: '3020', name_ar: 'الأرباح المحتجزة',   account_type: 'EQUITY' },
     { code: '4010', name_ar: 'إيرادات مبيعات الذهب', account_type: 'REVENUE' },
     { code: '4020', name_ar: 'إيرادات المصنعية',   account_type: 'REVENUE' },
+    { code: '4030', name_ar: 'إيرادات بيع الجملة',  account_type: 'REVENUE' },
     { code: '4090', name_ar: 'إيرادات أخرى',       account_type: 'REVENUE' },
     { code: '5010', name_ar: 'تكلفة الذهب المبيع', account_type: 'COGS' },
     { code: '6010', name_ar: 'إيجارات',            account_type: 'EXPENSE' },
@@ -579,6 +741,13 @@
     AUDIT:             'gms.audit',
     SYNC_LOG:          'gms.sync.log',
     MANUFACTURERS:     'gms.manufacturers.v2',
+
+    /* ✅ v5: B2B storage keys */
+    B2B_REPS:          'gms.b2b.sales_reps',
+    B2B_CUSTOMERS:     'gms.b2b.b2b_customers',
+    B2B_LEDGERS:       'gms.b2b.rep_ledgers',
+    B2B_SETTLEMENTS:   'gms.b2b.rep_settlements',
+    B2B_PREFIX:        'gms.b2b.',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -671,7 +840,7 @@
     NAME: 'Gold MS Enterprise',
     NAME_AR: 'نظام إدارة الذهب',
     VERSION: '1.0.1',
-    BUILD: '20260923',
+    BUILD: '20260927',
     DEFAULT_LOCALE: 'ar-EG',
     DEFAULT_CURRENCY: 'EGP',
     DEFAULT_KARAT: 21,
@@ -708,6 +877,14 @@
       BRANCH_EXPENSES: 'branch_expenses',
       COMMISSIONS: 'salesperson_commissions',
       REPAIRS: 'repairs',
+
+      /* ✅ v5: B2B tables */
+      SALES_REPS: 'sales_reps',
+      B2B_CUSTOMERS: 'b2b_customers',
+      REP_LEDGERS: 'rep_ledgers',
+      REP_SETTLEMENTS: 'rep_settlements',
+      WHOLESALE_INVOICES: 'wholesale_invoices',
+      BRANCH_TRANSFERS: 'branch_transfers',
     },
     REALTIME_CHANNELS: {
       INVENTORY: 'inventory-changes',
@@ -716,6 +893,13 @@
       SHIFTS: 'shifts-changes',
       PRICE_BOARD: 'price-changes',
       EXEC_DASHBOARD: 'exec-dashboard',
+
+      /* ✅ v5: B2B channels */
+      SALES_REPS: 'sales-reps-changes',
+      B2B_CUSTOMERS: 'b2b-customers-changes',
+      REP_LEDGERS: 'rep-ledgers-changes',
+      REP_SETTLEMENTS: 'rep-settlements-changes',
+      WHOLESALE_INVOICES: 'wholesale-invoices-changes',
     },
     INVENTORY_COLUMNS: [
       'id', 'sku', 'category', 'karat', 'custom_karat', 'purity_ratio',
@@ -748,7 +932,6 @@
     fixed:   { key: 'fixed',   label: 'سعر ثابت',       labelEn: 'Fixed Rate',  icon: 'equal',       description: 'مصنع بيعطي سعر واحد ثابت لكل القطع', color: 'success' },
   });
 
-  /* قائمة الألوان الجاهزة */
   GMS.PRICING_COLORS = Object.freeze([
     { key: 'red',     label: 'أحمر',    hex: '#dc2626' },
     { key: 'blue',    label: 'أزرق',    hex: '#2563eb' },
@@ -766,7 +949,6 @@
     { key: 'navy',    label: 'كحلي',    hex: '#1e3a8a' },
   ]);
 
-  /* أحرف عربية جاهزة */
   GMS.PRICING_LETTERS = Object.freeze([
     'أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح', 'ط', 'ي',
     'ك', 'ل', 'م', 'ن', 'س', 'ع', 'ف', 'ص', 'ق', 'ر',
@@ -849,7 +1031,7 @@
   ]);
 
   /* ═════════════════════════════════════════════════════════════════════
-     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX) — للعيارات القياسية
+     §32 · مصفوفة المصنعية (WORKMANSHIP MATRIX)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.WORKMANSHIP_MATRIX = Object.freeze([
     { karat: 24, min: 40,  max: 80,  default: 55 },
@@ -899,48 +1081,51 @@
      §37 · تعيينات أنواع الحركة (AUDIT ACTIONS)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.AUDIT_ACTIONS = Object.freeze({
-    CREATE:      { key: 'CREATE',      label: 'إنشاء',       icon: 'plus-circle',   cls: 'create' },
-    UPDATE:      { key: 'UPDATE',      label: 'تعديل',       icon: 'pencil',        cls: 'update' },
-    DELETE:      { key: 'DELETE',      label: 'حذف',         icon: 'trash-2',       cls: 'delete' },
-    LOGIN:       { key: 'LOGIN',       label: 'تسجيل دخول',  icon: 'log-in',        cls: 'login' },
-    LOGOUT:      { key: 'LOGOUT',      label: 'خروج',        icon: 'log-out',       cls: 'login' },
-    APPROVE:     { key: 'APPROVE',     label: 'اعتماد',      icon: 'check-circle-2',cls: 'approve' },
-    REJECT:      { key: 'REJECT',      label: 'رفض',         icon: 'x-circle',      cls: 'reject' },
-    SHIFT_CLOSE: { key: 'SHIFT_CLOSE', label: 'إغلاق وردية', icon: 'lock',          cls: 'shift' },
-    VIEW:        { key: 'VIEW',        label: 'عرض',         icon: 'eye',           cls: 'update' },
-    EXPORT:      { key: 'EXPORT',      label: 'تصدير',       icon: 'download',      cls: 'update' },
-    IMPORT:      { key: 'IMPORT',      label: 'استيراد',     icon: 'upload',        cls: 'update' },
-    RETURN:      { key: 'RETURN',      label: 'مرتجع',       icon: 'rotate-ccw',    cls: 'update' },
-    BUYBACK:     { key: 'BUYBACK',     label: 'شراء كسر',    icon: 'recycle',       cls: 'update' },
-    SCAN:        { key: 'SCAN',        label: 'مسح صنف',     icon: 'scan-line',     cls: 'update' },
-    SYNC:        { key: 'SYNC',        label: 'مزامنة',      icon: 'refresh-cw',    cls: 'update' },
+    CREATE:      { key: 'CREATE',      label: 'إنشاء',          icon: 'plus-circle',    cls: 'create' },
+    UPDATE:      { key: 'UPDATE',      label: 'تعديل',          icon: 'pencil',         cls: 'update' },
+    DELETE:      { key: 'DELETE',      label: 'حذف',            icon: 'trash-2',        cls: 'delete' },
+    LOGIN:       { key: 'LOGIN',       label: 'تسجيل دخول',     icon: 'log-in',         cls: 'login' },
+    LOGOUT:      { key: 'LOGOUT',      label: 'خروج',           icon: 'log-out',        cls: 'login' },
+    APPROVE:     { key: 'APPROVE',     label: 'اعتماد',         icon: 'check-circle-2', cls: 'approve' },
+    REJECT:      { key: 'REJECT',      label: 'رفض',            icon: 'x-circle',       cls: 'reject' },
+    SHIFT_CLOSE: { key: 'SHIFT_CLOSE', label: 'إغلاق وردية',    icon: 'lock',           cls: 'shift' },
+    VIEW:        { key: 'VIEW',        label: 'عرض',            icon: 'eye',            cls: 'update' },
+    EXPORT:      { key: 'EXPORT',      label: 'تصدير',          icon: 'download',       cls: 'update' },
+    IMPORT:      { key: 'IMPORT',      label: 'استيراد',        icon: 'upload',         cls: 'update' },
+    RETURN:      { key: 'RETURN',      label: 'مرتجع',          icon: 'rotate-ccw',     cls: 'update' },
+    BUYBACK:     { key: 'BUYBACK',     label: 'شراء كسر',       icon: 'recycle',        cls: 'update' },
+    SCAN:        { key: 'SCAN',        label: 'مسح صنف',        icon: 'scan-line',      cls: 'update' },
+    SYNC:        { key: 'SYNC',        label: 'مزامنة',         icon: 'refresh-cw',     cls: 'update' },
+    PAYMENT:     { key: 'PAYMENT',     label: 'دفع',            icon: 'banknote',       cls: 'update' },
+    SETTLEMENT:  { key: 'SETTLEMENT',  label: 'تسوية',          icon: 'scale',          cls: 'update' },
+    TRANSFER:    { key: 'TRANSFER',    label: 'تحويل',          icon: 'arrow-right-left', cls: 'update' },
+
+    /* ✅ v5: B2B actions */
+    REP_SETTLE:  { key: 'REP_SETTLE',  label: 'تصفية بياع',     icon: 'vault',          cls: 'approve' },
+    B2B_INVOICE: { key: 'B2B_INVOICE', label: 'فاتورة جملة',    icon: 'factory',        cls: 'create' },
+    REP_CREATE:  { key: 'REP_CREATE',  label: 'إنشاء بياع',     icon: 'user-plus',      cls: 'create' },
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §38 · دوال مساعدة للتكوين (HELPERS)
      ═════════════════════════════════════════════════════════════════════ */
 
-  /* Local round — لأن 02-utils.js لسه مش اتحمّل */
   function _round(v, d) {
     const p = Math.pow(10, d == null ? 4 : d);
     return Math.round((Number(v) + Number.EPSILON) * p) / p;
   }
 
-  /* ─── العيار القياسي ─── */
   GMS.karatIndex = function (karat) {
     return GMS.KARAT_ORDER.indexOf(Number(karat));
   };
 
-  /* ✅ v4: دالة karatRatio المطوّرة — تقبل العيار القياسي أو المخصص */
   GMS.karatRatio = function (karat) {
     const num = Number(karat);
 
-    /* عيار قياسي */
     if (GMS.KARAT_RATIO[num] !== undefined) {
       return GMS.KARAT_RATIO[num];
     }
 
-    /* عيار مخصص بين 300 و 999 */
     if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
       return _round(num / 1000, 4);
     }
@@ -948,7 +1133,6 @@
     return 0;
   };
 
-  /* ✅ v4: karatColor — يضيف لون افتراضي للعيارات المخصصة */
   GMS.karatColor = function (karat) {
     const num = Number(karat);
     if (GMS.KARAT_COLORS[num]) return GMS.KARAT_COLORS[num];
@@ -958,7 +1142,6 @@
     return '#6b7a95';
   };
 
-  /* ✅ v4: karatLabel — يدعم المخصص */
   GMS.karatLabel = function (karat) {
     const num = Number(karat);
     if (GMS.KARAT_LABELS[num]) return GMS.KARAT_LABELS[num];
@@ -968,7 +1151,6 @@
     return `عيار ${karat}`;
   };
 
-  /* ✅ v4: isValidKarat — يقبل القياسي والمخصص */
   GMS.isValidKarat = function (karat) {
     const num = Number(karat);
     if (GMS.KARAT_ORDER.includes(num)) return true;
@@ -978,7 +1160,6 @@
     return false;
   };
 
-  /* ✅ v4: isValidPurity — للتحقق من نسبة النقاء */
   GMS.isValidPurity = function (purity) {
     const p = Number(purity);
     return isFinite(p)
@@ -986,16 +1167,8 @@
       && p <= GMS.KARAT_LIMITS.maxPurity;
   };
 
-  /* ✅ v4: resolveKarat — يترجم أي مُدخل إلى كائن موحّد
-     يقبل:
-       • 21 (رقم قياسي)
-       • 888 (رقم مخصص)
-       • "21K" أو "888" أو "0.8880" (نص)
-       • { karat, custom_karat, purity_ratio, is_custom } (كائن)
-     يرجّع:
-       { karat, custom_karat, purity_ratio, is_custom, display } */
   GMS.resolveKarat = function (input) {
-    /* ─── كائن جاهز ─── */
+    /* كائن */
     if (input && typeof input === 'object') {
       if (input.is_custom || (input.custom_karat != null && input.karat == null)) {
         const customNum = Number(input.custom_karat) || Math.round((Number(input.purity_ratio) || 0) * 1000);
@@ -1020,17 +1193,15 @@
       }
     }
 
-    /* ─── نص ─── */
+    /* نص */
     if (typeof input === 'string') {
       const s = input.trim().toUpperCase().replace(/\s+/g, '');
       if (!s) return GMS.resolveKarat(21);
 
-      /* 21K أو 21 أو 888 */
       const karatMatch = s.match(/^(\d{1,4})K?$/);
       if (karatMatch) {
         const num = Number(karatMatch[1]);
 
-        /* قياسي */
         if (GMS.KARAT_RATIO[num] !== undefined) {
           return {
             karat: num,
@@ -1041,7 +1212,6 @@
           };
         }
 
-        /* مخصص */
         if (num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
           return {
             karat: null,
@@ -1053,7 +1223,6 @@
         }
       }
 
-      /* 0.8880 أو .8880 */
       const purityMatch = s.match(/^0?\.(\d+)$/);
       if (purityMatch) {
         const purity = Number(s);
@@ -1070,10 +1239,9 @@
       }
     }
 
-    /* ─── رقم مباشر ─── */
+    /* رقم */
     const num = Number(input);
     if (isFinite(num)) {
-      /* قياسي */
       if (GMS.KARAT_RATIO[num] !== undefined) {
         return {
           karat: num,
@@ -1084,7 +1252,6 @@
         };
       }
 
-      /* مخصص */
       if (num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
         return {
           karat: null,
@@ -1096,7 +1263,7 @@
       }
     }
 
-    /* ─── fallback ─── */
+    /* fallback */
     return {
       karat: 21,
       custom_karat: null,
@@ -1106,12 +1273,10 @@
     };
   };
 
-  /* ✅ v4: karatFromPurity — ترجمة عكسية من purity إلى karat كائن */
   GMS.karatFromPurity = function (purity) {
     const p = Number(purity);
     if (!isFinite(p)) return GMS.resolveKarat(21);
 
-    /* قياسي؟ */
     for (const k of GMS.KARAT_ORDER) {
       if (Math.abs(GMS.KARAT_RATIO[k] - p) < 0.0001) {
         return {
@@ -1124,7 +1289,6 @@
       }
     }
 
-    /* مخصص */
     const customNum = Math.round(p * 1000);
     return {
       karat: null,
@@ -1135,12 +1299,9 @@
     };
   };
 
-  /* ✅ v4: formatKarat — نص موحّد للعرض
-     يقبل كائن أو قيمة مباشرة */
   GMS.formatKarat = function (item) {
     if (!item) return '—';
 
-    /* كائن موحّد */
     if (typeof item === 'object') {
       if (item.is_custom) {
         const num = item.custom_karat || Math.round((item.purity_ratio || 0) * 1000);
@@ -1154,7 +1315,6 @@
       return '—';
     }
 
-    /* قيمة مباشرة */
     const num = Number(item);
     if (GMS.KARAT_RATIO[num] !== undefined) return `${num}K`;
     if (isFinite(num) && num >= GMS.KARAT_LIMITS.min && num <= GMS.KARAT_LIMITS.max) {
@@ -1163,7 +1323,6 @@
     return '—';
   };
 
-  /* ✅ v4: formatKaratShort — نسخة مختصرة للجداول والتاجات */
   GMS.formatKaratShort = function (item) {
     if (!item) return '—';
     if (typeof item === 'object') {
@@ -1185,10 +1344,6 @@
     return '—';
   };
 
-  /* ✅ v4: skuKaratCode — الكود الذي يدخل في الـ SKU
-     • عيار 21 → "21"
-     • سبيكة 888 → "888"
-     • لو مش محدد → "21" */
   GMS.skuKaratCode = function (item) {
     if (!item) return '21';
 
@@ -1207,7 +1362,6 @@
     return '21';
   };
 
-  /* ─── أدوار ─── */
   GMS.getRole = function (roleKey) {
     return GMS.ROLES[roleKey] || null;
   };
@@ -1224,7 +1378,6 @@
     return GMS.ROLE_KEYS.includes(roleKey);
   };
 
-  /* ─── حالات ─── */
   GMS.getStatus = function (statusKey) {
     return GMS.ITEM_STATUS[statusKey] || {
       key: statusKey, label: statusKey, cls: 'pill-gray', icon: 'circle',
@@ -1235,7 +1388,6 @@
     return Object.keys(GMS.ITEM_STATUS).includes(statusKey);
   };
 
-  /* ─── فواتير ─── */
   GMS.getInvoiceType = function (typeKey) {
     return GMS.INVOICE_TYPES[typeKey] || null;
   };
@@ -1246,12 +1398,10 @@
     };
   };
 
-  /* ─── خسس ─── */
   GMS.getSeverity = function (severityKey) {
     return GMS.LOSS_SEVERITY[severityKey] || GMS.LOSS_SEVERITY.natural;
   };
 
-  /* ─── مصانع ─── */
   GMS.getPricingMode = function (modeKey) {
     return GMS.PRICING_MODES[modeKey] || GMS.PRICING_MODES.fixed;
   };
@@ -1289,6 +1439,27 @@
     }
   };
 
+  /* ✅ v5: B2B helpers */
+  GMS.getRepLedgerType = function (typeKey) {
+    return GMS.REP_LEDGER_TYPES[typeKey] || GMS.REP_LEDGER_TYPES.adjustment;
+  };
+
+  GMS.getWholesaleInvoiceStatus = function (statusKey) {
+    return GMS.WHOLESALE_INVOICE_STATUS[statusKey] || GMS.WHOLESALE_INVOICE_STATUS.DRAFT;
+  };
+
+  GMS.getTransferStatus = function (statusKey) {
+    return GMS.TRANSFER_STATUS[statusKey] || GMS.TRANSFER_STATUS.PENDING;
+  };
+
+  GMS.getSettlementStatus = function (statusKey) {
+    return GMS.SETTLEMENT_STATUS[statusKey] || GMS.SETTLEMENT_STATUS.DRAFT;
+  };
+
+  GMS.getB2BPaymentMode = function (modeKey) {
+    return GMS.B2B_PAYMENT_MODES[modeKey] || GMS.B2B_PAYMENT_MODES.cash;
+  };
+
   /* ═════════════════════════════════════════════════════════════════════
      §39 · حدود النظام (SYSTEM LIMITS)
      ═════════════════════════════════════════════════════════════════════ */
@@ -1303,22 +1474,32 @@
     MAX_QTY: 10000,
     MAX_DISCOUNT_PCT: 50,
     MAX_LOSS_PCT: 100,
+
+    /* ✅ v5: B2B limits */
+    MAX_B2B_REPS: 50,
+    MAX_B2B_CUSTOMERS_PER_REP: 500,
+    MAX_REP_LEDGER_ENTRIES: 3000,
+    MAX_SETTLEMENTS: 1000,
   });
 
   /* ═════════════════════════════════════════════════════════════════════
      §40 · أنماط التحقق (VALIDATION PATTERNS)
-     ✅ v4: SKU يقبل الآن عيارات مخصصة (2-3 أرقام)
      ═════════════════════════════════════════════════════════════════════ */
   GMS.PATTERNS = Object.freeze({
     EMAIL: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
     PHONE_EG: /^01[0125]\d{8}$/,
-    /* يدعم: A21-260923-00001، A888-260923-00001، A-260923-00001 */
     SKU: /^[A-Z0-9]{1,4}(\d{2,3})?-\d{6}-\d{3,5}(-\d{3})?$/i,
     INVOICE_NO: /^[A-Z]{2,4}-\d{6,8}-\d{3,5}$/i,
     BATCH_NO: /^(MB|PL|BB|SR|RT)-[A-Z0-9-]+$/i,
     CURRENCY: /^\d+(\.\d{1,2})?$/,
     WEIGHT: /^\d+(\.\d{1,4})?$/,
     UUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+
+    /* ✅ v5: B2B patterns */
+    REP_CODE: /^REP-\d{3,5}$/,
+    B2B_CUSTOMER_CODE: /^B2C-\d{4,6}$/,
+    SETTLEMENT_NO: /^STL-\d{6}-\d{2}-[A-Z0-9]{3}$/,
+    PIN: /^\d{4,6}$/,
   });
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -1326,8 +1507,8 @@
      ═════════════════════════════════════════════════════════════════════ */
   GMS.VERSION_INFO = Object.freeze({
     APP_VERSION: '1.0.1',
-    BUILD_NUMBER: '20260923',
-    BUILD_DATE: '2026-09-23',
+    BUILD_NUMBER: '20260927',
+    BUILD_DATE: '2026-09-27',
     ENVIRONMENT: 'production',
     AUTHOR: 'Gold MS Team',
   });
@@ -1341,10 +1522,35 @@
   });
 
   /* ═════════════════════════════════════════════════════════════════════
-     §43 · رسالة التحميل (LOADED CONFIRMATION)
+     §43 · ✅ B2B DEFAULT CONFIG (v5 جديد)
+     ═════════════════════════════════════════════════════════════════════ */
+  GMS.B2B_CONFIG = Object.freeze({
+    PREFIX: 'gms.b2b.',
+    STORES: {
+      REPS: 'sales_reps',
+      CUSTOMERS: 'b2b_customers',
+      LEDGERS: 'rep_ledgers',
+      SETTLEMENTS: 'rep_settlements',
+      INVOICES: 'wholesale_invoices',
+    },
+    MAX_ENTRIES_PER_STORE: 3000,
+    DEFAULT_REP_TREASURY: {
+      cash: 0,
+      gold_pure: 0,
+      gold_by_karat: { 24: 0, 22: 0, 21: 0, 18: 0, 14: 0 },
+      custom_gold_pure: 0,
+      custom_gold_net: 0,
+    },
+    REP_CODE_PREFIX: 'REP',
+    CUSTOMER_CODE_PREFIX: 'B2C',
+    SETTLEMENT_PREFIX: 'STL',
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §44 · رسالة التحميل (LOADED CONFIRMATION)
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Gold MS Config loaded',
+    '%c📦 Gold MS Config v5 loaded',
     'color:#c8a24a;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
@@ -1355,13 +1561,19 @@
   );
 
   console.log(
-    `%c🎯 ${GMS.KARAT_ORDER.length} carats (24K/21K/18K) + CUSTOM (300-999) · ` +
-    `${GMS.ROLE_KEYS.length} roles · ${Object.keys(GMS.PERM_LABELS).length} permissions`,
+    `%c🎯 ${GMS.KARAT_ORDER.length} carats + CUSTOM · ` +
+    `${GMS.ROLE_KEYS.length} roles (incl. B2B_REP) · ` +
+    `${Object.keys(GMS.PERM_LABELS).length} permissions`,
     'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🆕 v4: resolveKarat() · formatKarat() · karatFromPurity() · skuKaratCode()`,
+    `%c🆕 v5: B2B_REP role · 11 B2B permissions · 4 B2B statuses · 9 ledger types`,
+    'color:#6b3fa0;font-weight:900;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v5: 4 tables (sales_reps, b2b_customers, rep_ledgers, rep_settlements)`,
     'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
