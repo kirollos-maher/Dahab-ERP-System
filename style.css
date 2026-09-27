@@ -1,33 +1,30 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — style.css
    نظام إدارة الذهب والمجوهرات
-   ✅ v6.0: Ultra Responsive · Mobile-First · Touch-Friendly
+   ✅ v6.2: Ultra Responsive · Mobile-First · Touch-Friendly
+   ✅ v6.2: + GPU CRASH FIX for Infinix/Tecno/itel (Transsion devices)
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════════════════════════════
    §1 · DESIGN TOKENS — Light Mode
    ═══════════════════════════════════════════════════════════════════════ */
 :root {
-  /* Surfaces */
   --bg: #eef1f7;
   --surface: #ffffff;
   --surface-2: #f7f9fc;
   --surface-3: #eef2f8;
   --surface-elevated: #ffffff;
 
-  /* Borders */
   --border: #dfe5ef;
   --border-strong: #c7d0e0;
   --border-subtle: #ebeff7;
 
-  /* Text */
   --text: #0d1526;
   --text-2: #3d4a63;
   --text-3: #5f6c87;
   --muted: #6b7a95;
   --muted-2: #94a0b8;
 
-  /* Brand — Gold */
   --primary: #b8912f;
   --primary-2: #d9b153;
   --primary-3: #9c7726;
@@ -37,7 +34,6 @@
   --gold-soft: linear-gradient(135deg, rgba(200, 162, 74, .13), rgba(200, 162, 74, .03));
   --gold-glow: 0 8px 24px -8px rgba(184, 145, 47, .9);
 
-  /* Semantic */
   --success: #0f7a43;
   --success-bg: #e6f6ee;
   --success-border: #a8dfc4;
@@ -59,41 +55,34 @@
   --offline: #6b7280;
   --offline-bg: #e5e7eb;
 
-  /* Radius */
   --radius: 14px;
   --radius-sm: 9px;
   --radius-xs: 6px;
   --radius-lg: 18px;
   --radius-full: 999px;
 
-  /* Shadows */
   --shadow-1: 0 1px 2px rgba(13, 21, 38, .06), 0 6px 20px -12px rgba(13, 21, 38, .20);
   --shadow-2: 0 18px 50px -22px rgba(13, 21, 38, .42);
   --shadow-3: 0 30px 90px -30px rgba(13, 21, 38, .55);
   --shadow-inner: inset 0 1px 2px rgba(13, 21, 38, .05);
 
-  /* Motion */
   --transition: .2s cubic-bezier(.4, 0, .2, 1);
   --transition-slow: .36s cubic-bezier(.4, 0, .2, 1);
   --bounce: cubic-bezier(.3, 1.4, .5, 1);
 
-  /* Layout */
   --topbar-h: 64px;
   --tabs-h: 52px;
   --sidebar-w: 260px;
 
-  /* Touch targets */
   --touch-min: 44px;
   --touch-comfortable: 48px;
 
-  /* Responsive spacing */
   --space-xs: clamp(.25rem, 1vw, .5rem);
   --space-sm: clamp(.5rem, 1.5vw, .75rem);
   --space-md: clamp(.75rem, 2vw, 1rem);
   --space-lg: clamp(1rem, 3vw, 1.5rem);
   --space-xl: clamp(1.5rem, 4vw, 2rem);
 
-  /* Responsive text sizes */
   --text-xs: clamp(.625rem, 1.5vw, .75rem);
   --text-sm: clamp(.75rem, 1.7vw, .8125rem);
   --text-base: clamp(.8125rem, 1.8vw, .875rem);
@@ -102,7 +91,6 @@
   --text-xl: clamp(1.125rem, 3vw, 1.5rem);
   --text-2xl: clamp(1.375rem, 4vw, 1.75rem);
 
-  /* Fonts */
   --font-ui: 'Cairo', system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
   --font-mono: 'JetBrains Mono', 'Cairo', monospace;
   --font-display: 'Cairo', system-ui, sans-serif;
@@ -229,7 +217,6 @@ textarea {
   font-family: inherit;
   font-size: inherit;
   color: inherit;
-  /* ✅ منع zoom تلقائي على iOS Safari عند التركيز */
 }
 
 button {
@@ -293,7 +280,6 @@ img, svg, video, canvas {
   scrollbar-color: var(--border-strong) transparent;
 }
 
-/* ✅ على الموبايل — سكرول بار أرق */
 @media (max-width: 768px) {
   ::-webkit-scrollbar {
     width: 4px;
@@ -380,7 +366,7 @@ textarea:focus:not(:focus-visible) {
   display: none;
   flex-direction: column;
   min-height: 100vh;
-  min-height: 100dvh; /* Dynamic viewport for mobile */
+  min-height: 100dvh;
   width: 100%;
   max-width: 100vw;
   overflow-x: hidden;
@@ -548,7 +534,7 @@ textarea:focus:not(:focus-visible) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §10 · TOPBAR — Responsive Header
+   §10 · TOPBAR
    ═══════════════════════════════════════════════════════════════════════ */
 .topbar {
   position: sticky;
@@ -576,7 +562,6 @@ textarea:focus:not(:focus-visible) {
   display: none;
 }
 
-/* ─── Brand ─── */
 .brand {
   display: flex;
   align-items: center;
@@ -618,7 +603,6 @@ textarea:focus:not(:focus-visible) {
   white-space: nowrap;
 }
 
-/* ─── Network Status Pill ─── */
 .net-pill {
   display: inline-flex;
   align-items: center;
@@ -678,7 +662,6 @@ textarea:focus:not(:focus-visible) {
   100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
 }
 
-/* ─── Role Badge ─── */
 .role-badge {
   display: inline-flex;
   align-items: center;
@@ -731,7 +714,6 @@ textarea:focus:not(:focus-visible) {
   border-color: color-mix(in srgb, var(--success) 30%, transparent);
 }
 
-/* ─── Icon Buttons — Touch Friendly ─── */
 .icon-btn {
   width: var(--touch-min);
   height: var(--touch-min);
@@ -792,7 +774,6 @@ textarea:focus:not(:focus-visible) {
   to { transform: rotate(360deg); }
 }
 
-/* ─── Language Switcher ─── */
 .lang-switch {
   display: inline-flex;
   gap: 3px;
@@ -829,7 +810,6 @@ textarea:focus:not(:focus-visible) {
   box-shadow: 0 4px 12px -6px rgba(184, 145, 47, .9);
 }
 
-/* ─── PWA Install Button ─── */
 .pwa-install-btn {
   background: linear-gradient(135deg, #F0D68C 0%, #D4A017 48%, #9C7726 100%) !important;
   color: #2a1f05 !important;
@@ -872,7 +852,7 @@ textarea:focus:not(:focus-visible) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §11 · TABS BAR — Horizontal Scroll on Mobile
+   §11 · TABS BAR
    ═══════════════════════════════════════════════════════════════════════ */
 .tabs-bar {
   position: sticky;
@@ -1063,7 +1043,6 @@ textarea:focus:not(:focus-visible) {
   z-index: 5;
 }
 
-/* ✅ حماية القوائم المنسدلة من clip */
 .card:has(.filter-select),
 .card:has(.toolbar-row) {
   overflow: visible;
@@ -1074,7 +1053,7 @@ textarea:focus:not(:focus-visible) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §14 · KPI CARDS — Auto-Fit Responsive Grid
+   §14 · KPI CARDS
    ═══════════════════════════════════════════════════════════════════════ */
 .kpi-row,
 .kpi-row.cols-3,
@@ -1208,7 +1187,7 @@ textarea:focus:not(:focus-visible) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §15 · BUTTONS — Touch Friendly
+   §15 · BUTTONS
    ═══════════════════════════════════════════════════════════════════════ */
 .btn {
   display: inline-flex;
@@ -1374,7 +1353,6 @@ textarea:focus:not(:focus-visible) {
   animation: spin 1s linear infinite;
 }
 
-/* ✅ على الموبايل — الأزرار كاملة العرض */
 @media (max-width: 600px) {
   .btn-row {
     flex-direction: column;
@@ -1387,7 +1365,7 @@ textarea:focus:not(:focus-visible) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §16 · FORM ELEMENTS — Mobile Friendly
+   §16 · FORM ELEMENTS
    ═══════════════════════════════════════════════════════════════════════ */
 .field {
   display: flex;
@@ -1430,7 +1408,7 @@ textarea:focus:not(:focus-visible) {
   font-weight: 600;
   transition: all var(--transition);
   font-family: inherit;
-  font-size: 16px; /* ✅ منع zoom تلقائي على iOS */
+  font-size: 16px;
   -webkit-appearance: none;
   appearance: none;
 }
@@ -1506,7 +1484,6 @@ html[dir="ltr"] .field select {
   grid-column: 1 / -1;
 }
 
-/* ─── Toggle Switch ─── */
 .toggle-switch {
   display: inline-flex;
   align-items: center;
@@ -1564,7 +1541,7 @@ html[dir="ltr"] .field select {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §17 · TABLES — Responsive with Horizontal Scroll
+   §17 · TABLES
    ═══════════════════════════════════════════════════════════════════════ */
 .table-wrap {
   overflow: auto;
@@ -1751,7 +1728,6 @@ html[dir="ltr"] .field select {
   height: 14px;
 }
 
-/* ✅ على الموبايل — تحسين الجداول */
 @media (max-width: 768px) {
   .table-wrap {
     border-radius: 0;
@@ -1880,7 +1856,7 @@ html[dir="ltr"] .field select {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §20 · TOASTS — Mobile Position
+   §20 · TOASTS
    ═══════════════════════════════════════════════════════════════════════ */
 #toasts {
   position: fixed;
@@ -1950,7 +1926,6 @@ html[dir="ltr"] .field select {
   to { opacity: 1; transform: none; }
 }
 
-/* ✅ على الموبايل — عرض كامل */
 @media (max-width: 640px) {
   #toasts {
     inset-inline-start: 12px;
@@ -1966,7 +1941,7 @@ html[dir="ltr"] .field select {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §21 · MODALS — Fully Responsive
+   §21 · MODALS
    ═══════════════════════════════════════════════════════════════════════ */
 .overlay {
   position: fixed;
@@ -2061,14 +2036,12 @@ html[dir="ltr"] .field select {
   background: var(--surface-2);
   flex-shrink: 0;
   flex-wrap: wrap;
-  /* ✅ Sticky footer على الموبايل */
   position: sticky;
   bottom: 0;
   z-index: 10;
   padding-bottom: max(clamp(12px, 2vw, 15px), env(safe-area-inset-bottom, 0));
 }
 
-/* ✅ على الموبايل — modal بكامل الشاشة */
 @media (max-width: 640px) {
   .overlay {
     padding: 0;
@@ -2212,7 +2185,6 @@ html[dir="ltr"] .field select {
   transition: all var(--transition);
   position: relative;
   z-index: 1;
-  /* ✅ منع zoom */
   font-size: max(16px, 17px);
 }
 
@@ -2431,7 +2403,6 @@ html[dir="ltr"] .field select {
   height: 13px;
 }
 
-/* ✅ على الموبايل — السطر يصبح عمودي */
 @media (max-width: 500px) {
   .queue-item {
     grid-template-columns: auto 1fr;
@@ -2524,7 +2495,7 @@ html[dir="ltr"] .field select {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §26 · WORKSPACE LAYOUT — Responsive Grid
+   §26 · WORKSPACE LAYOUT
    ═══════════════════════════════════════════════════════════════════════ */
 .workspace {
   display: grid;
@@ -2545,7 +2516,7 @@ html[dir="ltr"] .field select {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §27 · TOOLBAR — Stacked on Mobile
+   §27 · TOOLBAR
    ═══════════════════════════════════════════════════════════════════════ */
 .toolbar {
   display: flex;
@@ -2570,7 +2541,6 @@ html[dir="ltr"] .field select {
   border-top: 1px dashed var(--border);
 }
 
-/* ✅ على الموبايل — كل عنصر بعرض كامل */
 @media (max-width: 768px) {
   .toolbar-row {
     gap: 8px;
@@ -2756,7 +2726,6 @@ input[type="date"]:focus {
   color-scheme: dark;
 }
 
-/* كل الـ selects */
 select {
   background-color: var(--surface) !important;
   color: var(--text) !important;
@@ -2870,7 +2839,7 @@ select optgroup {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §31 · PAGINATION — Mobile Simplified
+   §31 · PAGINATION
    ═══════════════════════════════════════════════════════════════════════ */
 .pager {
   flex-shrink: 0;
@@ -2983,7 +2952,6 @@ select optgroup {
   border-color: var(--primary);
 }
 
-/* ✅ على الموبايل — pagination مبسّطة */
 @media (max-width: 640px) {
   .pager {
     flex-direction: column;
@@ -3908,7 +3876,7 @@ select optgroup {
 .avatar-xl { width: 64px; height: 64px; font-size: 20px; }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §46 · HELPERS — BG / TEXT / BORDER
+   §46 · HELPERS
    ═══════════════════════════════════════════════════════════════════════ */
 .bg-gold { background: var(--gold-soft); }
 .bg-success { background: var(--success-bg); }
@@ -4481,7 +4449,6 @@ select optgroup {
    §56 · TOUCH DEVICE OPTIMIZATIONS
    ═══════════════════════════════════════════════════════════════════════ */
 @media (hover: none) and (pointer: coarse) {
-  /* ✅ زيادة مساحة الضغط على الأزرار */
   .btn,
   .icon-btn,
   .row-act,
@@ -4492,13 +4459,11 @@ select optgroup {
     min-height: var(--touch-min);
   }
 
-  /* ✅ زيادة الـ padding للأزرار الصغيرة */
   .btn-sm {
     min-height: 40px;
     padding: 10px 14px;
   }
 
-  /* ✅ إزالة تأثير hover على الأجهزة اللمسية */
   .btn:hover,
   .icon-btn:hover,
   .row-act:hover,
@@ -4506,14 +4471,12 @@ select optgroup {
     transform: none;
   }
 
-  /* ✅ Right-size tap targets */
   .cb {
     width: 22px;
     height: 22px;
     min-width: 22px;
   }
 
-  /* ✅ Selects بحجم مناسب */
   .filter-select,
   select {
     min-height: var(--touch-min);
@@ -4521,10 +4484,9 @@ select optgroup {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §57 · MOBILE BREAKPOINTS — Comprehensive
+   §57 · MOBILE BREAKPOINTS
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ─── Tablet: 600px - 1024px ─── */
 @media (max-width: 1024px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -4547,7 +4509,6 @@ select optgroup {
   }
 }
 
-/* ─── Mobile: < 600px ─── */
 @media (max-width: 600px) {
   :root {
     --topbar-h: 56px;
@@ -4556,7 +4517,6 @@ select optgroup {
     --radius-lg: 16px;
   }
 
-  /* Topbar — mobile */
   .topbar {
     gap: 6px;
     padding-inline: 10px;
@@ -4594,10 +4554,8 @@ select optgroup {
     font-size: 15px;
   }
 
-  /* Page */
   .page { padding: 12px; }
 
-  /* KPI — عمود واحد */
   .kpi-row,
   .kpi-row.cols-3,
   .kpi-row.cols-4,
@@ -4606,21 +4564,17 @@ select optgroup {
     gap: 10px;
   }
 
-  /* Page header */
   .page-header h2 { font-size: 17px; }
   .page-header h2 svg { width: 18px; height: 18px; }
   .page-header p { font-size: 11.5px; }
 
-  /* Cards */
   .card-head { padding: 12px 14px; }
   .card-body { padding: 14px; }
 
-  /* Modals */
   .modal-head { padding: 14px 16px; }
   .modal-body { padding: 16px; }
   .modal-foot { padding: 12px 16px; }
 
-  /* Tabs */
   .tab {
     padding: 11px 13px;
     font-size: 11px;
@@ -4636,11 +4590,9 @@ select optgroup {
     white-space: nowrap;
   }
 
-  /* KPIs أصغر */
   .kpi-value { font-size: 22px; }
   .gauge-value { font-size: 30px; }
 
-  /* Charts أصغر */
   .chart-wrap,
   .chart-wrap.chart-tall {
     height: 240px;
@@ -4650,7 +4602,6 @@ select optgroup {
     height: 180px;
   }
 
-  /* Toasts */
   #toasts {
     inset-inline: 12px;
     bottom: 12px;
@@ -4662,18 +4613,15 @@ select optgroup {
     font-size: 12px;
   }
 
-  /* Toolbar */
   .toolbar-row {
     padding: 10px 12px;
   }
 
-  /* Search */
   .search-wrap {
     min-width: 0;
     max-width: 100%;
   }
 
-  /* Footer buttons in modals */
   .modal-foot {
     flex-direction: column-reverse;
     align-items: stretch;
@@ -4685,7 +4633,6 @@ select optgroup {
   }
 }
 
-/* ─── Small Mobile: < 400px ─── */
 @media (max-width: 400px) {
   .kpi-value { font-size: 20px; }
   .btn { padding: 9px 13px; font-size: 11.5px; }
@@ -4773,7 +4720,7 @@ kbd {
 .highlight-flash { animation: highlight 1.2s ease; }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   §63 · BRANCH ROW (Branch Performance)
+   §63 · BRANCH ROW
    ═══════════════════════════════════════════════════════════════════════ */
 .branch-row {
   display: grid;
@@ -5160,7 +5107,6 @@ kbd {
   cursor: pointer;
 }
 
-
 /* ═══════════════════════════════════════════════════════════════════════
    §71 · MOBILE STABILITY FIXES (v6.1)
    ─────────────────────────────────────────────────────────────────────
@@ -5170,15 +5116,12 @@ kbd {
      • تغيير الاتجاه
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ─── إصلاح شامل على الموبايل ─── */
 @media (max-width: 768px) {
 
-  /* ✅ إلغاء الأنيميشن على الصفحة لمنع الشاشة السوداء عند التنقل */
   .page {
     animation: none !important;
   }
 
-  /* ✅ التأكد من أن #app يأخذ كامل الشاشة */
   #app {
     min-height: 100vh;
     min-height: 100dvh;
@@ -5186,25 +5129,21 @@ kbd {
     -webkit-overflow-scrolling: touch;
   }
 
-  /* ✅ منع overflow الأفقي */
   html, body {
     overflow-x: hidden;
     max-width: 100vw;
   }
 
-  /* ✅ إصلاح الجداول الواسعة */
   .table-wrap {
     max-width: 100vw;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
 
-  /* ✅ منع تعليق KPI cards */
   .kpi {
     transform: none !important;
   }
 
-  /* ✅ إلغاء backdrop-filter الثقيل على الموبايل */
   .topbar {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -5212,10 +5151,8 @@ kbd {
   }
 }
 
-/* ✅ إصلاح قوي للموبايل الصغير جداً */
 @media (max-width: 480px) {
 
-  /* إلغاء الأنيميشن على كل شيء تقريباً */
   .page,
   .card,
   .kpi,
@@ -5224,18 +5161,15 @@ kbd {
     transition: none !important;
   }
 
-  /* تبسيط الـ charts */
   .chart-wrap canvas {
     max-height: 220px;
   }
 
-  /* منع تعليق الـ toasts */
   .toast {
     animation: none !important;
   }
 }
 
-/* ✅ إصلاح الصفحة الفارغة — منع الشاشة السوداء عند RTL switching */
 html[dir="rtl"] body,
 html[dir="ltr"] body {
   background-color: var(--bg);
@@ -5243,13 +5177,11 @@ html[dir="ltr"] body {
   min-height: 100vh;
 }
 
-/* ✅ إصلاح عند تبديل الاتجاه */
 html[dir="ltr"] .topbar,
 html[dir="rtl"] .topbar {
   direction: inherit;
 }
 
-/* ✅ إصلاح مشكلة الـ blank screen — إنشاء placeholder مؤقت */
 #app:empty::after {
   content: "جارٍ التحميل…";
   display: grid;
@@ -5260,17 +5192,100 @@ html[dir="rtl"] .topbar {
   font-size: 14px;
 }
 
-/* ✅ إصلاح viewport للـ iOS Safari */
 @supports (-webkit-touch-callout: none) {
   #app {
     min-height: -webkit-fill-available;
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   §72 · INFINIX/TRANSSION GPU CRASH FIX (v6.2)
+   ─────────────────────────────────────────────────────────────────────
+   الأجهزة دي عندها مشكلة مع:
+     • backdrop-filter + dir change
+     • scroll-snap + direction change
+     • box-shadow blurs كبيرة
+   الحل: تعطيلهم على الموبايل
+   ═══════════════════════════════════════════════════════════════════════ */
 
+@media (max-width: 768px) {
 
+  /* ✅ تعطيل backdrop-filter تماماً على الموبايل */
+  .topbar,
+  .overlay,
+  .modal,
+  .modal-head,
+  #settings-sticky-footer,
+  .tabs-bar {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 
+  /* ✅ استخدم background صلب بدلاً من الشفاف */
+  .topbar {
+    background: var(--surface) !important;
+  }
 
+  .overlay {
+    background: rgba(8, 13, 24, 0.92) !important;
+  }
+
+  /* ✅ إلغاء scroll-snap (بيسيب GPU memory leaks) */
+  .tabs-bar {
+    scroll-snap-type: none !important;
+  }
+
+  .tab {
+    scroll-snap-align: none !important;
+  }
+
+  /* ✅ تقليل box-shadow blurs الكبيرة */
+  .modal {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .4) !important;
+  }
+
+  .login-card {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5) !important;
+  }
+
+  /* ✅ منع transform animations على عناصر كبيرة */
+  .card,
+  .kpi {
+    transform: none !important;
+    will-change: auto !important;
+  }
+
+  /* ✅ إصلاح الحركات */
+  .modal {
+    animation: none !important;
+  }
+
+  .login-card {
+    animation: none !important;
+  }
+
+  /* ✅ منع GPU layers غير ضرورية */
+  .brand-logo,
+  .login-brand .logo,
+  .scan-hero .sh-icon {
+    will-change: auto !important;
+    transform: none !important;
+  }
+}
+
+/* ✅ إصلاح خاص لأجهزة Infinix/Tecno */
+@media (max-width: 768px) {
+
+  /* منع أي transitions على transform */
+  * {
+    transition-property: color, background-color, border-color, opacity !important;
+  }
+
+  /* منع animation على شاشة كاملة */
+  .page {
+    animation: none !important;
+  }
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    ✅ style.css — نهاية الملف
