@@ -11,6 +11,14 @@
      • عزل بيانات صارم (Data Isolation) حسب الدور
      • تكامل كامل مع فواتير الجملة و POS
 
+   ✅ v1.1.0 — إصلاحات محاسبية:
+     • FIX #1: الرصيد الافتتاحي للعميل لم يُعد يُحسب مرتين
+       (كان يُقرأ من customer.opening_balance_cash + حركة ledger → تكرار)
+     • FIX #2: خزينة البياع لا تتضخم بحركات الرصيد الافتتاحي للعملاء
+       (لأنها ديون على العملاء وليست كاش فعلي في يد البياع)
+     • FIX #3: إضافة تصنيف الحركة (customer_open vs rep_open)
+       لتمييزها بدقة في التقارير
+
    Data Store (CacheDB):
      • sales_reps
      • b2b_customers
@@ -325,11 +333,27 @@
      §6 · KPIs + TREASURY
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * ✅ v1.1.0 FIX #2: حساب خزينة البياع
+   * ─────────────────────────────────────────────────────────────────────
+   * استثناء حركات الرصيد الافتتاحي للعملاء لأنها:
+   *   - ديون على العملاء (Receivables)
+   *   - ليست كاش فعلي في يد البياع
+   *
+   * ملاحظة: الرصيد الافتتاحي للبياع نفسه (بدون customer_id) يُحسب عادي.
+   */
   function computeRepTreasury(repId) {
     const treasury = JSON.parse(JSON.stringify(DEFAULT_REP_TREASURY));
     const repLedgers = State.ledgers.filter(l => l.rep_id === repId);
 
     repLedgers.forEach(entry => {
+      /* ✅ FIX #2: تجاهل الرصيد الافتتاحي للعملاء */
+      const isCustomerOpening = entry.type === 'opening' && entry.customer_id;
+      if (isCustomerOpening) return;
+
+      /* تجاهل الحركات الملغاة */
+      if (entry.status === 'CANCELLED' || entry.is_cancelled) return;
+
       const cashDelta = numOr(entry.cash_delta, 0);
       const goldDelta = numOr(entry.gold_delta, 0);
       const karat = Number(entry.gold_karat || 0);
@@ -358,21 +382,30 @@
     return treasury;
   }
 
+  /**
+   * ✅ v1.1.0 FIX #1: حساب رصيد العميل
+   * ─────────────────────────────────────────────────────────────────────
+   * لا نضيف `customer.opening_balance_cash` مرة ثانية، لأنها:
+   *   - مسجَّلة بالفعل كحركة في دفتر الأستاذ (`type: 'opening'`)
+   *   - القراءة المزدوجة كانت تسبب مضاعفة الرصيد
+   *
+   * الرصيد الحقيقي = مجموع حركات الدفتر فقط.
+   */
   function computeCustomerBalance(customerId) {
     const cust = State.customers.find(c => c.id === customerId);
     if (!cust) return { cash: 0, gold_pure: 0, by_karat: {}, custom_pure: 0 };
 
-    const opening = {
-      cash: numOr(cust.opening_balance_cash, 0),
-      gold_pure: numOr(cust.opening_balance_gold_pure, 0),
-    };
-
-    const custLedgers = State.ledgers.filter(l => l.customer_id === customerId);
-
-    let cash = opening.cash;
-    let goldPure = opening.gold_pure;
+    /* ✅ FIX #1: ابدأ من صفر — الرصيد الافتتاحي محسوب ضمن الحركات */
+    let cash = 0;
+    let goldPure = 0;
     const byKarat = { 24: 0, 22: 0, 21: 0, 18: 0, 14: 0 };
     let customPure = 0;
+
+    const custLedgers = State.ledgers.filter(l => {
+      if (l.customer_id !== customerId) return false;
+      if (l.status === 'CANCELLED' || l.is_cancelled) return false;
+      return true;
+    });
 
     custLedgers.forEach(entry => {
       cash += numOr(entry.cash_delta, 0);
@@ -445,9 +478,16 @@
       return { success: false, error: 'غير مصرح' };
     }
 
+    /* ✅ v1.1.0: تصنيف الحركة (customer_open vs rep_open) */
+    let entryKind = entry.entry_kind || 'normal';
+    if (entry.type === 'opening') {
+      entryKind = entry.customer_id ? 'customer_open' : 'rep_open';
+    }
+
     const fullEntry = {
       id: uid(),
       type: entry.type || 'adjustment',
+      entry_kind: entryKind,
       created_at: new Date().toISOString(),
       created_by_id: currentUser().id,
       created_by: currentUser().name,
@@ -539,12 +579,14 @@
     if (!ok) return { success: false, error: 'فشل الحفظ' };
 
     if (isNew && (payload.opening_cash > 0 || payload.opening_gold_pure > 0)) {
+      /* ✅ رصيد افتتاحي للبياع نفسه — يُحسب في خزينته */
       await addLedgerEntry({
         rep_id: payload.id,
         type: 'opening',
+        entry_kind: 'rep_open',
         cash_delta: payload.opening_cash,
         gold_delta: payload.opening_gold_pure,
-        description: 'رصيد افتتاحي',
+        description: 'رصيد افتتاحي للبياع',
         _system: true,
       });
     }
@@ -622,11 +664,17 @@
     if (!ok) return { success: false, error: 'فشل الحفظ' };
 
     if (isNew && (payload.opening_balance_cash !== 0 || payload.opening_balance_gold_pure !== 0)) {
+      /* ✅ v1.1.0: الرصيد الافتتاحي للعميل
+         - مسجَّل مرة واحدة فقط في دفتر الأستاذ
+         - `entry_kind: 'customer_open'` يمنع حسابه في خزينة البياع
+         - يُحسب فقط في رصيد العميل عبر computeCustomerBalance
+      */
       await addLedgerEntry({
         rep_id: payload.rep_id,
         customer_id: payload.id,
         customer_name: payload.name,
         type: 'opening',
+        entry_kind: 'customer_open',
         cash_delta: payload.opening_balance_cash,
         gold_delta: payload.opening_balance_gold_pure,
         description: `رصيد افتتاحي — ${payload.name}`,
@@ -2853,14 +2901,19 @@
   };
 
   console.log(
-    '%c🏪 B2B Sellers Module loaded · Multi-Tenant',
+    '%c🏪 B2B Sellers Module v1.1.0 loaded · Multi-Tenant (Accounting Fixes)',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#d4c4f0,#6b3fa0);border-radius:4px;'
   );
 
   console.log(
-    '%c🔒 Data Isolation · Independent Cash+Gold Drawers · Rep Settlements',
-    'color:#6b7a95;font-weight:700;font-size:11px;'
+    '%c✅ FIX #1: Customer opening balance no longer double-counted',
+    'color:#0f7a43;font-weight:800;font-size:11px;'
+  );
+
+  console.log(
+    '%c✅ FIX #2: Rep treasury excludes customer opening entries (receivables)',
+    'color:#0f7a43;font-weight:800;font-size:11px;'
   );
 
 })();
