@@ -6,6 +6,7 @@
      - RBAC (Role-Based Access Control)
      - سجل التدقيق غير القابل للتعديل (Audit Trail)
      - إدارة الموظفين
+   ✅ v2: دعم B2B_REP + حقل rep_id في الجلسة والملف الشخصي
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -25,6 +26,7 @@
       phone: '01001234567',
       role: 'SUPER_ADMIN',
       branch_id: null,
+      rep_id: null,
       is_active: true,
       created_at: new Date(Date.now() - 400 * 86400000).toISOString(),
       last_login: null,
@@ -37,6 +39,7 @@
       phone: '01098765432',
       role: 'BRANCH_MANAGER',
       branch_id: 'br-1',
+      rep_id: null,
       is_active: true,
       created_at: new Date(Date.now() - 220 * 86400000).toISOString(),
       last_login: null,
@@ -49,6 +52,7 @@
       phone: '01122334455',
       role: 'ACCOUNTANT',
       branch_id: 'br-1',
+      rep_id: null,
       is_active: true,
       created_at: new Date(Date.now() - 180 * 86400000).toISOString(),
       last_login: null,
@@ -61,6 +65,7 @@
       phone: '01555566677',
       role: 'SALESPERSON',
       branch_id: 'br-1',
+      rep_id: null,
       is_active: true,
       created_at: new Date(Date.now() - 90 * 86400000).toISOString(),
       last_login: null,
@@ -73,6 +78,7 @@
       phone: '01277788899',
       role: 'SALESPERSON',
       branch_id: 'br-2',
+      rep_id: null,
       is_active: true,
       created_at: new Date(Date.now() - 60 * 86400000).toISOString(),
       last_login: null,
@@ -85,6 +91,7 @@
       phone: '01033344455',
       role: 'DATA_ENTRY',
       branch_id: 'br-1',
+      rep_id: null,
       is_active: true,
       created_at: new Date(Date.now() - 45 * 86400000).toISOString(),
       last_login: null,
@@ -97,8 +104,36 @@
       phone: '01199988877',
       role: 'BRANCH_MANAGER',
       branch_id: 'br-2',
+      rep_id: null,
       is_active: false,
       created_at: new Date(Date.now() - 300 * 86400000).toISOString(),
+      last_login: null,
+    },
+    /* ✅ B2B_REP — بياعو الجملة المستقلون */
+    {
+      id: 'usr-8',
+      email: 'rep1@goldms.eg',
+      password: 'Rep@1234',
+      full_name: 'محمود الباز',
+      phone: '01155667788',
+      role: 'B2B_REP',
+      branch_id: 'br-1',
+      rep_id: 'rep-1',          /* ✅ ربط ببياع جملة */
+      is_active: true,
+      created_at: new Date(Date.now() - 30 * 86400000).toISOString(),
+      last_login: null,
+    },
+    {
+      id: 'usr-9',
+      email: 'rep2@goldms.eg',
+      password: 'Rep@1234',
+      full_name: 'وليد النجار',
+      phone: '01099887766',
+      role: 'B2B_REP',
+      branch_id: 'br-1',
+      rep_id: 'rep-2',          /* ✅ بياع جملة آخر */
+      is_active: true,
+      created_at: new Date(Date.now() - 20 * 86400000).toISOString(),
       last_login: null,
     },
   ];
@@ -109,7 +144,7 @@
   const AuthState = {
     /* المستخدم الحالي */
     user: null,           // { id, email }
-    profile: null,        // { id, email, full_name, role, ... }
+    profile: null,        // { id, email, full_name, role, rep_id, ... }
 
     /* الصلاحيات */
     permissions: new Set(),
@@ -136,11 +171,6 @@
      §3 · EVENT EMITTER
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * إطلاق حدث
-   * @param {string} event
-   * @param {*} data
-   */
   function emit(event, data) {
     const set = AuthState.listeners[event];
     if (!set) return;
@@ -154,12 +184,6 @@
     });
   }
 
-  /**
-   * الاشتراك في حدث
-   * @param {string} event
-   * @param {Function} fn
-   * @returns {Function} unsubscribe
-   */
   function on(event, fn) {
     const set = AuthState.listeners[event];
     if (!set || typeof fn !== 'function') return () => {};
@@ -170,22 +194,11 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · AUDIT LOG ENGINE
-     ─────────────────────────────────────────────────────────────────────
-     سجل غير قابل للتعديل لكل العمليات الحساسة
      ═════════════════════════════════════════════════════════════════════ */
   const Audit = {
     logs: [],
     MAX: 500,
 
-    /**
-     * إضافة إدخال إلى السجل
-     * @param {string} action
-     * @param {string} entityType
-     * @param {string} entityId
-     * @param {string} description
-     * @param {Object} [metadata={}]
-     * @returns {Promise<Object>}
-     */
     async log(action, entityType, entityId, description, metadata = {}) {
       const entry = {
         id: GMS.uid(),
@@ -193,23 +206,22 @@
         user_name: AuthState.profile?.full_name || 'غير معروف',
         user_email: AuthState.profile?.email || null,
         user_role: AuthState.profile?.role || null,
+        user_rep_id: AuthState.profile?.rep_id || null,
         action,
         entity_type: entityType,
         entity_id: entityId,
         description,
         metadata: metadata || {},
-        ip: '—',   // يُملأ من الخادم في وضع الإنتاج
+        ip: '—',
         branch_id: AuthState.profile?.branch_id || null,
         created_at: new Date().toISOString(),
       };
 
-      // إضافة محلياً
       this.logs.unshift(entry);
       if (this.logs.length > this.MAX) {
         this.logs = this.logs.slice(0, this.MAX);
       }
 
-      // حفظ آخر 100 في LocalStorage
       try {
         localStorage.setItem(
           GMS.LS_KEYS.AUDIT,
@@ -217,7 +229,6 @@
         );
       } catch (_) {}
 
-      // رفع إلى Supabase إذا متاح
       if (GMS.Supabase.isReady()) {
         try {
           const client = GMS.Supabase.get();
@@ -240,24 +251,10 @@
       return entry;
     },
 
-    /**
-     * قراءة السجل كاملاً
-     * @returns {Array}
-     */
     getAll() {
       return this.logs;
     },
 
-    /**
-     * فلترة السجل
-     * @param {Object} [filters={}]
-     * @param {string} [filters.action]
-     * @param {string} [filters.role]
-     * @param {string} [filters.search]
-     * @param {string} [filters.entityType]
-     * @param {number} [filters.limit=200]
-     * @returns {Array}
-     */
     filter(filters = {}) {
       const {
         action = '',
@@ -286,9 +283,6 @@
       return rows.slice(0, limit);
     },
 
-    /**
-     * تحميل السجل من LocalStorage
-     */
     load() {
       try {
         const stored = localStorage.getItem(GMS.LS_KEYS.AUDIT);
@@ -301,9 +295,6 @@
       } catch (_) {}
     },
 
-    /**
-     * تفريغ السجل (لا يجب أن يُستخدم في الإنتاج)
-     */
     clear() {
       this.logs = [];
       try {
@@ -311,10 +302,6 @@
       } catch (_) {}
     },
 
-    /**
-     * إحصائيات السجل
-     * @returns {Object}
-     */
     stats() {
       const byAction = {};
       const byRole = {};
@@ -347,22 +334,17 @@
     get profile() { return AuthState.profile; },
     get role() { return AuthState.profile?.role || null; },
     get branchId() { return AuthState.profile?.branch_id || null; },
+    get repId() { return AuthState.profile?.rep_id || null; },   /* ✅ جديد */
     get isAuthenticated() { return AuthState.signedIn; },
     get permissionCount() { return AuthState.permissions.size; },
 
     /* ─── Initialization ──────────────────────────────────────────── */
 
-    /**
-     * تهيئة نظام المصادقة
-     * @returns {Promise<Object>}
-     */
     async init() {
       if (AuthState.initialized) return AuthState;
 
-      // تحميل سجل التدقيق
       Audit.load();
 
-      // محاولة استرجاع الجلسة
       const restored = this.tryRestoreSession();
 
       AuthState.initialized = true;
@@ -376,16 +358,9 @@
 
     /* ─── Sign In ─────────────────────────────────────────────────── */
 
-    /**
-     * تسجيل الدخول
-     * @param {string} email
-     * @param {string} password
-     * @returns {Promise<Object>}
-     */
     async signIn(email, password) {
       email = String(email || '').trim().toLowerCase();
 
-      // التحقق من المدخلات
       if (!GMS.Validate.email(email)) {
         throw new Error(GMS.t('err.invalidEmail'));
       }
@@ -410,7 +385,6 @@
             email: data.user.email,
           };
 
-          // تحميل الملف الشخصي
           const profileLoaded = await this._loadProfileFromSupabase();
           if (!profileLoaded) {
             throw new Error('لا يوجد ملف شخصي مرتبط بهذا الحساب');
@@ -427,7 +401,6 @@
 
         } catch (e) {
           console.error('[Auth.signIn] Supabase failed:', e);
-          // نسقط إلى demo mode إذا فشل الاتصال
           if (e.message.includes('Failed to fetch') ||
               e.message.includes('NetworkError')) {
             return this._signInDemo(email, password);
@@ -440,15 +413,7 @@
       return this._signInDemo(email, password);
     },
 
-    /**
-     * تسجيل الدخول في الوضع التجريبي
-     * @param {string} email
-     * @param {string} password
-     * @returns {Promise<Object>}
-     * @private
-     */
     async _signInDemo(email, password) {
-      // محاكاة تأخير الشبكة
       await GMS.sleep(350);
 
       const user = AuthState.employees.find(
@@ -480,20 +445,13 @@
       return AuthState.profile;
     },
 
-    /**
-     * عمليات نهائية بعد تسجيل الدخول
-     * @returns {Promise<void>}
-     * @private
-     */
     async _finalizeSignIn() {
       AuthState.signedIn = true;
       AuthState.sessionStartedAt = Date.now();
 
-      // تحديث آخر دخول
       if (AuthState.profile) {
         AuthState.profile.last_login = new Date().toISOString();
 
-        // تحديث في المصفوفة المحلية
         const idx = AuthState.employees.findIndex(
           e => e.id === AuthState.profile.id
         );
@@ -501,10 +459,8 @@
           AuthState.employees[idx].last_login = AuthState.profile.last_login;
         }
 
-        // حفظ الجلسة
         this._persistSession();
 
-        // سجل التدقيق
         await Audit.log(
           'LOGIN',
           'session',
@@ -513,27 +469,20 @@
           {
             email: AuthState.profile.email,
             role: AuthState.profile.role,
+            rep_id: AuthState.profile.rep_id || null,   /* ✅ جديد */
             user_agent: navigator.userAgent.slice(0, 100),
           }
         );
       }
 
-      // إبلاغ المستمعين
       emit('signIn', AuthState.profile);
     },
 
     /* ─── Sign Out ────────────────────────────────────────────────── */
 
-    /**
-     * تسجيل الخروج
-     * @param {Object} [opts]
-     * @param {boolean} [opts.silent=false] — عدم تسجيل الخروج في السجل
-     * @returns {Promise<void>}
-     */
     async signOut(opts = {}) {
       const { silent = false } = opts;
 
-      // سجل التدقيق (قبل مسح الحالة)
       if (!silent && AuthState.profile) {
         try {
           await Audit.log(
@@ -547,11 +496,9 @@
         }
       }
 
-      // إبلاغ المستمعين
       const lastProfile = AuthState.profile;
       emit('signOut', lastProfile);
 
-      // مسح Supabase session
       if (GMS.Supabase.isReady()) {
         try {
           await GMS.Supabase.get().auth.signOut();
@@ -560,14 +507,12 @@
         }
       }
 
-      // مسح الحالة
       AuthState.user = null;
       AuthState.profile = null;
       AuthState.permissions.clear();
       AuthState.signedIn = false;
       AuthState.sessionStartedAt = null;
 
-      // مسح الجلسة المحفوظة
       try {
         localStorage.removeItem(GMS.LS_KEYS.SESSION);
       } catch (_) {}
@@ -575,24 +520,17 @@
 
     /* ─── Session Persistence ─────────────────────────────────────── */
 
-    /**
-     * حفظ الجلسة في LocalStorage
-     * @private
-     */
     _persistSession() {
       try {
         localStorage.setItem(GMS.LS_KEYS.SESSION, JSON.stringify({
           userId: AuthState.user.id,
           email: AuthState.user.email,
+          rep_id: AuthState.profile?.rep_id || null,   /* ✅ جديد */
           startedAt: AuthState.sessionStartedAt,
         }));
       } catch (_) {}
     },
 
-    /**
-     * استرجاع الجلسة المحفوظة
-     * @returns {boolean}
-     */
     tryRestoreSession() {
       try {
         const stored = localStorage.getItem(GMS.LS_KEYS.SESSION);
@@ -601,14 +539,12 @@
         const session = JSON.parse(stored);
         if (!session.userId) return false;
 
-        // فحص مدة انتهاء الجلسة
         const elapsed = Date.now() - (session.startedAt || 0);
         if (elapsed > GMS.SECURITY_CONFIG.SESSION_TIMEOUT_MS) {
           localStorage.removeItem(GMS.LS_KEYS.SESSION);
           return false;
         }
 
-        // البحث عن المستخدم
         const user = AuthState.employees.find(u => u.id === session.userId);
         if (!user || !user.is_active) {
           localStorage.removeItem(GMS.LS_KEYS.SESSION);
@@ -632,11 +568,6 @@
 
     /* ─── Profile Loading ─────────────────────────────────────────── */
 
-    /**
-     * تحميل الملف الشخصي من Supabase
-     * @returns {Promise<boolean>}
-     * @private
-     */
     async _loadProfileFromSupabase() {
       try {
         const client = GMS.Supabase.get();
@@ -651,6 +582,9 @@
         if (error) throw error;
         if (!data) return false;
 
+        /* ✅ تطبيع rep_id */
+        if (data.rep_id === undefined) data.rep_id = null;
+
         AuthState.profile = data;
         return true;
       } catch (e) {
@@ -661,10 +595,6 @@
 
     /* ─── RBAC ────────────────────────────────────────────────────── */
 
-    /**
-     * حساب الصلاحيات من الدور
-     * @private
-     */
     _computePermissions() {
       AuthState.permissions.clear();
 
@@ -674,87 +604,61 @@
       GMS.PERMISSIONS[role].forEach(p => AuthState.permissions.add(p));
     },
 
-    /**
-     * فحص صلاحية
-     * @param {string} permission
-     * @returns {boolean}
-     */
     can(permission) {
       return AuthState.permissions.has(permission);
     },
 
-    /**
-     * فحص أي صلاحية من قائمة
-     * @param {...string} permissions
-     * @returns {boolean}
-     */
     canAny(...permissions) {
       return permissions.some(p => this.can(p));
     },
 
-    /**
-     * فحص كل الصلاحيات
-     * @param {...string} permissions
-     * @returns {boolean}
-     */
     canAll(...permissions) {
       return permissions.every(p => this.can(p));
     },
 
-    /**
-     * فحص دور محدد
-     * @param {string} roleKey
-     * @returns {boolean}
-     */
     isRole(roleKey) {
       return AuthState.profile?.role === roleKey;
     },
 
-    /**
-     * فحص دور من عدة أدوار
-     * @param {...string} roleKeys
-     * @returns {boolean}
-     */
     isAnyRole(...roleKeys) {
       return roleKeys.includes(AuthState.profile?.role);
     },
 
-    /**
-     * فحص المستوى الأدنى من الصلاحية
-     * @param {string} roleKey
-     * @returns {boolean}
-     */
     atLeast(roleKey) {
       const userLevel = GMS.ROLES[AuthState.profile?.role]?.level || 0;
       const requiredLevel = GMS.ROLES[roleKey]?.level || 999;
       return userLevel >= requiredLevel;
     },
 
-    /**
-     * قراءة كل الصلاحيات الحالية
-     * @returns {Array<string>}
-     */
     getPermissions() {
       return Array.from(AuthState.permissions);
     },
 
-    /**
-     * فحص ما إذا كان المستخدم من نفس الفرع
-     * @param {string} branchId
-     * @returns {boolean}
-     */
     isInBranch(branchId) {
       if (this.isRole('SUPER_ADMIN')) return true;
       return AuthState.profile?.branch_id === branchId;
     },
 
+    /* ✅ جديد: هل المستخدم بياع جملة؟ */
+    isB2BRep() {
+      return AuthState.profile?.role === 'B2B_REP';
+    },
+
+    /* ✅ جديد: هل يمكنه الوصول لبياع معين؟ */
+    canAccessRep(repId) {
+      if (this.isRole('SUPER_ADMIN') ||
+          this.isRole('BRANCH_MANAGER') ||
+          this.isRole('ACCOUNTANT')) {
+        return true;
+      }
+      if (this.isB2BRep()) {
+        return AuthState.profile?.rep_id === repId;
+      }
+      return false;
+    },
+
     /* ─── Employee Management ─────────────────────────────────────── */
 
-    /**
-     * قراءة كل الموظفين
-     * @param {Object} [filters={}]
-     * @returns {Array}
-     */
     getEmployees(filters = {}) {
       const { role = '', branch_id = '', active = null, search = '' } = filters;
 
@@ -776,37 +680,21 @@
       return rows;
     },
 
-    /**
-     * قراءة موظف بالمعرف
-     * @param {string} id
-     * @returns {Object|null}
-     */
     getEmployeeById(id) {
       return AuthState.employees.find(u => u.id === id) || null;
     },
 
-    /**
-     * قراءة موظف بالبريد
-     * @param {string} email
-     * @returns {Object|null}
-     */
     getEmployeeByEmail(email) {
       return AuthState.employees.find(
         u => u.email.toLowerCase() === String(email).toLowerCase()
       ) || null;
     },
 
-    /**
-     * إضافة موظف جديد
-     * @param {Object} data
-     * @returns {Promise<Object>}
-     */
     async createEmployee(data) {
       if (!this.can('manageEmployees')) {
         throw new Error(GMS.t('err.permissionDenied'));
       }
 
-      // التحقق من الصحة
       if (!data.full_name || data.full_name.trim().length < 2) {
         throw new Error(GMS.t('err.required'));
       }
@@ -820,12 +708,10 @@
         throw new Error(GMS.t('err.invalidFormat'));
       }
 
-      // التحقق من عدم التكرار
       if (this.getEmployeeByEmail(data.email)) {
         throw new Error(GMS.t('err.alreadyExists'));
       }
 
-      // التحقق من كلمة المرور
       if (data.password) {
         const pwdCheck = GMS.Validate.password(data.password);
         if (!pwdCheck.valid) {
@@ -833,17 +719,16 @@
         }
       }
 
-      // تنظيف المدخلات
       const sanitized = GMS.sanitizePayload({
         full_name: data.full_name,
         email: data.email.toLowerCase().trim(),
         phone: data.phone.trim(),
         role: data.role,
         branch_id: data.branch_id || null,
+        rep_id: data.rep_id || null,   /* ✅ جديد */
         notes: data.notes || '',
       }, { maxLength: 200 });
 
-      // إنشاء الموظف محلياً
       const newUser = {
         id: 'usr-' + GMS.uid(),
         ...sanitized,
@@ -856,12 +741,10 @@
 
       AuthState.employees.push(newUser);
 
-      // رفع إلى Supabase
       if (GMS.Supabase.isReady()) {
         try {
           const client = GMS.Supabase.get();
 
-          // إنشاء حساب مصادقة
           const { data: authData, error: authError } = await client.auth.signUp({
             email: newUser.email,
             password: data.password || 'Temp@1234',
@@ -875,7 +758,6 @@
 
           if (authError) throw authError;
 
-          // إضافة ملف شخصي
           if (authData?.user) {
             await client
               .from(GMS.SUPABASE_CONFIG.TABLES.PROFILES)
@@ -886,16 +768,15 @@
                 phone: newUser.phone,
                 role: newUser.role,
                 branch_id: newUser.branch_id,
+                rep_id: newUser.rep_id,   /* ✅ جديد */
                 is_active: true,
               });
           }
         } catch (e) {
           console.warn('[Auth.createEmployee] Supabase failed:', e.message);
-          // نستمر — المستخدم موجود محلياً
         }
       }
 
-      // سجل التدقيق
       await Audit.log(
         'CREATE',
         'user',
@@ -905,18 +786,13 @@
           email: newUser.email,
           role: newUser.role,
           branch_id: newUser.branch_id,
+          rep_id: newUser.rep_id,
         }
       );
 
       return newUser;
     },
 
-    /**
-     * تعديل موظف
-     * @param {string} id
-     * @param {Object} data
-     * @returns {Promise<Object>}
-     */
     async updateEmployee(id, data) {
       if (!this.can('manageEmployees')) {
         throw new Error(GMS.t('err.permissionDenied'));
@@ -927,7 +803,6 @@
 
       const old = AuthState.employees[idx];
 
-      // التحقق من الصحة
       if (data.full_name !== undefined && data.full_name.trim().length < 2) {
         throw new Error(GMS.t('err.required'));
       }
@@ -941,15 +816,12 @@
         throw new Error(GMS.t('err.invalidFormat'));
       }
 
-      // منع تعديل الدور بدون صلاحية
       if (data.role !== undefined && !this.isRole('SUPER_ADMIN')) {
         delete data.role;
       }
 
-      // تنظيف
       const sanitized = GMS.sanitizePayload(data, { maxLength: 200 });
 
-      // تحديث محلي
       const updated = {
         ...old,
         ...sanitized,
@@ -959,7 +831,6 @@
 
       AuthState.employees[idx] = updated;
 
-      // تحديث في Supabase
       if (GMS.Supabase.isReady() && !id.startsWith('usr-') === false) {
         try {
           const client = GMS.Supabase.get();
@@ -970,6 +841,7 @@
               phone: updated.phone,
               role: updated.role,
               branch_id: updated.branch_id,
+              rep_id: updated.rep_id,   /* ✅ جديد */
               is_active: updated.is_active,
             })
             .eq('id', id);
@@ -978,13 +850,11 @@
         }
       }
 
-      // إذا كان المستخدم نفسه — تحديث الملف الشخصي
       if (AuthState.profile && AuthState.profile.id === id) {
         AuthState.profile = { ...updated };
         this._computePermissions();
       }
 
-      // سجل التدقيق
       const changes = Object.keys(sanitized).filter(k => old[k] !== sanitized[k]);
 
       await Audit.log(
@@ -1002,18 +872,11 @@
       return updated;
     },
 
-    /**
-     * تفعيل/إيقاف موظف
-     * @param {string} id
-     * @param {boolean} isActive
-     * @returns {Promise<Object>}
-     */
     async toggleEmployeeActive(id, isActive) {
       if (!this.can('manageEmployees')) {
         throw new Error(GMS.t('err.permissionDenied'));
       }
 
-      // منع تعطيل نفسه
       if (AuthState.profile?.id === id) {
         throw new Error('لا يمكنك تعطيل حسابك الخاص');
       }
@@ -1023,28 +886,17 @@
 
     /* ─── Utilities ───────────────────────────────────────────────── */
 
-    /**
-     * الوقت المتبقي للجلسة
-     * @returns {number} بالمللي ثانية
-     */
     getSessionTimeRemaining() {
       if (!AuthState.sessionStartedAt) return 0;
       const elapsed = Date.now() - AuthState.sessionStartedAt;
       return Math.max(0, GMS.SECURITY_CONFIG.SESSION_TIMEOUT_MS - elapsed);
     },
 
-    /**
-     * تحديث الجلسة (تمديد)
-     */
     refreshSession() {
       AuthState.sessionStartedAt = Date.now();
       this._persistSession();
     },
 
-    /**
-     * قراءة ملخص سريع للمستخدم
-     * @returns {Object|null}
-     */
     getSummary() {
       if (!AuthState.profile) return null;
 
@@ -1061,22 +913,17 @@
         branchName: AuthState.profile.branch_id
           ? (GMS.getBranches().find(b => b.id === AuthState.profile.branch_id)?.name || '—')
           : 'كل الفروع',
+        repId: AuthState.profile.rep_id || null,   /* ✅ جديد */
         permissionCount: AuthState.permissions.size,
       };
     },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · PERMISSION GUARDS (للاستخدام في الواجهة)
+     §6 · PERMISSION GUARDS
      ═════════════════════════════════════════════════════════════════════ */
   const Guard = {
 
-    /**
-     * عرض صفحة ممنوعة
-     * @param {string} [title]
-     * @param {string} [message]
-     * @returns {string} HTML
-     */
     denied(title, message) {
       const t = title || GMS.t('err.permissionDenied');
       const m = message || GMS.t('err.permissionDeniedDesc');
@@ -1089,29 +936,14 @@
         </div>`;
     },
 
-    /**
-     * التحقق من صلاحية، وإرجاع true إذا مسموح
-     * @param {string} permission
-     * @returns {boolean}
-     */
     require(permission) {
       return Auth.can(permission);
     },
 
-    /**
-     * التحقق من دور مطلوب
-     * @param {...string} roles
-     * @returns {boolean}
-     */
     requireRole(...roles) {
       return Auth.isAnyRole(...roles);
     },
 
-    /**
-     * إخفاء عنصر DOM إذا لم يكن مصرحاً
-     * @param {Element|string} el
-     * @param {string} permission
-     */
     hideIfNoPermission(el, permission) {
       const target = typeof el === 'string' ? GMS.$(el) : el;
       if (!target) return;
@@ -1121,11 +953,6 @@
       }
     },
 
-    /**
-     * تعطيل عنصر إذا لم يكن مصرحاً
-     * @param {Element|string} el
-     * @param {string} permission
-     */
     disableIfNoPermission(el, permission) {
       const target = typeof el === 'string' ? GMS.$(el) : el;
       if (!target) return;
@@ -1150,16 +977,20 @@
      §8 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🔐 Auth & RBAC loaded · 5 roles · Audit trail',
+    '%c🔐 Auth & RBAC v2 loaded · 6 roles + B2B_REP · Audit trail',
     'color:#b3261e;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#fdecea;border-radius:4px;'
   );
 
   console.log(
-    `%c👥 ${DEMO_USERS.length} demo users · ` +
-    `${Object.keys(GMS.PERM_LABELS).length} permissions · ` +
-    `Session timeout: ${GMS.SECURITY_CONFIG.SESSION_TIMEOUT_MS / 3600000}h`,
+    `%c👥 ${DEMO_USERS.length} demo users (2 B2B reps) · ` +
+    `${Object.keys(GMS.PERM_LABELS).length} permissions`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v2: rep_id in session · canAccessRep() · isB2BRep() helpers`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
