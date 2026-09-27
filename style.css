@@ -5160,6 +5160,118 @@ kbd {
   cursor: pointer;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §71 · MOBILE STABILITY FIXES (v6.1)
+   ─────────────────────────────────────────────────────────────────────
+   ✅ FIX: منع الشاشة السوداء/البيضاء على الموبايل عند:
+     • تغيير اللغة (RTL ↔ LTR)
+     • إعادة رسم الصفحات
+     • تغيير الاتجاه
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ─── إصلاح شامل على الموبايل ─── */
+@media (max-width: 768px) {
+
+  /* ✅ إلغاء الأنيميشن على الصفحة لمنع الشاشة السوداء عند التنقل */
+  .page {
+    animation: none !important;
+  }
+
+  /* ✅ التأكد من أن #app يأخذ كامل الشاشة */
+  #app {
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ✅ منع overflow الأفقي */
+  html, body {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+
+  /* ✅ إصلاح الجداول الواسعة */
+  .table-wrap {
+    max-width: 100vw;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ✅ منع تعليق KPI cards */
+  .kpi {
+    transform: none !important;
+  }
+
+  /* ✅ إلغاء backdrop-filter الثقيل على الموبايل */
+  .topbar {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--surface);
+  }
+}
+
+/* ✅ إصلاح قوي للموبايل الصغير جداً */
+@media (max-width: 480px) {
+
+  /* إلغاء الأنيميشن على كل شيء تقريباً */
+  .page,
+  .card,
+  .kpi,
+  .modal {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* تبسيط الـ charts */
+  .chart-wrap canvas {
+    max-height: 220px;
+  }
+
+  /* منع تعليق الـ toasts */
+  .toast {
+    animation: none !important;
+  }
+}
+
+/* ✅ إصلاح الصفحة الفارغة — منع الشاشة السوداء عند RTL switching */
+html[dir="rtl"] body,
+html[dir="ltr"] body {
+  background-color: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ✅ إصلاح عند تبديل الاتجاه */
+html[dir="ltr"] .topbar,
+html[dir="rtl"] .topbar {
+  direction: inherit;
+}
+
+/* ✅ إصلاح مشكلة الـ blank screen — إنشاء placeholder مؤقت */
+#app:empty::after {
+  content: "جارٍ التحميل…";
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* ✅ إصلاح viewport للـ iOS Safari */
+@supports (-webkit-touch-callout: none) {
+  #app {
+    min-height: -webkit-fill-available;
+  }
+}
+
+
+
+
+
+
 /* ═══════════════════════════════════════════════════════════════════════
    ✅ style.css — نهاية الملف
    ═══════════════════════════════════════════════════════════════════════ */
