@@ -205,6 +205,8 @@
     /* Scheduled rerender */
     scheduledRerender: null,
     scheduledDelay: 400,   /* ms */
+    /* ✅ تعليق مؤقت للـ scheduled rerender (وقت تبديل اللغة مثلاً) */
+    suspended: false,
 
     /* سجل التنقل */
     history: [],
@@ -688,6 +690,12 @@
    *   - يتخطى إذا كان هناك أي تفاعل حديث (آخر 3 ثواني)
    */
   function scheduleRerender(delay) {
+    /* ✅ معلَّق حاليًا (مثلاً: عملية تبديل لغة شغالة) — تجاهل تمامًا */
+    if (RState.suspended) {
+      console.log('[Router] ⛔ Rerender suspended — تجاهل الجدولة');
+      return;
+    }
+
     /* ✅ فحص أولي — قبل الجدولة */
     if (shouldSkipRerender()) {
       console.log('[Router] ⛔ Rerender blocked — user interacting');
@@ -702,6 +710,11 @@
 
     RState.scheduledRerender = setTimeout(async () => {
       RState.scheduledRerender = null;
+
+      if (RState.suspended) {
+        console.log('[Router] ⛔ Rerender suspended — تجاهل التنفيذ');
+        return;
+      }
 
       /* ✅ فحص ثاني — ربما تغيّر الوضع */
       if (shouldSkipRerender()) {
@@ -729,6 +742,18 @@
         console.warn('[Router] Scheduled rerender failed:', e);
       }
     }, d);
+  }
+
+  /**
+   * ✅ تعليق/استئناف الـ scheduled rerender من بره (مثلاً أثناء تبديل اللغة)
+   */
+  function suspendScheduling() {
+    RState.suspended = true;
+    cancelScheduledRerender();
+  }
+
+  function resumeScheduling() {
+    RState.suspended = false;
   }
 
   /**
@@ -1128,6 +1153,8 @@
     /* Schedule */
     scheduleRerender,
     cancelScheduledRerender,
+    suspendScheduling,
+    resumeScheduling,
     isModalOpen,
     shouldSkipRerender,
 
