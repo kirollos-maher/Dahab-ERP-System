@@ -1051,13 +1051,24 @@
 
     /**
      * قراءة المخزون (يُولَّد مرة واحدة)
+     * ✅ FIX: تقليل عدد الأصناف على الموبايل لمنع انهيار الذاكرة
      * @param {boolean} [force=false] — إعادة التوليد
      * @returns {Array}
      */
     getInventory(force = false) {
       if (!this._inventory || force) {
-        this._inventory = generateInventory(1200, 1337);
-        console.log(`[Demo] Generated ${this._inventory.length} inventory items`);
+        // ✅ تحديد إذا كان الجهاز موبايل
+        const isMobile = /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(
+          navigator.userAgent || ''
+        );
+        // ✅ تقليل العدد على الموبايل إلى 300 صنف بدلاً من 1200
+        const count = isMobile ? 300 : 1200;
+
+        this._inventory = generateInventory(count, 1337);
+        console.log(
+          `[Demo] Generated ${this._inventory.length} inventory items ` +
+          `(Device: ${isMobile ? 'Mobile' : 'Desktop'})`
+        );
       }
       return this._inventory;
     },
