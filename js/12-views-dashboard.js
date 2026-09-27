@@ -508,6 +508,13 @@
     const canvas = document.getElementById('chart-sales-24h');
     if (!canvas) return;
 
+    /* ✅ FIX: تأكد من أن الـ canvas له أبعاد قبل الرسم */
+    if (canvas.offsetWidth === 0 || canvas.offsetHeight === 0) {
+      console.warn('[Dashboard] Canvas has 0 dimensions — retry in 100ms');
+      setTimeout(() => renderSales24hChart(data), 100);
+      return;
+    }
+
     const labels = data.map(d => String(d.hour).padStart(2, '0') + ':00');
     const values = data.map(d => d.value);
     const total = values.reduce((a, b) => a + b, 0);
