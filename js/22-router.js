@@ -12,6 +12,7 @@
      - Route guards
      - ✅ Form Interaction Tracker (يحمي النماذج والفلاتر أثناء التفاعل)
      - ✅ v2: reload({force}) + renderView backup/restore (منع الشاشة البيضاء)
+     - ✅ v3: إضافة مسار b2b (بياعي الجملة المستقلين)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -145,6 +146,18 @@
       hidden: false,
     },
 
+    /* ✅ وحدة بياعي الجملة المستقلين (Multi-Tenant B2B) */
+    b2b: {
+      id: 'b2b',
+      label: 'بياعو الجملة',
+      subtitle: 'كيانات B2B مستقلة بخزائن منفصلة',
+      icon: 'user-check',
+      view: 'b2b',
+      permission: 'viewB2BCustomers',
+      roles: ['SUPER_ADMIN', 'BRANCH_MANAGER', 'ACCOUNTANT', 'B2B_REP'],
+      hidden: false,
+    },
+
     queue: {
       id: 'queue',
       label: 'المزامنة',
@@ -181,6 +194,7 @@
     'audit',
     'accounting',
     'wholesale',
+    'b2b',
     'queue',
     'settings',
   ];
@@ -189,30 +203,19 @@
      §2 · ROUTER STATE
      ═════════════════════════════════════════════════════════════════════ */
   const RState = {
-    /* الصفحة الحالية */
     current: null,
     previous: null,
-
-    /* هل الراوتر جاهز؟ */
     initialized: false,
-
-    /* هل نحن في عملية تصيير؟ */
     rendering: false,
-
-    /* آخر render time */
     lastRenderAt: null,
 
-    /* Scheduled rerender */
     scheduledRerender: null,
-    scheduledDelay: 400,   /* ms */
-    /* ✅ تعليق مؤقت للـ scheduled rerender (وقت تبديل اللغة مثلاً) */
+    scheduledDelay: 400,
     suspended: false,
 
-    /* سجل التنقل */
     history: [],
     maxHistory: 30,
 
-    /* المستمعون */
     listeners: {
       beforeNavigate: new Set(),
       afterNavigate: new Set(),
@@ -225,20 +228,12 @@
      §3 · HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * قراءة hash الحالي
-   * @returns {string}
-   */
   function getHashRoute() {
     const hash = location.hash || '';
     if (!hash) return '';
     return hash.replace(/^#\/?/, '').split('?')[0].trim();
   }
 
-  /**
-   * كتابة hash جديد بدون إعادة تحميل
-   * @param {string} route
-   */
   function setHashRoute(route) {
     const newHash = '#/' + route;
     if (location.hash !== newHash) {
@@ -246,22 +241,15 @@
     }
   }
 
-  /**
-   * التحقق من صلاحية المسار
-   * @param {Object} route
-   * @returns {{allowed: boolean, reason: string}}
-   */
   function checkRouteAccess(route) {
     if (!route) {
       return { allowed: false, reason: 'ROUTE_NOT_FOUND' };
     }
 
-    /* إذا لم يكن هناك Auth — اسمح (وضع تجريبي) */
     if (!GMS.Auth?.profile) {
       return { allowed: true, reason: '' };
     }
 
-    /* فحص الصلاحية */
     if (route.permission && !GMS.Auth.can(route.permission)) {
       return {
         allowed: false,
@@ -270,7 +258,6 @@
       };
     }
 
-    /* فحص الأدوار */
     if (route.roles && route.roles.length > 0) {
       const userRole = GMS.Auth.profile.role;
       if (!route.roles.includes(userRole)) {
@@ -285,9 +272,6 @@
     return { allowed: true, reason: '' };
   }
 
-  /**
-   * إطلاق حدث
-   */
   function emit(event, data) {
     const set = RState.listeners[event];
     if (!set) return;
@@ -298,9 +282,6 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §3.5 · FORM INTERACTION TRACKER
-     ─────────────────────────────────────────────────────────────────────
-     يتابع آخر مرة تفاعل فيها المستخدم مع حقل إدخال
-     لمنع Rerender فجائي أثناء الكتابة أو اختيار قيم من القوائم
      ═════════════════════════════════════════════════════════════════════ */
   (function initFormTracker() {
     const markInteraction = () => {
@@ -309,7 +290,6 @@
       window.GMS._lastInteraction = Date.now();
     };
 
-    /* تفعيل المستمعين على document بمستوى capture */
     ['focusin', 'keydown', 'pointerdown', 'input', 'change'].forEach(evt => {
       document.addEventListener(evt, (e) => {
         const target = e.target;
@@ -334,33 +314,20 @@
      §4 · CORE NAVIGATION
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * الانتقال إلى مسار
-   * @param {string} routeId
-   * @param {Object} [opts]
-   * @param {boolean} [opts.force=false]  — تجاهل الفحوصات
-   * @param {boolean} [opts.replace=false] — استبدال التاريخ بدل الإضافة
-   * @param {Object} [opts.params={}]     — معاملات إضافية
-   * @returns {Promise<boolean>}
-   */
   async function go(routeId, opts = {}) {
     const { force = false, replace = false } = opts;
 
-    /* تأكد من وجود المسار */
     const route = ROUTES[routeId];
     if (!route) {
       console.warn('[Router] Unknown route:', routeId);
       return go('dashboard');
     }
 
-    /* لا حاجة لإعادة التصيير إذا كان نفس الصفحة */
     if (RState.current === routeId && !force) {
-      /* إغلاق أي modal مفتوح */
       if (GMS.Modal) GMS.Modal.closeAll();
       return true;
     }
 
-    /* إطلاق حدث before */
     const navData = {
       from: RState.current,
       to: routeId,
@@ -368,7 +335,6 @@
     };
     emit('beforeNavigate', navData);
 
-    /* فحص الصلاحية */
     if (!force) {
       const access = checkRouteAccess(route);
 
@@ -382,7 +348,6 @@
 
         emit('navigationBlocked', { ...navData, reason: access.reason });
 
-        /* ارجع للصفحة الافتراضية */
         if (routeId !== 'dashboard') {
           return go('dashboard', { force: true });
         }
@@ -390,14 +355,10 @@
       }
     }
 
-    /* ✅ إغلاق Modals عند تنقل حقيقي، أو عند إعادة رسم إجبارية (force) لنفس الصفحة */
     if (GMS.Modal && (RState.current !== routeId || force)) {
       GMS.Modal.closeAll();
     }
 
-    /* ✅ Cleanup الصفحة الحالية — لازم يحصل حتى لو نفس الصفحة و force=true،
-       عشان أي Chart.js instances أو intervals/timers اتسجلت في الرسم السابق
-       تتقفل قبل ما نعيد بناء نفس الصفحة من جديد (مثال: تبديل اللغة) */
     if (RState.current && (RState.current !== routeId || force)) {
       try {
         const currentView = GMS.Views?.[ROUTES[RState.current]?.view];
@@ -409,31 +370,24 @@
       }
     }
 
-    /* تحديث الحالة */
     RState.previous = RState.current;
     RState.current = routeId;
     RState.rendering = true;
 
-    /* تحديث التبويب النشط */
     updateActiveTab(routeId);
-
-    /* تحديث العنوان */
     updatePageTitle(route);
 
-    /* تحديث hash */
     if (replace) {
       history.replaceState(null, '', '#/' + routeId);
     } else {
       setHashRoute(routeId);
     }
 
-    /* إضافة إلى السجل */
     pushHistory({
       route: routeId,
       at: new Date().toISOString(),
     });
 
-    /* تصيير الصفحة */
     try {
       await renderView(route);
 
@@ -450,7 +404,6 @@
     } catch (e) {
       console.error('[Router] Render failed:', e);
 
-      /* عرض صفحة خطأ */
       renderError(route, e);
 
       emit('renderError', { ...navData, error: e.message });
@@ -466,20 +419,13 @@
     }
   }
 
-  /**
-   * ✅ تصيير الصفحة الحالية — النسخة المُحصَّنة
-   * لا تترك #page فارغة أبداً، وتستعيد المحتوى السابق عند الفشل
-   */
   async function renderView(route) {
     const host = document.getElementById('page');
     if (!host) {
       throw new Error('عنصر #page غير موجود');
     }
 
-    /* احفظ محتوى احتياطي */
     const backup = host.innerHTML;
-
-    /* ابحث عن الـ View */
     const view = GMS.Views?.[route.view];
 
     if (!view) {
@@ -487,7 +433,6 @@
     }
 
     try {
-      /* إذا كان للصفحة دوال خاصة */
       if (typeof view.render === 'function') {
         await view.render(host);
       } else if (typeof view.mount === 'function') {
@@ -496,7 +441,6 @@
         throw new Error(`View "${route.view}" لا يحتوي على دالة render`);
       }
 
-      /* لو الـ host فضيّ — أعِد المحتوى السابق */
       if (!host.innerHTML.trim() || host.innerHTML.trim().length < 30) {
         console.warn('[Router] View rendered empty content — restoring backup');
         host.innerHTML = backup || `
@@ -506,11 +450,9 @@
           </div>`;
       }
 
-      /* إعادة رسم الأيقونات */
       window.lucide?.createIcons();
 
     } catch (e) {
-      /* استرجاع المحتوى السابق بدل ترك شاشة بيضاء */
       if (backup && backup.trim().length > 30) {
         host.innerHTML = backup;
         window.lucide?.createIcons();
@@ -519,9 +461,6 @@
     }
   }
 
-  /**
-   * عرض صفحة خطأ
-   */
   function renderError(route, error) {
     const host = document.getElementById('page');
     if (!host) return;
@@ -570,7 +509,6 @@
 
     window.lucide?.createIcons();
 
-    /* Bind buttons */
     document.getElementById('route-retry')?.addEventListener('click', () => {
       go(route.id, { force: true });
     });
@@ -580,10 +518,6 @@
     });
   }
 
-  /**
-   * تحديث التبويب النشط
-   * @param {string} routeId
-   */
   function updateActiveTab(routeId) {
     document.querySelectorAll('[data-tab]').forEach(tab => {
       const isActive = tab.dataset.tab === routeId;
@@ -591,29 +525,16 @@
     });
   }
 
-  /**
-   * تحديث عنوان الصفحة
-   * @param {Object} route
-   */
   function updatePageTitle(route) {
     const titleEl = document.getElementById('page-title');
     const subtitleEl = document.getElementById('page-sub');
 
-    if (titleEl) {
-      titleEl.textContent = route.label || '';
-    }
+    if (titleEl) titleEl.textContent = route.label || '';
+    if (subtitleEl) subtitleEl.textContent = route.subtitle || '';
 
-    if (subtitleEl) {
-      subtitleEl.textContent = route.subtitle || '';
-    }
-
-    /* عنوان الصفحة (browser tab) */
     document.title = `${route.label} — ${GMS.APP_CONFIG.NAME_AR}`;
   }
 
-  /**
-   * إضافة إلى السجل
-   */
   function pushHistory(entry) {
     RState.history.unshift(entry);
     if (RState.history.length > RState.maxHistory) {
@@ -625,25 +546,11 @@
      §5 · SCHEDULED RERENDER
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * ✅ فحص إذا كان يجب تأجيل إعادة التصيير
-   *
-   * يعود true (يجب التخطي) إذا:
-   *   0. كان InteractionGuard موجود وقفل التفاعل
-   *   1. كان هناك Modal مفتوح
-   *   2. كان المستخدم يكتب في حقل (Input/Select/Textarea)
-   *   3. كان هناك تفاعل حديث مع حقل (آخر 5 ثواني)
-   *   4. كان هناك أي تفاعل حديث (آخر 3 ثواني)
-   *
-   * @returns {boolean}
-   */
   function shouldSkipRerender() {
-    /* فحص 1: Modal مفتوح */
     if (GMS.Modal && typeof GMS.Modal.count === 'function' && GMS.Modal.count() > 0) {
       return true;
     }
 
-    /* فحص 2: المستخدم يكتب في حقل (Input, Select, Textarea) */
     const active = document.activeElement;
     if (active) {
       const tag = active.tagName;
@@ -655,48 +562,29 @@
       }
     }
 
-    /* فحص 3: تفاعل نموذج خلال آخر 5 ثواني */
     if (window.GMS && window.GMS._lastFormInteraction) {
       const elapsed = Date.now() - window.GMS._lastFormInteraction;
-      if (elapsed < 5000) {
-        return true;
-      }
+      if (elapsed < 5000) return true;
     }
 
-    /* ✅ فحص 4: أي تفاعل خلال آخر 3 ثواني */
     if (window.GMS && window.GMS._lastInteraction) {
       const elapsed = Date.now() - window.GMS._lastInteraction;
-      if (elapsed < 3000) {
-        return true;
-      }
+      if (elapsed < 3000) return true;
     }
 
     return false;
   }
 
-  /**
-   * @deprecated استخدم shouldSkipRerender
-   */
   function isModalOpen() {
     return shouldSkipRerender();
   }
 
-  /**
-   * جدولة إعادة تصيير للصفحة الحالية (debounced)
-   *
-   * ✅ التحديثات:
-   *   - يتخطى Rerender إذا كان هناك Modal مفتوح
-   *   - يتخطى إذا كان المستخدم يكتب في حقل
-   *   - يتخطى إذا كان هناك أي تفاعل حديث (آخر 3 ثواني)
-   */
   function scheduleRerender(delay) {
-    /* ✅ معلَّق حاليًا (مثلاً: عملية تبديل لغة شغالة) — تجاهل تمامًا */
     if (RState.suspended) {
       console.log('[Router] ⛔ Rerender suspended — تجاهل الجدولة');
       return;
     }
 
-    /* ✅ فحص أولي — قبل الجدولة */
     if (shouldSkipRerender()) {
       console.log('[Router] ⛔ Rerender blocked — user interacting');
       return;
@@ -716,23 +604,18 @@
         return;
       }
 
-      /* ✅ فحص ثاني — ربما تغيّر الوضع */
       if (shouldSkipRerender()) {
         console.log('[Router] ⛔ Deferred rerender — user still interacting');
         scheduleRerender(d);
         return;
       }
 
-      /* تجاهل إذا كان هناك تصيير جارٍ */
       if (RState.rendering) {
         scheduleRerender(d);
         return;
       }
 
-      /* تجاهل إذا كانت الصفحة مخفية */
-      if (document.hidden) {
-        return;
-      }
+      if (document.hidden) return;
 
       console.log('[Router] 🔄 Scheduled rerender executing');
 
@@ -744,9 +627,6 @@
     }, d);
   }
 
-  /**
-   * ✅ تعليق/استئناف الـ scheduled rerender من بره (مثلاً أثناء تبديل اللغة)
-   */
   function suspendScheduling() {
     RState.suspended = true;
     cancelScheduledRerender();
@@ -756,9 +636,6 @@
     RState.suspended = false;
   }
 
-  /**
-   * إلغاء scheduled rerender
-   */
   function cancelScheduledRerender() {
     if (RState.scheduledRerender) {
       clearTimeout(RState.scheduledRerender);
@@ -770,9 +647,6 @@
      §6 · NAVIGATION HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * الانتقال للصفحة السابقة
-   */
   function back() {
     if (RState.history.length > 1) {
       const previous = RState.history[1];
@@ -781,25 +655,12 @@
       }
     }
 
-    /* fallback */
     return go('dashboard', { force: true });
   }
 
-  /**
-   * ✅ إعادة تحميل الصفحة الحالية — النسخة المُحصَّنة
-   *
-   * @param {Object} [opts]
-   * @param {boolean} [opts.force=false] — يتجاوز فحص التفاعل (للتبديل المُبرمَج)
-   * @returns {Promise<boolean>|void}
-   *
-   * الاستخدام:
-   *   - reload()                     — يحترم Interaction Lock (يؤجّل عند التفاعل)
-   *   - reload({ force: true })      — يتجاوز الفحص فوراً (لتبديل اللغة مثلاً)
-   */
   function reload(opts = {}) {
     const { force = false } = opts;
 
-    /* ✅ التبديل المُبرمَج (force=true) يتجاوز فحص التفاعل */
     if (!force && shouldSkipRerender()) {
       console.log('[Router] ⛔ reload() blocked — user interacting, retrying in 400ms');
       setTimeout(() => reload(opts), 400);
@@ -809,35 +670,18 @@
     return go(RState.current, { force: true });
   }
 
-  /**
-   * قراءة المسار الحالي
-   * @returns {Object|null}
-   */
   function current() {
     return RState.current ? ROUTES[RState.current] : null;
   }
 
-  /**
-   * قراءة معرف المسار الحالي
-   * @returns {string|null}
-   */
   function currentId() {
     return RState.current;
   }
 
-  /**
-   * قراءة المسار السابق
-   * @returns {Object|null}
-   */
   function previous() {
     return RState.previous ? ROUTES[RState.previous] : null;
   }
 
-  /**
-   * فحص إذا كان مسار محدد هو الحالي
-   * @param {string} routeId
-   * @returns {boolean}
-   */
   function isCurrent(routeId) {
     return RState.current === routeId;
   }
@@ -856,9 +700,7 @@
       return;
     }
 
-    if (hashRoute === RState.current) {
-      return;
-    }
+    if (hashRoute === RState.current) return;
 
     if (ROUTES[hashRoute]) {
       go(hashRoute);
@@ -907,7 +749,6 @@
       const tag = document.activeElement?.tagName;
       const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 
-      /* Alt + رقم = التنقل السريع */
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
         const num = parseInt(e.key, 10);
         if (num >= 1 && num <= 9) {
@@ -929,7 +770,6 @@
         }
       }
 
-      /* Alt + Left/Right = التنقل بين الصفحات */
       if (e.altKey && !inField) {
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
@@ -937,7 +777,6 @@
         }
       }
 
-      /* Ctrl + R — تعطيل إعادة تحميل المتصفح، بدلاً منها نعيد تحميل الصفحة */
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r' && !inField) {
         e.preventDefault();
         reload();
@@ -946,7 +785,6 @@
     };
 
     document.addEventListener('keydown', handler);
-
     RState._keyboardHandler = handler;
   }
 
@@ -1021,14 +859,6 @@
      §13 · INITIALIZATION
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * تهيئة الراوتر
-   * @param {Object} [opts]
-   * @param {string} [opts.defaultRoute='dashboard']
-   * @param {boolean} [opts.listenHash=true]
-   * @param {boolean} [opts.listenKeyboard=true]
-   * @returns {Promise<Object>}
-   */
   async function init(opts = {}) {
     const {
       defaultRoute = 'dashboard',
@@ -1043,34 +873,28 @@
 
     RState.initialized = true;
 
-    /* 1 · تحديث شريط التبويبات */
     bindTabs();
 
-    /* 2 · Hash listener */
     if (listenHash) {
       window.addEventListener('hashchange', handleHashChange);
       RState._hashHandler = handleHashChange;
     }
 
-    /* 3 · Keyboard shortcuts */
     if (listenKeyboard) {
       bindKeyboardShortcuts();
     }
 
-    /* 4 · تحديد المسار الابتدائي */
     let initialRoute = getHashRoute();
 
     if (!initialRoute || !ROUTES[initialRoute]) {
       initialRoute = defaultRoute;
     }
 
-    /* 5 · فحص الصلاحيات */
     const access = checkRouteAccess(ROUTES[initialRoute]);
     if (!access.allowed) {
       initialRoute = 'dashboard';
     }
 
-    /* 6 · الانتقال */
     await go(initialRoute, { force: true });
 
     console.log('[Router] Initialized', {
@@ -1086,9 +910,6 @@
     };
   }
 
-  /**
-   * إيقاف الراوتر
-   */
   function destroy() {
     if (RState._hashHandler) {
       window.removeEventListener('hashchange', RState._hashHandler);
@@ -1101,7 +922,6 @@
     }
 
     cancelScheduledRerender();
-
     RState.initialized = false;
     console.log('[Router] Destroyed');
   }
@@ -1136,21 +956,18 @@
      §15 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Router = {
-    /* Core */
     init,
     destroy,
     go,
     back,
     reload,
 
-    /* State */
     state: RState,
     current,
     currentId,
     previous,
     isCurrent,
 
-    /* Schedule */
     scheduleRerender,
     cancelScheduledRerender,
     suspendScheduling,
@@ -1158,47 +975,34 @@
     isModalOpen,
     shouldSkipRerender,
 
-    /* Routes */
     getRoutes,
     getRoute,
     getTabOrder,
     getAccessibleRoutes,
 
-    /* Guards */
     addGuard,
     checkRouteAccess,
 
-    /* Events */
     on,
 
-    /* Diagnostics */
     getState,
     clearHistory,
 
-    /* Constants */
     ROUTES,
     TAB_ORDER,
   };
 
-  /* ─── Aliases مختصرة ──────────────────────────────────────────── */
   GMS.navigate = go;
   GMS.navTo = go;
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §16 · AUTO-INIT — مُدار عبر 23-boot.js
-     ═════════════════════════════════════════════════════════════════════ */
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §17 · LOADED CONFIRMATION
-     ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🧭 Router loaded · Hash-based SPA navigation',
+    '%c🧭 Router v3 loaded · Hash-based SPA navigation + B2B route',
     'color:#1c4fd8;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e9efff;border-radius:4px;'
   );
 
   console.log(
-    `%c📍 ${TAB_ORDER.length} routes · Guards · Scheduled rerender · Alt+1..9 shortcuts`,
+    `%c📍 ${TAB_ORDER.length} routes (incl. b2b) · Guards · Scheduled rerender`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
@@ -1206,14 +1010,5 @@
     `%c🛡️  Form-aware: rerender يُؤجَّل عند الكتابة في حقول أو فتح Modal`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
-
-  console.log(
-    `%c🆕 v2: reload({force}) · renderView backup/restore · يمنع الشاشة البيضاء`,
-    'color:#a55a00;font-weight:900;font-size:11px;'
-  );
-
-  /* ═════════════════════════════════════════════════════════════════════
-     ✅ js/22-router.js — نهاية الملف
-     ═════════════════════════════════════════════════════════════════════ */
 
 })();
