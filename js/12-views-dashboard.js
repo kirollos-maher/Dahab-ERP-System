@@ -1440,16 +1440,36 @@
 
   /**
    * تنظيف موارد الصفحة
+   * ✅ FIX: مسح المراجع بالكامل + إلغاء كل شيء قبل إعادة الرسم
+   * يمنع تسريب الذاكرة والشاشة البيضاء على الموبايل
    */
   function cleanup() {
     stopAutoRefresh();
 
     /* إزالة المستمعين */
-    DashState.unsubscribers.forEach(fn => fn());
+    DashState.unsubscribers.forEach(fn => {
+      try { fn(); } catch (_) {}
+    });
     DashState.unsubscribers = [];
 
     /* تدمير المخططات */
     Object.keys(DashState.charts).forEach(destroyChart);
+
+    /* ✅ FIX: مسح المراجع تماماً لمساعدة الـ Garbage Collector */
+    DashState.charts = {
+      sales24h: null,
+      carats: null,
+      weekly: null,
+      leaderboard: null,
+    };
+
+    /* ✅ FIX: مسح الـ timer */
+    if (DashState.refreshTimer) {
+      clearInterval(DashState.refreshTimer);
+      DashState.refreshTimer = null;
+    }
+
+    console.log('[Dashboard] ✅ Cleanup complete');
   }
 
   /* ═════════════════════════════════════════════════════════════════════
