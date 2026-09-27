@@ -1,7 +1,7 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      GOLD MS ENTERPRISE — index.html
      نظام إدارة الذهب والمجوهرات — PWA
-     ✅ v4: Adaptive Layout System (Mobile/Tablet/Desktop)
+     ✅ v5: B2B Sellers Module + Adaptive Layout System
      ═══════════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="light" data-lang="ar">
@@ -13,11 +13,6 @@
 
 <!-- ═══════════════════════════════════════════════════════════════════
      ✅ ADAPTIVE DEVICE DETECTION — يعمل قبل تحميل أي CSS
-     ───────────────────────────────────────────────────────────────────
-     - يكشف نوع الجهاز مرة واحدة عند الـ boot
-     - يضبط data-layout على <html>
-     - يقفل الـ layout (لا يمكن تغييره)
-     - يضبط viewport meta بشكل صارم
      ═══════════════════════════════════════════════════════════════════ -->
 <script>
 (function adaptiveDetection() {
@@ -28,33 +23,24 @@
   var h = window.innerHeight || 0;
   var hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
-  /* كشف الموبايل */
   var isMobile = /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop|BlackBerry|Mobile Safari/i.test(ua)
                  || (hasTouch && w < 768)
                  || (w > 0 && w < 640);
 
-  /* كشف التابلت */
   var isTablet = !isMobile && (w >= 768 && w < 1024);
-
-  /* تحديد الـ layout */
   var layout = isMobile ? 'mobile' : (isTablet ? 'tablet' : 'desktop');
-
-  /* حجم إضافي للشاشات الصغيرة جداً */
   var size = w < 400 ? 'xs' : (w < 600 ? 'sm' : 'md');
 
   var html = document.documentElement;
 
-  /* ✅ امسح أي data-layout قديم أولاً (لو الصفحة بتفتح من الكاش) */
   html.removeAttribute('data-layout');
   html.removeAttribute('data-layout-size');
   html.removeAttribute('data-touch');
 
-  /* ✅ اضبط الـ attributes الجديدة */
   html.setAttribute('data-layout', layout);
   html.setAttribute('data-layout-size', size);
   html.setAttribute('data-touch', hasTouch ? 'yes' : 'no');
 
-  /* ✅ اضبط viewport meta بشكل صارم */
   var viewportMeta = document.querySelector('meta[name="viewport"]');
   if (!viewportMeta) {
     viewportMeta = document.createElement('meta');
@@ -63,7 +49,6 @@
   }
 
   if (isMobile) {
-    /* على الموبايل: قفل الـ zoom والـ width */
     viewportMeta.setAttribute(
       'content',
       'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
@@ -75,7 +60,6 @@
     );
   }
 
-  /* ✅ خزّن الحالة في window.GMS */
   window.GMS = window.GMS || {};
   window.GMS.DeviceLayout = layout;
   window.GMS.DeviceSize = size;
@@ -86,14 +70,12 @@
   window.GMS.ScreenWidth = w;
   window.GMS.ScreenHeight = h;
 
-  /* ✅ منع أي كود من تغيير الـ layout لاحقاً */
   window.GMS.LockLayout = function() {
     var current = html.getAttribute('data-layout');
     html.setAttribute('data-layout', current);
     console.log('[Adaptive] 🔒 Layout locked to:', current);
   };
 
-  /* ✅ عند تغيير حجم الشاشة (نادراً ما يحدث على موبايل)، نحدّث الـ attributes */
   var resizeTimer = null;
   window.addEventListener('resize', function() {
     if (resizeTimer) clearTimeout(resizeTimer);
@@ -102,13 +84,11 @@
       var wasMobile = window.GMS.IsMobileLayout;
       var nowMobile = newW < 768;
 
-      /* ✅ على الموبايل: لا نغيّر الـ layout أبداً */
       if (window.GMS.DeviceTouch) {
         console.log('[Adaptive] 🚫 Layout change ignored (touch device)');
         return;
       }
 
-      /* على الكمبيوتر فقط: نسمح بالتغيير */
       if (wasMobile !== nowMobile) {
         window.GMS.ScreenWidth = newW;
         var newLayout = nowMobile ? 'mobile' : (newW < 1024 ? 'tablet' : 'desktop');
@@ -134,22 +114,18 @@
      ═══════════════════════════════════════════════════════════════════ -->
 <link rel="manifest" href="manifest.json" />
 
-<!-- iOS Safari Support -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Gold ERP Pro" />
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 
-<!-- Android Chrome -->
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="application-name" content="Gold ERP Pro" />
 
-<!-- Microsoft Tiles -->
 <meta name="msapplication-TileColor" content="#D4A017" />
 <meta name="msapplication-TileImage" content="icons/icon-192.png" />
 <meta name="msapplication-tap-highlight" content="no" />
 
-<!-- Regular icons -->
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
@@ -203,6 +179,8 @@
 <script defer src="js/26-views-accounting.js"></script>
 <script defer src="js/27-views-wholesale.js"></script>
 <script defer src="js/28-price-manager.js"></script>
+<!-- ✅ وحدة بياعي الجملة المستقلين -->
+<script defer src="js/29-b2b-sellers.js"></script>
 <script defer src="js/22-router.js"></script>
 <script defer src="js/23-boot.js"></script>
 <script defer src="js/25-pwa.js"></script>
@@ -365,6 +343,12 @@
     <button class="tab" data-tab="wholesale" type="button">
       <i data-lucide="truck"></i>
       <span data-i18n="nav.wholesale">التوريد والجملة</span>
+    </button>
+
+    <!-- ✅ تبويب بياعي الجملة المستقلين -->
+    <button class="tab" data-tab="b2b" type="button">
+      <i data-lucide="user-check"></i>
+      <span data-i18n="nav.b2b">بياعو الجملة</span>
     </button>
 
     <button class="tab" data-tab="queue" type="button">
