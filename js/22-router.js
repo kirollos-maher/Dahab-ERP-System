@@ -388,13 +388,15 @@
       }
     }
 
-    /* ✅ إغلاق Modals فقط عند تنقل حقيقي (من صفحة إلى أخرى) */
-    if (GMS.Modal && RState.current !== routeId) {
+    /* ✅ إغلاق Modals عند تنقل حقيقي، أو عند إعادة رسم إجبارية (force) لنفس الصفحة */
+    if (GMS.Modal && (RState.current !== routeId || force)) {
       GMS.Modal.closeAll();
     }
 
-    /* Cleanup الصفحة الحالية */
-    if (RState.current && RState.current !== routeId) {
+    /* ✅ Cleanup الصفحة الحالية — لازم يحصل حتى لو نفس الصفحة و force=true،
+       عشان أي Chart.js instances أو intervals/timers اتسجلت في الرسم السابق
+       تتقفل قبل ما نعيد بناء نفس الصفحة من جديد (مثال: تبديل اللغة) */
+    if (RState.current && (RState.current !== routeId || force)) {
       try {
         const currentView = GMS.Views?.[ROUTES[RState.current]?.view];
         if (currentView?.cleanup && typeof currentView.cleanup === 'function') {
