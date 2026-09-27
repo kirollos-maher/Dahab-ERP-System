@@ -1,24 +1,138 @@
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      GOLD MS ENTERPRISE — index.html
      نظام إدارة الذهب والمجوهرات — PWA
-     ═══════════════════════════════════════════════════════════════ -->
+     ✅ v4: Adaptive Layout System (Mobile/Tablet/Desktop)
+     ═══════════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="light" data-lang="ar">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes, viewport-fit=cover" />
 <meta name="description" content="نظام إدارة الذهب والمجوهرات — Gold Management System Enterprise" />
-<title>Gold ERP Pro — نظام إدارة الذهب</title>
-
-<!-- ═══════════════════════════════════════════════════════════════
-     PWA META TAGS
-     ═══════════════════════════════════════════════════════════════ -->
-
-<!-- Manifest -->
-<link rel="manifest" href="manifest.json" />
-
-<!-- Theme Color (Chrome address bar) -->
 <meta name="theme-color" content="#D4A017" />
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     ✅ ADAPTIVE DEVICE DETECTION — يعمل قبل تحميل أي CSS
+     ───────────────────────────────────────────────────────────────────
+     - يكشف نوع الجهاز مرة واحدة عند الـ boot
+     - يضبط data-layout على <html>
+     - يقفل الـ layout (لا يمكن تغييره)
+     - يضبط viewport meta بشكل صارم
+     ═══════════════════════════════════════════════════════════════════ -->
+<script>
+(function adaptiveDetection() {
+  'use strict';
+
+  var ua = navigator.userAgent || '';
+  var w = window.innerWidth || 0;
+  var h = window.innerHeight || 0;
+  var hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+  /* كشف الموبايل */
+  var isMobile = /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop|BlackBerry|Mobile Safari/i.test(ua)
+                 || (hasTouch && w < 768)
+                 || (w > 0 && w < 640);
+
+  /* كشف التابلت */
+  var isTablet = !isMobile && (w >= 768 && w < 1024);
+
+  /* تحديد الـ layout */
+  var layout = isMobile ? 'mobile' : (isTablet ? 'tablet' : 'desktop');
+
+  /* حجم إضافي للشاشات الصغيرة جداً */
+  var size = w < 400 ? 'xs' : (w < 600 ? 'sm' : 'md');
+
+  var html = document.documentElement;
+
+  /* ✅ امسح أي data-layout قديم أولاً (لو الصفحة بتفتح من الكاش) */
+  html.removeAttribute('data-layout');
+  html.removeAttribute('data-layout-size');
+  html.removeAttribute('data-touch');
+
+  /* ✅ اضبط الـ attributes الجديدة */
+  html.setAttribute('data-layout', layout);
+  html.setAttribute('data-layout-size', size);
+  html.setAttribute('data-touch', hasTouch ? 'yes' : 'no');
+
+  /* ✅ اضبط viewport meta بشكل صارم */
+  var viewportMeta = document.querySelector('meta[name="viewport"]');
+  if (!viewportMeta) {
+    viewportMeta = document.createElement('meta');
+    viewportMeta.setAttribute('name', 'viewport');
+    document.head.appendChild(viewportMeta);
+  }
+
+  if (isMobile) {
+    /* على الموبايل: قفل الـ zoom والـ width */
+    viewportMeta.setAttribute(
+      'content',
+      'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
+    );
+  } else {
+    viewportMeta.setAttribute(
+      'content',
+      'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover'
+    );
+  }
+
+  /* ✅ خزّن الحالة في window.GMS */
+  window.GMS = window.GMS || {};
+  window.GMS.DeviceLayout = layout;
+  window.GMS.DeviceSize = size;
+  window.GMS.DeviceTouch = hasTouch;
+  window.GMS.IsMobileLayout = (layout === 'mobile');
+  window.GMS.IsTabletLayout = (layout === 'tablet');
+  window.GMS.IsDesktopLayout = (layout === 'desktop');
+  window.GMS.ScreenWidth = w;
+  window.GMS.ScreenHeight = h;
+
+  /* ✅ منع أي كود من تغيير الـ layout لاحقاً */
+  window.GMS.LockLayout = function() {
+    var current = html.getAttribute('data-layout');
+    html.setAttribute('data-layout', current);
+    console.log('[Adaptive] 🔒 Layout locked to:', current);
+  };
+
+  /* ✅ عند تغيير حجم الشاشة (نادراً ما يحدث على موبايل)، نحدّث الـ attributes */
+  var resizeTimer = null;
+  window.addEventListener('resize', function() {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {
+      var newW = window.innerWidth;
+      var wasMobile = window.GMS.IsMobileLayout;
+      var nowMobile = newW < 768;
+
+      /* ✅ على الموبايل: لا نغيّر الـ layout أبداً */
+      if (window.GMS.DeviceTouch) {
+        console.log('[Adaptive] 🚫 Layout change ignored (touch device)');
+        return;
+      }
+
+      /* على الكمبيوتر فقط: نسمح بالتغيير */
+      if (wasMobile !== nowMobile) {
+        window.GMS.ScreenWidth = newW;
+        var newLayout = nowMobile ? 'mobile' : (newW < 1024 ? 'tablet' : 'desktop');
+        window.GMS.DeviceLayout = newLayout;
+        window.GMS.IsMobileLayout = (newLayout === 'mobile');
+        window.GMS.IsTabletLayout = (newLayout === 'tablet');
+        window.GMS.IsDesktopLayout = (newLayout === 'desktop');
+        html.setAttribute('data-layout', newLayout);
+        console.log('[Adaptive] 🔄 Desktop resize → layout:', newLayout);
+      }
+    }, 200);
+  });
+
+  console.log(
+    '%c📐 Adaptive Layout: ' + layout + ' (' + size + ') | Touch: ' + hasTouch + ' | ' + w + 'x' + h,
+    'color:#0f7a43;font-weight:900;font-size:12px;padding:2px 6px;background:#e6f6ee;border-radius:4px;'
+  );
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     PWA META TAGS
+     ═══════════════════════════════════════════════════════════════════ -->
+<link rel="manifest" href="manifest.json" />
 
 <!-- iOS Safari Support -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -40,54 +154,41 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      FONTS
-     ═══════════════════════════════════════════════════════════════ -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      STYLESHEET
-     ═══════════════════════════════════════════════════════════════ -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <link rel="stylesheet" href="style.css" />
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      CDN LIBRARIES
-     ═══════════════════════════════════════════════════════════════ -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      APPLICATION MODULES — Order Matters!
-     ═══════════════════════════════════════════════════════════════ -->
-<!-- Core -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/01-config.js"></script>
 <script defer src="js/02-utils.js"></script>
 <script defer src="js/03-i18n.js"></script>
-
-<!-- Data Layer -->
 <script defer src="js/04-cache.js"></script>
 <script defer src="js/05-sync.js"></script>
-
-<!-- Security -->
 <script defer src="js/06-auth.js"></script>
-
-<!-- UI Primitives -->
 <script defer src="js/07-ui.js"></script>
-  
-<!-- Demo Data -->
 <script defer src="js/08-demo.js"></script>
-
-<!-- Specialized Features -->
 <script defer src="js/09-qr.js"></script>
 <script defer src="js/10-excel.js"></script>
 <script defer src="js/11-realtime.js"></script>
-
-<!-- Views -->
 <script defer src="js/12-views-dashboard.js"></script>
 <script defer src="js/13-views-pos.js"></script>
 <script defer src="js/14-views-inventory.js"></script>
@@ -99,28 +200,18 @@
 <script defer src="js/20-views-queue.js"></script>
 <script defer src="js/21-views-settings.js"></script>
 <script defer src="js/24-views-repair.js"></script>
-
-<!-- ✅ Accounting View — المحاسبة والمالية -->
 <script defer src="js/26-views-accounting.js"></script>
-
-<!-- ✅ Wholesale View — التوريد والجملة والتحويلات -->
 <script defer src="js/27-views-wholesale.js"></script>
-
-<!-- ✅ NEW: Real-Time Gold Price Manager — مدير أسعار الذهب اللحظية -->
 <script defer src="js/28-price-manager.js"></script>
-
-<!-- Router & Boot -->
 <script defer src="js/22-router.js"></script>
 <script defer src="js/23-boot.js"></script>
-
-<!-- ✅ PWA Manager (آخر ملف — يعتمد على كل ما سبق) -->
 <script defer src="js/25-pwa.js"></script>
-
+</head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      LOGIN SCREEN
-     ═══════════════════════════════════════════════════════════════ -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <div id="login-screen">
   <div class="login-card">
     <div class="login-brand">
@@ -159,12 +250,11 @@
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      APP SHELL
-     ═══════════════════════════════════════════════════════════════ -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <div id="app">
 
-  <!-- ─── TOPBAR ─── -->
   <header class="topbar">
     <div class="brand">
       <div class="brand-logo">Au</div>
@@ -176,7 +266,6 @@
 
     <div class="spacer"></div>
 
-    <!-- ✅ PWA Install Button (مخفي افتراضياً — يظهر عند توفر التثبيت) -->
     <button class="icon-btn pwa-install-btn"
             id="pwa-install-btn"
             title="تثبيت التطبيق"
@@ -185,52 +274,43 @@
       <i data-lucide="download"></i>
     </button>
 
-    <!-- Network status -->
     <span class="net-pill online" id="net-pill">
       <span class="net-dot"></span>
       <span id="net-text" data-i18n="status.online">متصل</span>
     </span>
 
-    <!-- Queue badge -->
     <button class="icon-btn" id="queue-btn" title="طابور المزامنة">
       <i data-lucide="package"></i>
       <span class="badge-dot" id="queue-badge" style="display:none">0</span>
     </button>
 
-    <!-- Sync now -->
     <button class="icon-btn" id="sync-btn" title="مزامنة الآن">
       <i data-lucide="refresh-cw"></i>
     </button>
 
-    <!-- Refresh cache -->
     <button class="icon-btn" id="cache-btn" title="تحديث الذاكرة المؤقتة">
       <i data-lucide="database-zap"></i>
     </button>
 
-    <!-- Language switcher -->
     <div class="lang-switch" id="lang-switch">
       <button class="lang-btn active" data-lang="ar" type="button">🇪🇬 ع</button>
       <button class="lang-btn" data-lang="en" type="button">🇬🇧 EN</button>
     </div>
 
-    <!-- Theme toggle -->
     <button class="icon-btn" id="theme-btn" title="تبديل الوضع">
       <i data-lucide="moon"></i>
     </button>
 
-    <!-- Role badge -->
     <span class="role-badge" id="topbar-role">
       <i data-lucide="shield"></i>
       <span>—</span>
     </span>
 
-    <!-- Logout -->
     <button class="icon-btn" id="logout-btn" title="تسجيل الخروج">
       <i data-lucide="log-out"></i>
     </button>
   </header>
 
-  <!-- ─── TABS ─── -->
   <nav class="tabs-bar" id="tabs-bar">
     <button class="tab active" data-tab="dashboard" type="button">
       <i data-lucide="layout-dashboard"></i>
@@ -277,13 +357,11 @@
       <span data-i18n="nav.audit">سجل الحركات</span>
     </button>
 
-    <!-- ✅ Accounting Tab — المحاسبة والمالية -->
     <button class="tab" data-tab="accounting" type="button">
       <i data-lucide="book-open"></i>
       <span data-i18n="nav.accounting">المحاسبة</span>
     </button>
 
-    <!-- ✅ Wholesale Tab — التوريد والجملة والتحويلات -->
     <button class="tab" data-tab="wholesale" type="button">
       <i data-lucide="truck"></i>
       <span data-i18n="nav.wholesale">التوريد والجملة</span>
@@ -301,21 +379,18 @@
     </button>
   </nav>
 
-  <!-- ─── PAGE CONTAINER ─── -->
   <main class="page" id="page"></main>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════
+<!-- ═══════════════════════════════════════════════════════════════════
      OVERLAYS & UTILITY CONTAINERS
-     ═══════════════════════════════════════════════════════════════ -->
+     ═══════════════════════════════════════════════════════════════════ -->
 <div id="toasts"></div>
 <div id="modal-root"></div>
 <div id="print-root"></div>
 
-<!-- Hidden file input for Excel import -->
 <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none">
 
-<!-- Hidden QR host for offscreen generation -->
 <div id="qr-host" aria-hidden="true"
      style="position:absolute;left:-99999px;top:0;width:320px;height:320px;overflow:hidden;pointer-events:none"></div>
 
