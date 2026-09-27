@@ -10,7 +10,7 @@
      • POST/PUT/DELETE → تُمرَّر مباشرة للسيرفر (لا تُخزَّن)
      • Background Sync → للمزامنة التلقائية عند عودة الشبكة
 
-   Version: 1.0.13
+   Version: 1.0.14
    ═══════════════════════════════════════════════════════════════════════ */
 
 'use strict';
@@ -23,7 +23,7 @@
      - الكاش القديم يُحذَف تلقائياً في activate
      - يُشعر المستخدم بوجود تحديث جديد
    ───────────────────────────────────────────────────────────────────── */
-const SW_VERSION = 'v1.0.13';       // ✅ FIX: رفع النسخة لمسح كاش قديم
+const SW_VERSION = 'v1.0.14';       // ✅ FIX: رفع النسخة لإضافة ملف 30-inventory-count-summary.js
 const BUILD_DATE = '2026-09-27';
 
 const CACHE_STATIC = `gold-erp-static-${SW_VERSION}`;
@@ -72,6 +72,10 @@ const PRECACHE_URLS = [
   './js/26-views-accounting.js',
   './js/27-views-wholesale.js',
   './js/28-price-manager.js',
+  './js/29-b2b-sellers.js',
+
+  /* ✅ NEW: ملخّص الجرد حسب التصنيف */
+  './js/30-inventory-count-summary.js',
 
   './manifest.json',
 
