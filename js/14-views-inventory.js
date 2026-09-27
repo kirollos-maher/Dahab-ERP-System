@@ -1,21 +1,18 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة — النسخة v5.0
-     - جدول أصناف مع pagination
-     - بحث فوري + فلاتر (عيار، حالة، فرع، ماركة، تصنيف)
-     - CRUD كامل + تحديد متعدد + تصدير Excel + QR Tags
-     - ✅ إدخال عدد القطع (Quantity) مع خياري الوزن الموحّد/المتنوع
-     - ✅ SKU فريد لكل وحدة: BASE-001, BASE-002, ..., BASE-NNN
-     - ✅ QR فريد لكل وحدة تلقائياً
-     - ✅ Modal إضافة صنف ديناميكي حسب نمط المصنع
-     - ✅ مصنعية الشراء + البيع + هامش الربح
-     - ✅ وزن الفصوص اختياري
-     - ✅ حماية التفاعل: القوائم لا تُغلق أثناء الاستخدام
-     - ✅ زر الإلغاء يعمل
-     - 🆕 v3: دعم العيارات المخصصة (سبائك 888، 900، 916، إلخ)
-     - 🆕 v3: حقل نقاء مباشر (purity_ratio) من 0.3000 إلى 1.0000
-     - 🆕 v4: PriceManager integration — القيم تتحدث لحظياً
-     - 🆕 v5: liveValue ديناميكي لكل صنف، يعكس سعر 24K الحالي
+   صفحة المخزون الشاملة — النسخة v6.0
+   ─────────────────────────────────────────────────────────────────────
+   ✅ v6.0 الجديد:
+     • 🆕 عزل العهدة حسب الدور (Role-Based Holder Filtering)
+     • 🆕 شريط تابات للتنقل بين (الكل | المحل القطاعي | عهد البياعين)
+     • 🆕 عمود "العهدة / الموقع" في جدول المنتجات
+     • 🆕 كروت تجميع لكل كيان (صافي + عدد + قيمة)
+     • 🆕 أمر نقل بضاعة داخلي (Internal Stock Voucher)
+     • 🆕 دعم backward-compat للعناصر القديمة (بدون holder)
+   ─────────────────────────────────────────────────────────────────────
+   المزايا المحفوظة من v5.0:
+     • PriceManager لحظي · CRUD · QR · Bulk · Excel · Custom Karat
+     • Interaction Lock (10s) لمنع إغلاق القوائم أثناء التفاعل
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -24,10 +21,37 @@
   const GMS = window.GMS = window.GMS || {};
 
   /* ═════════════════════════════════════════════════════════════════════
-     §0 · INTERACTION LOCK
-     ─────────────────────────────────────────────────────────────────────
-     ✅ حماية شاملة: أي تفاعل مع حقل = قفل rerender لـ 10 ثواني
-     يمنع إغلاق القوائم المنسدلة بسبب أحداث Realtime أو Router
+     §0 · ENTITY TYPES (KEEPS / HOLDERS)
+     ═════════════════════════════════════════════════════════════════════ */
+  const ENTITY_TYPES = Object.freeze({
+    RETAIL_SHOP: {
+      key: 'retail_shop',
+      label: 'المحل القطاعي',
+      shortLabel: 'قطاعي',
+      icon: 'store',
+      color: 'success',
+      defaultId: 'retail-main',
+    },
+    B2B_REP: {
+      key: 'b2b_rep',
+      label: 'عهدة بياع جملة',
+      shortLabel: 'بياع',
+      icon: 'user-check',
+      color: 'violet',
+      defaultId: null,
+    },
+    MAIN_VAULT: {
+      key: 'main_vault',
+      label: 'الخزنة الرئيسية',
+      shortLabel: 'خزنة',
+      icon: 'vault',
+      color: 'gold',
+      defaultId: 'vault-main',
+    },
+  });
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §0.1 · INTERACTION LOCK
      ═════════════════════════════════════════════════════════════════════ */
   const INTERACTION_LOCK_MS = 10000;
 
@@ -41,7 +65,6 @@
     return Date.now() < until;
   }
 
-  /* ✅ تثبيت المستمعين على document (يتم مرة واحدة فقط) */
   (function installInteractionListeners() {
     if (window.GMS._invListenersInstalled) return;
     window.GMS._invListenersInstalled = true;
@@ -76,6 +99,12 @@
     pageSize: 50,
     totalPages: 1,
 
+    /* 🆕 v6: فلتر العهدة */
+    entityFilter: 'all',        /* 'all' | 'retail_shop' | 'rep-1' | 'vault' ... */
+
+    entities: [],                /* قائمة الكيانات المتاحة [{key, id, name, type, icon, color}] */
+    entitiesLoaded: false,
+
     filters: {
       search: '',
       karat: '',
@@ -83,7 +112,7 @@
       branch: '',
       manufacturer: '',
       category: '',
-      onlyCustomKarat: false,   /* ✅ v3: فلتر للعيارات المخصصة فقط */
+      onlyCustomKarat: false,
     },
 
     selected: new Set(),
@@ -92,6 +121,7 @@
     sortDir: 'desc',
 
     columns: {
+      holder: true,              /* 🆕 v6 */
       sku: true,
       category: true,
       karat: true,
@@ -113,11 +143,14 @@
       sold: 0,
       reserved: 0,
       totalPure: 0,
-      totalValue: 0,          /* ✅ v4: القيمة السوقية الحالية */
-      totalStoredCost: 0,     /* ✅ v4: التكلفة المخزّنة (للمقارنة) */
-      customKaratCount: 0,    /* ✅ v3 */
-      price24: 0,             /* ✅ v4: سعر 24K الحالي */
+      totalValue: 0,
+      totalStoredCost: 0,
+      customKaratCount: 0,
+      price24: 0,
     },
+
+    /* 🆕 v6: ملخّص لكل كيان (للعرض في التابات وكروت التجميع) */
+    entitySummary: {},
 
     loading: false,
     lastRenderAt: null,
@@ -130,6 +163,8 @@
   };
 
   const COLUMNS = [
+    /* 🆕 v6: عمود العهدة أول عمود بعد الـ checkbox */
+    { key: 'holder', label: 'العهدة / الموقع', width: 140, sortable: true, align: 'start' },
     { key: 'sku', label: 'كود التاج', width: 175, sortable: true, align: 'start' },
     { key: 'category', label: 'التصنيف', width: 100, sortable: true, align: 'start' },
     { key: 'karat', label: 'العيار', width: 95, sortable: true, align: 'center' },
@@ -173,34 +208,18 @@
     return GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
   }
 
-  /**
-   * ✅ v3: توليد SKU فريد لكل وحدة — يدعم العيار المخصص
-   * BASE-001, BASE-002, ..., BASE-NNN
-   * @param {string} baseSku
-   * @param {number} index — يبدأ من 1
-   * @param {number} total — إجمالي القطع
-   * @returns {string}
-   */
   function buildUniqueSku(baseSku, index, total) {
     if (total <= 1) return baseSku;
-
     const suffix = String(index).padStart(3, '0');
     const clean = String(baseSku || '').replace(/-\d{3}$/, '');
     return `${clean}-${suffix}`;
   }
 
-  /**
-   * ✅ v3: قراءة معلومات العيار لعنصر (قياسي أو مخصص)
-   */
   function getItemKaratInfo(item) {
     if (!item) return GMS.resolveKarat(21);
     return GMS.getItemKarat(item);
   }
 
-  /**
-   * ✅ v5: قراءة سعر 24K الحالي من PriceManager
-   * @returns {number}
-   */
   function getCurrentPrice24() {
     try {
       if (GMS.PriceManager?.current) {
@@ -215,44 +234,266 @@
     return Number(GMS.APP_CONFIG?.DEFAULT_PRICE_24) || 4500;
   }
 
-  /**
-   * ✅ v5: حساب القيمة السوقية الحالية لصنف (ديناميكي)
-   * @param {Object} item
-   * @param {number} [price24]
-   * @returns {number}
-   */
   function computeLiveValue(item, price24) {
     if (!item) return 0;
     const p24 = price24 || getCurrentPrice24();
-
     const pure = Number(item.pure_weight || 0);
     const net = Number(item.net_weight || 0);
     const saleMake = Number(item.workmanship_per_gram || 0);
-
     return GMS.round((pure * p24) + (net * saleMake), 2);
   }
 
-  /**
-   * ✅ v5: حساب مجموع القيم السوقية لمصفوفة أصناف
-   * @param {Array} items
-   * @param {number} [price24]
-   * @returns {{total: number, stored: number, diff: number}}
-   */
   function computeAggregateValues(items, price24) {
     const p24 = price24 || getCurrentPrice24();
     let total = 0;
     let stored = 0;
-
     (items || []).forEach(item => {
       total += computeLiveValue(item, p24);
       stored += Number(item.total_cost || 0);
     });
-
     return {
       total: GMS.round(total, 2),
       stored: GMS.round(stored, 2),
       diff: GMS.round(total - stored, 2),
     };
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §2.5 · 🆕 v6 · ENTITY / HOLDER HELPERS
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * إرجاع بيانات العهدة لعنصر (مع backward-compat للعناصر القديمة)
+   * أي عنصر قديم بدون holder_type يُعامَل كـ "محل قطاعي"
+   */
+  function getItemHolder(item) {
+    if (!item) {
+      return {
+        type: ENTITY_TYPES.RETAIL_SHOP.key,
+        id: ENTITY_TYPES.RETAIL_SHOP.defaultId,
+        name: ENTITY_TYPES.RETAIL_SHOP.label,
+      };
+    }
+
+    const type = item.holder_type || ENTITY_TYPES.RETAIL_SHOP.key;
+    const id = item.holder_id || (
+      type === ENTITY_TYPES.B2B_REP.key ? null : ENTITY_TYPES.RETAIL_SHOP.defaultId
+    );
+    const name = item.holder_name || (
+      type === ENTITY_TYPES.B2B_REP.key ? 'بياع جملة' : ENTITY_TYPES.RETAIL_SHOP.label
+    );
+
+    return { type, id, name };
+  }
+
+  /**
+   * تحديث حقول العهدة على عنصر
+   */
+  function setItemHolder(item, holder) {
+    if (!item || !holder) return item;
+    item.holder_type = holder.type || ENTITY_TYPES.RETAIL_SHOP.key;
+    item.holder_id = holder.id || null;
+    item.holder_name = holder.name || '—';
+    return item;
+  }
+
+  /**
+   * هل المستخدم الحالي بياع جملة؟
+   */
+  function isCurrentUserRep() {
+    try {
+      const role = GMS.Auth?.profile?.role;
+      return role === 'B2B_REP';
+    } catch (_) { return false; }
+  }
+
+  /**
+   * هل المستخدم الحالي مدير (يشوف الكل)؟
+   */
+  function isCurrentUserManager() {
+    try {
+      const role = GMS.Auth?.profile?.role;
+      return role === 'SUPER_ADMIN' ||
+             role === 'BRANCH_MANAGER' ||
+             role === 'ACCOUNTANT';
+    } catch (_) { return false; }
+  }
+
+  /**
+   * rep_id الخاص بالمستخدم الحالي (لو بياع)
+   */
+  function getCurrentRepId() {
+    try {
+      return GMS.Auth?.profile?.rep_id || null;
+    } catch (_) { return null; }
+  }
+
+  /**
+   * بناء قائمة الكيانات المتاحة للمستخدم الحالي
+   * @returns {Array<{key, id, name, type, icon, color, isAll}>}
+   */
+  async function loadEntities() {
+    const list = [];
+
+    /* كيان "الكل" — يظهر للمدير فقط */
+    if (isCurrentUserManager()) {
+      list.push({
+        key: 'all',
+        id: 'all',
+        name: 'كل المخزون',
+        shortLabel: 'الكل',
+        type: 'all',
+        icon: 'layers',
+        color: 'gold',
+        isAll: true,
+      });
+
+      /* المحل القطاعي */
+      list.push({
+        key: ENTITY_TYPES.RETAIL_SHOP.key,
+        id: ENTITY_TYPES.RETAIL_SHOP.defaultId,
+        name: ENTITY_TYPES.RETAIL_SHOP.label,
+        shortLabel: ENTITY_TYPES.RETAIL_SHOP.shortLabel,
+        type: ENTITY_TYPES.RETAIL_SHOP.key,
+        icon: ENTITY_TYPES.RETAIL_SHOP.icon,
+        color: ENTITY_TYPES.RETAIL_SHOP.color,
+      });
+
+      /* الخزنة الرئيسية */
+      list.push({
+        key: ENTITY_TYPES.MAIN_VAULT.key,
+        id: ENTITY_TYPES.MAIN_VAULT.defaultId,
+        name: ENTITY_TYPES.MAIN_VAULT.label,
+        shortLabel: ENTITY_TYPES.MAIN_VAULT.shortLabel,
+        type: ENTITY_TYPES.MAIN_VAULT.key,
+        icon: ENTITY_TYPES.MAIN_VAULT.icon,
+        color: ENTITY_TYPES.MAIN_VAULT.color,
+      });
+
+      /* كل بياعي الجملة */
+      try {
+        const reps = GMS.B2B?.getReps?.() || [];
+        reps.forEach(rep => {
+          list.push({
+            key: `rep:${rep.id}`,
+            id: rep.id,
+            name: rep.name,
+            shortLabel: rep.code || rep.name,
+            type: ENTITY_TYPES.B2B_REP.key,
+            icon: ENTITY_TYPES.B2B_REP.icon,
+            color: ENTITY_TYPES.B2B_REP.color,
+            rep_code: rep.code,
+            rep_phone: rep.phone,
+          });
+        });
+      } catch (e) {
+        console.warn('[Inventory] Failed to load reps:', e);
+      }
+    } else if (isCurrentUserRep()) {
+      /* بياع جملة → يرى نفسه فقط */
+      const myRepId = getCurrentRepId();
+      if (myRepId) {
+        try {
+          const reps = GMS.B2B?.getReps?.() || [];
+          const me = reps.find(r => r.id === myRepId);
+          list.push({
+            key: `rep:${myRepId}`,
+            id: myRepId,
+            name: me?.name || 'عهدتي',
+            shortLabel: me?.code || 'عهدتي',
+            type: ENTITY_TYPES.B2B_REP.key,
+            icon: ENTITY_TYPES.B2B_REP.icon,
+            color: ENTITY_TYPES.B2B_REP.color,
+          });
+        } catch (_) {
+          list.push({
+            key: `rep:${myRepId}`,
+            id: myRepId,
+            name: 'عهدتي',
+            shortLabel: 'عهدتي',
+            type: ENTITY_TYPES.B2B_REP.key,
+            icon: ENTITY_TYPES.B2B_REP.icon,
+            color: ENTITY_TYPES.B2B_REP.color,
+          });
+        }
+      }
+    }
+
+    /* بائع قطاعي أو محاسب فرع → المحل القطاعي فقط */
+    if (!list.length) {
+      list.push({
+        key: ENTITY_TYPES.RETAIL_SHOP.key,
+        id: ENTITY_TYPES.RETAIL_SHOP.defaultId,
+        name: ENTITY_TYPES.RETAIL_SHOP.label,
+        shortLabel: ENTITY_TYPES.RETAIL_SHOP.shortLabel,
+        type: ENTITY_TYPES.RETAIL_SHOP.key,
+        icon: ENTITY_TYPES.RETAIL_SHOP.icon,
+        color: ENTITY_TYPES.RETAIL_SHOP.color,
+      });
+    }
+
+    InvState.entities = list;
+    InvState.entitiesLoaded = true;
+
+    /* تعيين الفلتر الافتراضي */
+    if (isCurrentUserRep()) {
+      InvState.entityFilter = list[0]?.key || 'all';
+    } else if (isCurrentUserManager()) {
+      InvState.entityFilter = 'all';
+    } else {
+      InvState.entityFilter = list[0]?.key || 'all';
+    }
+
+    return list;
+  }
+
+  /**
+   * معرّف الكيان النشط حالياً
+   */
+  function getActiveEntityId() {
+    if (!InvState.entityFilter || InvState.entityFilter === 'all') return null;
+    const ent = InvState.entities.find(e => e.key === InvState.entityFilter);
+    return ent ? ent.id : null;
+  }
+
+  /**
+   * فلترة عنصر حسب الكيان المختار
+   */
+  function itemMatchesEntity(item) {
+    if (InvState.entityFilter === 'all') return true;
+
+    const holder = getItemHolder(item);
+    const ent = InvState.entities.find(e => e.key === InvState.entityFilter);
+    if (!ent) return true;
+
+    /* مطابقة حسب نوع + id */
+    if (ent.type === 'all') return true;
+
+    if (ent.type === ENTITY_TYPES.B2B_REP.key) {
+      return holder.type === ENTITY_TYPES.B2B_REP.key && holder.id === ent.id;
+    }
+
+    return holder.type === ent.type;
+  }
+
+  /**
+   * هل العنصر مرئي للمستخدم الحالي (عزل الأمان)؟
+   * بياع الجملة لا يرى إلا عهدته فقط
+   */
+  function itemVisibleToUser(item) {
+    if (isCurrentUserManager()) return true;
+
+    if (isCurrentUserRep()) {
+      const myRepId = getCurrentRepId();
+      if (!myRepId) return false;
+      const holder = getItemHolder(item);
+      return holder.type === ENTITY_TYPES.B2B_REP.key && holder.id === myRepId;
+    }
+
+    /* بائع قطاعي → يرى المحل فقط */
+    const holder = getItemHolder(item);
+    return holder.type === ENTITY_TYPES.RETAIL_SHOP.key ||
+           holder.type === ENTITY_TYPES.MAIN_VAULT.key;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -267,6 +508,14 @@
         try {
           const items = await GMS.IDB.getAll();
           if (items.length) {
+            /* ⚠️ BACKWARD-COMPAT: نضيف holder_type افتراضي للعناصر القديمة */
+            items.forEach(it => {
+              if (!it.holder_type) {
+                it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
+                it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
+                it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
+              }
+            });
             InvState.items = items;
             return items;
           }
@@ -276,7 +525,15 @@
       }
 
       if (GMS.Demo) {
-        InvState.items = GMS.Demo.getInventory();
+        const items = GMS.Demo.getInventory();
+        items.forEach(it => {
+          if (!it.holder_type) {
+            it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
+            it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
+            it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
+          }
+        });
+        InvState.items = items;
         return InvState.items;
       }
 
@@ -289,7 +546,14 @@
 
   function applyFilters() {
     const f = InvState.filters;
-    let rows = InvState.items.slice();
+
+    /* ✅ عزل الأمان حسب الدور (لا يرى البياع إلا بضاعته) */
+    let rows = InvState.items.filter(itemVisibleToUser);
+
+    /* 🆕 v6: فلتر الكيان/العهدة */
+    if (InvState.entityFilter && InvState.entityFilter !== 'all') {
+      rows = rows.filter(itemMatchesEntity);
+    }
 
     if (f.search) {
       const q = f.search.toLowerCase().trim();
@@ -297,11 +561,11 @@
         (i.sku || '').toLowerCase().includes(q) ||
         (i.manufacturer_name || '').toLowerCase().includes(q) ||
         (i.manufacturer_code || '').toLowerCase().includes(q) ||
-        (i.category || '').toLowerCase().includes(q)
+        (i.category || '').toLowerCase().includes(q) ||
+        (i.holder_name || '').toLowerCase().includes(q)
       );
     }
 
-    /* ✅ v3: فلتر العيار (قياسي أو مخصص) */
     if (f.karat) {
       if (f.karat === 'custom') {
         rows = rows.filter(i => i.is_custom_karat === true || i.custom_karat != null);
@@ -321,8 +585,6 @@
     }
 
     if (f.category) rows = rows.filter(i => i.category === f.category);
-
-    /* ✅ v3: فلتر "مخصص فقط" */
     if (f.onlyCustomKarat) {
       rows = rows.filter(i => i.is_custom_karat === true || i.custom_karat != null);
     }
@@ -331,10 +593,16 @@
     const key = InvState.sortBy;
 
     rows.sort((a, b) => {
+      /* 🆕 فرز حسب العهدة */
+      if (key === 'holder') {
+        const ha = getItemHolder(a).name || '';
+        const hb = getItemHolder(b).name || '';
+        return ha.localeCompare(hb, 'ar') * dir;
+      }
+
       let av = a[key];
       let bv = b[key];
 
-      /* ✅ v3: الفرز حسب العيار — القياسي بالأول ثم المخصص */
       if (key === 'karat') {
         const aInfo = getItemKaratInfo(a);
         const bInfo = getItemKaratInfo(b);
@@ -343,7 +611,6 @@
         return (aScore - bScore) * dir;
       }
 
-      /* ✅ v5: الفرز حسب total_cost → استخدم live value */
       if (key === 'total_cost') {
         const aVal = computeLiveValue(a);
         const bVal = computeLiveValue(b);
@@ -361,21 +628,16 @@
 
     InvState.filtered = rows;
     InvState.totalPages = Math.max(1, Math.ceil(rows.length / InvState.pageSize));
-
     if (InvState.page > InvState.totalPages) InvState.page = InvState.totalPages;
 
     updateStats();
+    computeEntitySummary();
     return rows;
   }
 
-  /**
-   * ✅ v5: تحديث الإحصائيات — القيم ديناميكية من PriceManager
-   */
   function updateStats() {
-    const all = InvState.items;
+    const all = InvState.items.filter(itemVisibleToUser);
     const filtered = InvState.filtered;
-
-    /* ✅ v5: السعر الحالي من PriceManager */
     const price24 = getCurrentPrice24();
 
     let totalPure = 0;
@@ -386,17 +648,9 @@
     filtered.forEach(i => {
       const pure = Number(i.pure_weight || 0);
       totalPure += pure;
-
-      /* ✅ v5: قيمة سوقية ديناميكية */
-      const liveValue = computeLiveValue(i, price24);
-      totalValue += liveValue;
-
-      /* التكلفة المخزّنة للمقارنة */
+      totalValue += computeLiveValue(i, price24);
       totalStoredCost += Number(i.total_cost || 0);
-
-      if (i.is_custom_karat === true || i.custom_karat != null) {
-        customKaratCount++;
-      }
+      if (i.is_custom_karat === true || i.custom_karat != null) customKaratCount++;
     });
 
     InvState.stats = {
@@ -413,13 +667,72 @@
     };
   }
 
+  /**
+   * 🆕 v6: حساب ملخّص لكل كيان (للتابات)
+   */
+  function computeEntitySummary() {
+    const summary = {};
+    const price24 = getCurrentPrice24();
+    const visible = InvState.items.filter(itemVisibleToUser);
+
+    InvState.entities.forEach(ent => {
+      summary[ent.key] = {
+        count: 0,
+        net: 0,
+        pure: 0,
+        value: 0,
+      };
+    });
+
+    /* "الكل" يُجمع من الجميع */
+    if (summary['all']) {
+      visible.forEach(item => {
+        const net = Number(item.net_weight || 0);
+        const pure = Number(item.pure_weight || 0);
+        summary['all'].count++;
+        summary['all'].net += net;
+        summary['all'].pure += pure;
+        summary['all'].value += computeLiveValue(item, price24);
+      });
+      summary['all'].net = GMS.round(summary['all'].net, 3);
+      summary['all'].pure = GMS.round(summary['all'].pure, 4);
+      summary['all'].value = GMS.round(summary['all'].value, 2);
+    }
+
+    /* كل كيان على حدة */
+    visible.forEach(item => {
+      const holder = getItemHolder(item);
+      const key = holder.type === ENTITY_TYPES.B2B_REP.key
+        ? `rep:${holder.id}`
+        : holder.type;
+
+      if (!summary[key]) return;
+
+      const net = Number(item.net_weight || 0);
+      const pure = Number(item.pure_weight || 0);
+      summary[key].count++;
+      summary[key].net += net;
+      summary[key].pure += pure;
+      summary[key].value += computeLiveValue(item, price24);
+    });
+
+    Object.keys(summary).forEach(k => {
+      summary[k].net = GMS.round(summary[k].net, 3);
+      summary[k].pure = GMS.round(summary[k].pure, 4);
+      summary[k].value = GMS.round(summary[k].value, 2);
+    });
+
+    InvState.entitySummary = summary;
+    return summary;
+  }
+
   function getPageItems() {
     const start = (InvState.page - 1) * InvState.pageSize;
     return InvState.filtered.slice(start, start + InvState.pageSize);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · HTML RENDERERS
+     §4 · HTML RENDERERS — KPI
      ═════════════════════════════════════════════════════════════════════ */
 
   function renderKPI(cls, icon, label, value, unit, meta) {
@@ -437,6 +750,177 @@
       </div>
     `;
   }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §4.5 · 🆕 v6 · ENTITY TABS (Segmented Filter)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function renderEntityTabs() {
+    if (!InvState.entities.length) return '';
+    /* لا نُظهر التابات لو هناك كيان واحد فقط */
+    if (InvState.entities.length <= 1 && !isCurrentUserManager()) return '';
+
+    return `
+      <div class="card" style="margin-bottom:14px;padding:14px 18px">
+        <div style="display:flex;align-items:center;gap:12px;
+                    flex-wrap:wrap;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <i data-lucide="layout-grid"
+               style="width:16px;height:16px;color:var(--primary)"></i>
+            <span style="font-size:12.5px;font-weight:900">
+              تصفية حسب العهدة
+            </span>
+          </div>
+          <div class="spacer" style="flex:1"></div>
+          <span class="chip info" style="font-size:10.5px">
+            <i data-lucide="layers" style="width:11px;height:11px"></i>
+            ${GMS.intFmt(InvState.entities.length)} كيان
+          </span>
+          ${isCurrentUserManager() ? `
+            <button class="btn btn-sm btn-primary"
+                    id="inv-internal-transfer-btn"
+                    type="button"
+                    title="نقل بضاعة من كيان لآخر">
+              <i data-lucide="arrow-right-left"></i>
+              أمر نقل بضاعة
+            </button>
+          ` : ''}
+        </div>
+
+        <div class="tabs-bar" style="position:relative;top:0;
+                    padding:0;background:transparent;
+                    border-bottom:none;margin-bottom:0;
+                    overflow-x:auto;gap:6px">
+          ${InvState.entities.map(ent => {
+            const isActive = InvState.entityFilter === ent.key;
+            const sm = InvState.entitySummary[ent.key] || { count: 0, pure: 0 };
+
+            /* أيقونات وألوان ديناميكية */
+            const colorMap = {
+              'gold': 'var(--primary)',
+              'success': 'var(--success)',
+              'violet': 'var(--violet)',
+              'info': 'var(--info)',
+            };
+            const clr = colorMap[ent.color] || 'var(--primary)';
+
+            return `
+              <button class="tab ${isActive ? 'active' : ''}"
+                      data-entity-tab="${GMS.esc(ent.key)}"
+                      type="button"
+                      style="padding:10px 16px;border-radius:10px 10px 0 0;
+                             min-height:auto;
+                             ${isActive ? `
+                               background:color-mix(in srgb,${clr} 12%,var(--surface-2));
+                               border-bottom:2.5px solid ${clr};
+                             ` : ''}">
+                <i data-lucide="${ent.icon}"
+                   style="width:13px;height:13px;
+                          ${isActive ? `color:${clr}` : ''}"></i>
+                <span style="font-weight:800;font-size:11.5px;
+                             ${isActive ? `color:${clr}` : ''}">
+                  ${GMS.esc(ent.shortLabel || ent.name)}
+                </span>
+                <span class="chip"
+                      style="font-size:9.5px;padding:1px 6px;
+                             margin-inline-start:6px;
+                             background:${isActive
+                               ? `color-mix(in srgb,${clr} 18%,transparent)`
+                               : 'var(--surface-3)'};
+                             color:${isActive ? clr : 'var(--muted)'}">
+                  ${GMS.intFmt(sm.count)}
+                </span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * 🆕 v6: كروت تجميع حسب العهدة (للمدير فقط)
+   */
+  function renderEntitySummaryCards() {
+    if (!isCurrentUserManager()) return '';
+    if (!InvState.entities.length) return '';
+    if (InvState.entityFilter === 'all' && InvState.entities.length <= 1) return '';
+
+    const entities = InvState.entities.filter(e => !e.isAll);
+
+    return `
+      <div style="display:grid;
+                  grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+                  gap:10px;margin-bottom:14px">
+        ${entities.map(ent => {
+          const sm = InvState.entitySummary[ent.key] || { count: 0, pure: 0, value: 0 };
+          const colorMap = {
+            'gold': 'var(--primary)',
+            'success': 'var(--success)',
+            'violet': 'var(--violet)',
+            'info': 'var(--info)',
+          };
+          const clr = colorMap[ent.color] || 'var(--primary)';
+
+          return `
+            <div style="padding:12px 14px;
+                        background:linear-gradient(135deg,
+                          color-mix(in srgb,${clr} 8%,var(--surface)) 0%,
+                          var(--surface) 100%);
+                        border-radius:11px;
+                        border:1.5px solid color-mix(in srgb,${clr} 35%,var(--border));
+                        cursor:pointer;
+                        transition:all .2s"
+                 data-entity-card="${GMS.esc(ent.key)}">
+              <div style="display:flex;align-items:center;gap:8px;
+                          margin-bottom:8px">
+                <div style="width:26px;height:26px;border-radius:7px;
+                            background:${clr};color:#fff;
+                            display:grid;place-items:center;
+                            flex-shrink:0">
+                  <i data-lucide="${ent.icon}" style="width:13px;height:13px"></i>
+                </div>
+                <div style="font-size:11.5px;font-weight:900;
+                            color:${clr};flex:1;
+                            white-space:nowrap;overflow:hidden;
+                            text-overflow:ellipsis">
+                  ${GMS.esc(ent.shortLabel || ent.name)}
+                </div>
+                <span class="chip" style="font-size:10px;
+                            background:color-mix(in srgb,${clr} 15%,transparent);
+                            color:${clr}">
+                  ${GMS.intFmt(sm.count)} قطعة
+                </span>
+              </div>
+              <div style="display:flex;justify-content:space-between;
+                          align-items:baseline;gap:6px">
+                <div>
+                  <div style="font-size:9.5px;color:var(--muted);
+                              font-weight:800">الصافي</div>
+                  <div class="mono" style="font-size:13px;font-weight:900;
+                              color:${clr}">
+                    ${GMS.gramFmt(sm.pure)} جم
+                  </div>
+                </div>
+                <div style="text-align:end">
+                  <div style="font-size:9.5px;color:var(--muted);
+                              font-weight:800">القيمة</div>
+                  <div class="mono" style="font-size:13px;font-weight:900;
+                              color:var(--primary)">
+                    ${GMS.moneyFmt(sm.value)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §5 · TABLE RENDERERS
+     ═════════════════════════════════════════════════════════════════════ */
 
   function renderHeader(col) {
     if (!InvState.columns[col.key]) return '';
@@ -468,21 +952,15 @@
     `;
   }
 
-  /**
-   * ✅ v3: عرض شارة العيار — قياسي أو مخصص
-   */
   function renderKaratBadge(item) {
     const info = getItemKaratInfo(item);
 
     if (info.is_custom) {
-      /* عيار مخصص — عرض مميّز */
       const num = info.custom_karat;
       const purity = Number(info.purity_ratio || 0);
-
       return `
         <span class="karat-badge custom-karat-badge"
-              data-k="custom"
-              data-custom="${num}"
+              data-k="custom" data-custom="${num}"
               title="عيار مخصص ${num} — نقاء ${purity.toFixed(4)}">
           <i data-lucide="sliders-horizontal"
              style="width:10px;height:10px;
@@ -493,9 +971,38 @@
       `;
     }
 
-    /* عيار قياسي */
+    return `<span class="karat-badge" data-k="${info.karat}">${info.karat}K</span>`;
+  }
+
+  /**
+   * 🆕 v6: عرض العهدة كـ badge
+   */
+  function renderHolderBadge(item) {
+    const holder = getItemHolder(item);
+
+    const meta = holder.type === ENTITY_TYPES.B2B_REP.key
+      ? ENTITY_TYPES.B2B_REP
+      : holder.type === ENTITY_TYPES.MAIN_VAULT.key
+        ? ENTITY_TYPES.MAIN_VAULT
+        : ENTITY_TYPES.RETAIL_SHOP;
+
+    const colorMap = {
+      'gold': 'var(--primary)',
+      'success': 'var(--success)',
+      'violet': 'var(--violet)',
+      'info': 'var(--info)',
+    };
+    const clr = colorMap[meta.color] || 'var(--primary)';
+
     return `
-      <span class="karat-badge" data-k="${info.karat}">${info.karat}K</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;
+                   padding:3px 9px;border-radius:20px;
+                   background:color-mix(in srgb,${clr} 12%,transparent);
+                   color:${clr};font-size:10.5px;font-weight:800;
+                   white-space:nowrap">
+        <i data-lucide="${meta.icon}" style="width:10px;height:10px"></i>
+        ${GMS.esc(holder.name || meta.label)}
+      </span>
     `;
   }
 
@@ -508,6 +1015,11 @@
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
 
     const cells = [];
+
+    /* 🆕 v6: عمود العهدة */
+    if (InvState.columns.holder) {
+      cells.push(`<td>${renderHolderBadge(item)}</td>`);
+    }
 
     if (InvState.columns.sku) {
       cells.push(`
@@ -525,11 +1037,7 @@
     }
 
     if (InvState.columns.karat) {
-      cells.push(`
-        <td class="col-c">
-          ${renderKaratBadge(item)}
-        </td>
-      `);
+      cells.push(`<td class="col-c">${renderKaratBadge(item)}</td>`);
     }
 
     if (InvState.columns.weight_grams) {
@@ -541,18 +1049,14 @@
     }
 
     if (InvState.columns.pure_weight) {
-      cells.push(`
-        <td class="col-num" style="color:var(--primary);font-weight:900">
-          ${GMS.gramFmt(item.pure_weight)}
-        </td>
-      `);
+      cells.push(`<td class="col-num" style="color:var(--primary);font-weight:900">
+        ${GMS.gramFmt(item.pure_weight)}</td>`);
     }
 
     if (InvState.columns.workmanship_per_gram) {
       cells.push(`<td class="col-num">${GMS.moneyFmt(item.workmanship_per_gram)}</td>`);
     }
 
-    /* ✅ v5: عمود الإجمالي — ديناميكي من PriceManager */
     if (InvState.columns.total_cost) {
       const price24 = getCurrentPrice24();
       const liveValue = computeLiveValue(item, price24);
@@ -578,37 +1082,30 @@
     }
 
     if (InvState.columns.manufacturer) {
-      cells.push(`
-        <td>
-          <span style="font-weight:800;font-size:11.5px">
-            ${GMS.esc(item.manufacturer_code || '—')}
-          </span>
-        </td>
-      `);
+      cells.push(`<td>
+        <span style="font-weight:800;font-size:11.5px">
+          ${GMS.esc(item.manufacturer_code || '—')}
+        </span>
+      </td>`);
     }
 
     if (InvState.columns.status) {
-      cells.push(`
-        <td class="col-c">
-          <span class="pill ${status.cls}">
-            <i data-lucide="${status.icon}"></i>
-            ${status.label}
-          </span>
-        </td>
-      `);
+      cells.push(`<td class="col-c">
+        <span class="pill ${status.cls}">
+          <i data-lucide="${status.icon}"></i>
+          ${status.label}
+        </span>
+      </td>`);
     }
 
     if (InvState.columns.created_at) {
-      cells.push(`
-        <td style="font-size:10.5px;color:var(--muted)">
-          ${GMS.dateAr(item.created_at)}
-        </td>
-      `);
+      cells.push(`<td style="font-size:10.5px;color:var(--muted)">
+        ${GMS.dateAr(item.created_at)}
+      </td>`);
     }
 
     return `
-      <tr data-row-sku="${GMS.esc(item.sku)}"
-          class="${isSelected ? 'selected' : ''}">
+      <tr data-row-sku="${GMS.esc(item.sku)}" class="${isSelected ? 'selected' : ''}">
         <td class="col-c" style="width:38px">
           <input type="checkbox" class="cb inv-check"
                  data-sku="${GMS.esc(item.sku)}"
@@ -649,12 +1146,13 @@
         <div class="empty" style="padding:60px 20px">
           <i data-lucide="package-x"></i>
           <p>لا توجد أصناف مطابقة</p>
-          <span>جرّب تعديل الفلاتر أو مسحها</span>
+          <span>${InvState.entityFilter !== 'all'
+            ? 'جرّب تغيير التبويب أو مسح الفلاتر'
+            : 'جرّب تعديل الفلاتر أو مسحها'}</span>
         </div>
       `;
     }
 
-    /* ✅ v5: حساب إجمالي الصفحة ديناميكياً */
     const pageAggregate = computeAggregateValues(pageItems);
 
     return `
@@ -676,8 +1174,7 @@
             <tr>
               <td colspan="${1 + cols.length}">
                 إجمالي الصفحة:
-                <b class="mono">${GMS.intFmt(pageItems.length)}</b>
-                صنف
+                <b class="mono">${GMS.intFmt(pageItems.length)}</b> صنف
               </td>
               <td class="col-num">
                 <span class="mono" style="color:var(--primary)">
@@ -693,7 +1190,6 @@
 
   function renderPagination() {
     const { page, totalPages, pageSize, filtered } = InvState;
-
     if (totalPages <= 1) return '';
 
     const startIdx = (page - 1) * pageSize + 1;
@@ -706,8 +1202,7 @@
 
     const btn = (p, label, opts = {}) => `
       <button class="pg-btn ${opts.active ? 'active' : ''}"
-              data-page="${p}"
-              ${opts.disabled ? 'disabled' : ''}>
+              data-page="${p}" ${opts.disabled ? 'disabled' : ''}>
         ${label}
       </button>
     `;
@@ -746,18 +1241,13 @@
           <span>من</span>
           <b>${totalPages}</b>
         </div>
-
         <div class="spacer" style="flex:1"></div>
-
         <select class="pg-size" id="inv-page-size">
           ${[25, 50, 100, 250, 500].map(s => `
             <option value="${s}" ${s === pageSize ? 'selected' : ''}>${s} / صفحة</option>
           `).join('')}
         </select>
-
-        <div class="pg-controls">
-          ${pageButtons.join('')}
-        </div>
+        <div class="pg-controls">${pageButtons.join('')}</div>
       </div>
     `;
   }
@@ -767,28 +1257,19 @@
     const chips = [];
 
     if (f.search) chips.push({ key: 'search', label: 'بحث', value: f.search });
-
-    /* ✅ v3: عرض الفلتر القياسي أو المخصص */
     if (f.karat) {
       let label = `${f.karat}K`;
       if (f.karat === 'custom') label = 'مخصص فقط';
       chips.push({ key: 'karat', label: 'عيار', value: label });
     }
-
     if (f.status) chips.push({ key: 'status', label: 'حالة', value: GMS.getStatus(f.status).label });
-
     if (f.branch) {
       const b = GMS.Demo?.getBranches()?.find(x => x.id === f.branch);
       chips.push({ key: 'branch', label: 'فرع', value: b?.name || f.branch });
     }
-
     if (f.manufacturer) chips.push({ key: 'manufacturer', label: 'ماركة', value: f.manufacturer });
     if (f.category) chips.push({ key: 'category', label: 'تصنيف', value: f.category });
-
-    /* ✅ v3: شارة فلتر "مخصص فقط" */
-    if (f.onlyCustomKarat) {
-      chips.push({ key: 'onlyCustomKarat', label: 'عيار', value: 'مخصص فقط' });
-    }
+    if (f.onlyCustomKarat) chips.push({ key: 'onlyCustomKarat', label: 'عيار', value: 'مخصص فقط' });
 
     if (!chips.length) return '';
 
@@ -821,10 +1302,8 @@
 
     return `
       <div style="display:flex;align-items:center;gap:12px;
-                  padding:11px 20px;
-                  background:var(--gold-soft);
-                  border-bottom:1px solid var(--primary);
-                  flex-wrap:wrap">
+                  padding:11px 20px;background:var(--gold-soft);
+                  border-bottom:1px solid var(--primary);flex-wrap:wrap">
         <div style="display:flex;align-items:center;gap:8px;
                     font-size:12.5px;font-weight:800">
           <i data-lucide="check-square"
@@ -837,6 +1316,11 @@
           <span>صنف</span>
         </div>
         <div class="spacer" style="flex:1"></div>
+        ${isCurrentUserManager() ? `
+          <button class="btn btn-sm" data-bulk-action="transfer">
+            <i data-lucide="arrow-right-left"></i> نقل عهدة
+          </button>
+        ` : ''}
         <button class="btn btn-sm" data-bulk-action="tag">
           <i data-lucide="qr-code"></i> طباعة تاجات
         </button>
@@ -854,7 +1338,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · MAIN RENDER
+     §6 · MAIN RENDER
      ═════════════════════════════════════════════════════════════════════ */
 
   function render(root) {
@@ -862,24 +1346,34 @@
     const manufacturers = getManufacturers();
     const categories = GMS.CATEGORIES;
 
-    /* ✅ v3: قائمة العيارات في الفلتر — تشمل "مخصص" */
     const karatOptions = [
       ...GMS.KARAT_ORDER.map(k => ({ value: String(k), label: `${k}K` })),
       { value: 'custom', label: '🔸 مخصص فقط' },
     ];
 
-    /* ✅ v5: السعر الحالي لعرضه في KPI */
     const price24 = getCurrentPrice24();
     const avgLive = InvState.filtered.length
       ? InvState.stats.totalValue / InvState.filtered.length
       : 0;
     const valueDiff = InvState.stats.totalValue - InvState.stats.totalStoredCost;
 
+    /* 🆕 v6: العنوان يتغير حسب الكيان المُختار */
+    const activeEntity = InvState.entities.find(e => e.key === InvState.entityFilter);
+    const entityLabel = activeEntity ? activeEntity.name : 'كل المخزون';
+
     root.innerHTML = `
       <div class="page-header">
         <h2>
           <i data-lucide="gem"></i>
           ${GMS.t('inv.title')}
+          ${activeEntity && !activeEntity.isAll ? `
+            <span class="chip ${activeEntity.color === 'violet' ? 'violet' : activeEntity.color === 'success' ? 'ok' : 'gold'}"
+                  style="font-size:11px;margin-inline-start:6px">
+              <i data-lucide="${activeEntity.icon}"
+                 style="width:11px;height:11px"></i>
+              ${GMS.esc(entityLabel)}
+            </span>
+          ` : ''}
         </h2>
         <p>${GMS.t('inv.subtitle')}
           <span class="chip success" style="font-size:10px;margin-inline-start:6px">
@@ -889,9 +1383,15 @@
         </p>
       </div>
 
+      <!-- 🆕 v6: كروت تجميع الكيانات -->
+      ${renderEntitySummaryCards()}
+
+      <!-- 🆕 v6: تابات الكيانات -->
+      ${renderEntityTabs()}
+
       <div class="kpi-row cols-4">
         ${renderKPI('gold', 'package', 'إجمالي الأصناف',
-            GMS.intFmt(InvState.items.length), '',
+            GMS.intFmt(InvState.items.filter(itemVisibleToUser).length), '',
             `<b>${GMS.intFmt(InvState.stats.inStock)}</b> متوفر · <b>${GMS.intFmt(InvState.stats.sold)}</b> مباع` +
             (InvState.stats.customKaratCount > 0
               ? ` · <b style="color:var(--warn)">${GMS.intFmt(InvState.stats.customKaratCount)}</b> مخصص`
@@ -899,7 +1399,8 @@
 
         ${renderKPI('info', 'filter', 'النتائج المُفلترة',
             GMS.intFmt(InvState.filtered.length), '',
-            `من إجمالي <b>${GMS.intFmt(InvState.items.length)}</b> صنف`)}
+            `من إجمالي <b>${GMS.intFmt(InvState.items.filter(itemVisibleToUser).length)}</b> صنف` +
+            (InvState.entityFilter !== 'all' ? ` · <b>${GMS.esc(entityLabel)}</b>` : ''))}
 
         ${renderKPI('success', 'scale', 'إجمالي البندق المُفلتر',
             GMS.gramFmt(InvState.stats.totalPure), 'جم',
@@ -909,9 +1410,7 @@
               : ''))}
 
         ${renderKPI('violet', 'trending-up', 'متوسط القيمة',
-            InvState.filtered.length
-              ? GMS.moneyFmt(avgLive)
-              : '0.00',
+            InvState.filtered.length ? GMS.moneyFmt(avgLive) : '0.00',
             'ج.م',
             `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`)}
       </div>
@@ -992,20 +1491,14 @@
           </button>
         </div>
 
-        <div data-active-filters-host>
-          ${renderActiveFilters()}
-        </div>
+        <div data-active-filters-host>${renderActiveFilters()}</div>
       </div>
 
-      <div id="inv-bulk-host"></div>
+      <div id="inv-bulk-host">${renderBulkBar()}</div>
 
       <div class="card">
-        <div id="inv-table-host">
-          ${renderTable()}
-        </div>
-        <div id="inv-pagination-host">
-          ${renderPagination()}
-        </div>
+        <div id="inv-table-host">${renderTable()}</div>
+        <div id="inv-pagination-host">${renderPagination()}</div>
       </div>
     `;
 
@@ -1017,19 +1510,14 @@
   function updateActiveFiltersHost() {
     const host = document.querySelector('[data-active-filters-host]');
     if (!host) return;
-
     host.innerHTML = renderActiveFilters();
     window.lucide?.createIcons();
 
     host.querySelectorAll('[data-clear-filter]').forEach(btn => {
       btn.onclick = () => {
         const key = btn.dataset.clearFilter;
-        /* ✅ v3: معالجة خاصة لـ onlyCustomKarat (boolean) */
-        if (key === 'onlyCustomKarat') {
-          InvState.filters.onlyCustomKarat = false;
-        } else {
-          InvState.filters[key] = '';
-        }
+        if (key === 'onlyCustomKarat') InvState.filters.onlyCustomKarat = false;
+        else InvState.filters[key] = '';
         InvState.page = 1;
         applyFilters();
         syncFilterSelects();
@@ -1075,12 +1563,10 @@
       { id: 'inv-filter-manufacturer', key: 'manufacturer' },
       { id: 'inv-filter-category', key: 'category' },
     ];
-
     map.forEach(({ id, key }) => {
       const el = document.getElementById(id);
       if (el) el.value = InvState.filters[key] || '';
     });
-
     const searchEl = document.getElementById('inv-search-input');
     if (searchEl) searchEl.value = InvState.filters.search || '';
   }
@@ -1100,13 +1586,9 @@
       bindPaginationEvents();
     }
 
-    /* ✅ v5: تحديث KPI بعد refresh */
     refreshKPIs();
   }
 
-  /**
-   * ✅ v5: تحديث بطاقات KPI فقط بدون إعادة تصيير كاملة
-   */
   function refreshKPIs() {
     const kpiHost = document.querySelector('.kpi-row');
     if (!kpiHost) return;
@@ -1116,12 +1598,13 @@
       ? InvState.stats.totalValue / InvState.filtered.length
       : 0;
     const valueDiff = InvState.stats.totalValue - InvState.stats.totalStoredCost;
+    const visibleItems = InvState.items.filter(itemVisibleToUser);
 
     const kpis = kpiHost.querySelectorAll('.kpi');
     if (kpis[0]) {
       const val = kpis[0].querySelector('.kpi-value');
       const meta = kpis[0].querySelector('.kpi-meta');
-      if (val) val.innerHTML = GMS.intFmt(InvState.items.length);
+      if (val) val.innerHTML = GMS.intFmt(visibleItems.length);
       if (meta) {
         meta.innerHTML = `<b>${GMS.intFmt(InvState.stats.inStock)}</b> متوفر · ` +
           `<b>${GMS.intFmt(InvState.stats.sold)}</b> مباع` +
@@ -1130,14 +1613,18 @@
             : '');
       }
     }
-
     if (kpis[1]) {
       const val = kpis[1].querySelector('.kpi-value');
       const meta = kpis[1].querySelector('.kpi-meta');
       if (val) val.innerHTML = GMS.intFmt(InvState.filtered.length);
-      if (meta) meta.innerHTML = `من إجمالي <b>${GMS.intFmt(InvState.items.length)}</b> صنف`;
+      if (meta) {
+        const activeEntity = InvState.entities.find(e => e.key === InvState.entityFilter);
+        meta.innerHTML = `من إجمالي <b>${GMS.intFmt(visibleItems.length)}</b> صنف` +
+          (activeEntity && !activeEntity.isAll
+            ? ` · <b>${GMS.esc(activeEntity.name)}</b>`
+            : '');
+      }
     }
-
     if (kpis[2]) {
       const val = kpis[2].querySelector('.kpi-value');
       const meta = kpis[2].querySelector('.kpi-meta');
@@ -1149,18 +1636,15 @@
             : '');
       }
     }
-
     if (kpis[3]) {
       const val = kpis[3].querySelector('.kpi-value');
       const meta = kpis[3].querySelector('.kpi-meta');
       if (val) val.innerHTML = `${InvState.filtered.length ? GMS.moneyFmt(avgLive) : '0.00'} <small>ج.م</small>`;
       if (meta) {
-        meta.innerHTML = `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · ` +
-          `سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`;
+        meta.innerHTML = `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`;
       }
     }
 
-    /* تحديث شريط السعر اللحظي في header */
     const headerChip = document.querySelector('.page-header .chip.success');
     if (headerChip) {
       headerChip.innerHTML = `
@@ -1174,24 +1658,46 @@
   function refreshBulkBar() {
     const host = document.getElementById('inv-bulk-host');
     if (!host) return;
-
     host.innerHTML = renderBulkBar();
     window.lucide?.createIcons();
-
     host.querySelectorAll('[data-bulk-action]').forEach(btn => {
       btn.onclick = () => handleBulkAction(btn.dataset.bulkAction);
     });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · CONTROLS BINDING
+     §7 · CONTROLS BINDING
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
+    /* 🆕 v6: تابات الكيانات */
+    document.querySelectorAll('[data-entity-tab]').forEach(tab => {
+      tab.onclick = () => {
+        InvState.entityFilter = tab.dataset.entityTab;
+        InvState.page = 1;
+        applyFilters();
+        render(document.getElementById('page'));
+      };
+    });
+
+    /* 🆕 v6: كروت تجميع الكيانات */
+    document.querySelectorAll('[data-entity-card]').forEach(card => {
+      card.onclick = () => {
+        InvState.entityFilter = card.dataset.entityCard;
+        InvState.page = 1;
+        applyFilters();
+        render(document.getElementById('page'));
+      };
+    });
+
+    /* 🆕 v6: زر أمر النقل */
+    const transferBtn = document.getElementById('inv-internal-transfer-btn');
+    if (transferBtn) transferBtn.onclick = () => openTransferModal();
+
+    /* البحث */
     const searchInput = document.getElementById('inv-search-input');
     if (searchInput) {
       searchInput.value = InvState.filters.search;
-
       searchInput.oninput = (e) => {
         lockInteraction();
         clearTimeout(InvState.timers.search);
@@ -1227,10 +1733,8 @@
     filterIds.forEach(({ id, key }) => {
       const el = document.getElementById(id);
       if (!el) return;
-
       el.onfocus = () => lockInteraction();
       el.onmousedown = () => lockInteraction();
-
       el.onchange = () => {
         lockInteraction();
         InvState.filters[key] = el.value;
@@ -1240,38 +1744,6 @@
         updateActiveFiltersHost();
       };
     });
-
-    document.querySelectorAll('[data-clear-filter]').forEach(btn => {
-      btn.onclick = () => {
-        const key = btn.dataset.clearFilter;
-        if (key === 'onlyCustomKarat') {
-          InvState.filters.onlyCustomKarat = false;
-        } else {
-          InvState.filters[key] = '';
-        }
-        InvState.page = 1;
-        applyFilters();
-        syncFilterSelects();
-        refreshTable();
-        updateActiveFiltersHost();
-      };
-    });
-
-    const clearAllBtn = document.getElementById('inv-clear-all-filters');
-    if (clearAllBtn) {
-      clearAllBtn.onclick = () => {
-        InvState.filters = {
-          search: '', karat: '', status: '',
-          branch: '', manufacturer: '', category: '',
-          onlyCustomKarat: false,
-        };
-        InvState.page = 1;
-        applyFilters();
-        syncFilterSelects();
-        refreshTable();
-        updateActiveFiltersHost();
-      };
-    }
 
     refreshBulkBar();
 
@@ -1294,7 +1766,6 @@
 
     const keyHandler = (e) => {
       if (GMS.Router?.current() !== 'inventory') return;
-
       if (e.key === 'Escape') {
         const search = document.getElementById('inv-search-input');
         if (document.activeElement === search) {
@@ -1322,13 +1793,10 @@
       cb.onclick = (e) => {
         e.stopPropagation();
         const sku = cb.dataset.sku;
-
         if (cb.checked) InvState.selected.add(sku);
         else InvState.selected.delete(sku);
-
         const row = cb.closest('tr');
         if (row) row.classList.toggle('selected', cb.checked);
-
         refreshBulkBar();
       };
     });
@@ -1338,10 +1806,8 @@
       selectPageCb.onclick = () => {
         const pageItems = getPageItems();
         const allSelected = pageItems.every(i => InvState.selected.has(i.sku));
-
         if (allSelected) pageItems.forEach(i => InvState.selected.delete(i.sku));
         else pageItems.forEach(i => InvState.selected.add(i.sku));
-
         refreshTable();
         refreshBulkBar();
       };
@@ -1350,14 +1816,12 @@
     document.querySelectorAll('th[data-sort]').forEach(th => {
       th.onclick = () => {
         const key = th.dataset.sort;
-
         if (InvState.sortBy === key) {
           InvState.sortDir = InvState.sortDir === 'asc' ? 'desc' : 'asc';
         } else {
           InvState.sortBy = key;
           InvState.sortDir = 'desc';
         }
-
         applyFilters();
         refreshTable();
       };
@@ -1376,13 +1840,10 @@
       btn.onclick = () => {
         const page = Number(btn.dataset.page);
         if (page < 1 || page > InvState.totalPages) return;
-
         InvState.page = page;
         refreshTable();
-
         document.getElementById('inv-table-host')?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
+          behavior: 'smooth', block: 'start',
         });
       };
     });
@@ -1400,7 +1861,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · ROW ACTIONS
+     §8 · ROW ACTIONS
      ═════════════════════════════════════════════════════════════════════ */
 
   async function handleRowAction(action, sku) {
@@ -1416,14 +1877,14 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · ITEM DETAILS MODAL
+     §9 · DETAILS MODAL
      ═════════════════════════════════════════════════════════════════════ */
 
   function showItemDetails(item) {
-    /* ✅ v5: السعر الحالي ديناميكي */
     const price24 = getCurrentPrice24();
     const status = GMS.getStatus(item.status);
     const karatInfo = getItemKaratInfo(item);
+    const holder = getItemHolder(item);
 
     const branchName = item.branch_name
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
@@ -1431,8 +1892,6 @@
     const purchaseRate = Number(item.purchase_workmanship || item.workmanship_per_gram || 0);
     const saleRate = Number(item.workmanship_per_gram || 0);
     const marginPerGram = saleRate - purchaseRate;
-
-    /* ✅ v5: القيمة السوقية الحالية */
     const liveValue = computeLiveValue(item, price24);
     const storedCost = Number(item.total_cost || 0);
     const diff = GMS.round(liveValue - storedCost, 2);
@@ -1442,8 +1901,14 @@
       icon: 'gem',
       size: 'lg',
       body: `
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);
                     gap:12px;margin-bottom:18px">
+          <div style="padding:12px 14px;background:var(--surface-2);
+                      border-radius:11px;border:1px solid var(--border)">
+            <div style="font-size:10.5px;color:var(--muted);font-weight:800;
+                        text-transform:uppercase">العهدة</div>
+            <div style="margin-top:4px">${renderHolderBadge(item)}</div>
+          </div>
           <div style="padding:12px 14px;background:var(--surface-2);
                       border-radius:11px;border:1px solid var(--border)">
             <div style="font-size:10.5px;color:var(--muted);font-weight:800;
@@ -1452,14 +1917,12 @@
               ${renderKaratBadge(item)}
               ${karatInfo.is_custom ? `
                 <div class="mono" style="font-size:10.5px;
-                            color:var(--muted);font-weight:700;
-                            margin-top:5px">
+                            color:var(--muted);font-weight:700;margin-top:5px">
                   نقاء: ${Number(karatInfo.purity_ratio).toFixed(4)}
                 </div>
               ` : ''}
             </div>
           </div>
-
           <div style="padding:12px 14px;background:var(--surface-2);
                       border-radius:11px;border:1px solid var(--border)">
             <div style="font-size:10.5px;color:var(--muted);font-weight:800;
@@ -1468,7 +1931,6 @@
               <span class="pill ${status.cls}">${status.label}</span>
             </div>
           </div>
-
           <div style="padding:12px 14px;background:var(--surface-2);
                       border-radius:11px;border:1px solid var(--border)">
             <div style="font-size:10.5px;color:var(--muted);font-weight:800;
@@ -1493,25 +1955,13 @@
             <span class="v">${GMS.gramFmt(item.weight_grams)} جم</span>
           </div>
           <div class="cl-row">
-            <span class="k"><i data-lucide="gem"></i> وزن الأحجار
-              ${item.stones_included ? '<span class="chip" style="font-size:9px">داخل الوزن</span>' : ''}</span>
+            <span class="k"><i data-lucide="gem"></i> وزن الأحجار</span>
             <span class="v">${GMS.gramFmt(item.stone_weight)} جم</span>
           </div>
           <div class="cl-row">
             <span class="k"><i data-lucide="scale"></i> الوزن الصافي</span>
             <span class="v">${GMS.gramFmt(item.net_weight)} جم</span>
           </div>
-          ${karatInfo.is_custom ? `
-            <div class="cl-row">
-              <span class="k">
-                <i data-lucide="percent"></i>
-                نسبة النقاء (المخصصة)
-              </span>
-              <span class="v mono" style="color:var(--warn);font-weight:900">
-                ${Number(karatInfo.purity_ratio).toFixed(4)}
-              </span>
-            </div>
-          ` : ''}
           <div class="cl-row hi">
             <span class="k"><i data-lucide="sparkles"></i> البندق 24K</span>
             <span class="v">${GMS.gramFmt(item.pure_weight)} جم</span>
@@ -1520,96 +1970,26 @@
 
         <div class="calc-list">
           <div class="cl-row">
-            <span class="k"><i data-lucide="shopping-cart"></i> مصنعية الشراء</span>
-            <span class="v" style="color:var(--danger)">
-              ${GMS.moneyFmt(purchaseRate)} ج.م
-            </span>
-          </div>
-          <div class="cl-row">
-            <span class="k"><i data-lucide="tag"></i> مصنعية البيع</span>
-            <span class="v" style="color:var(--success)">
-              ${GMS.moneyFmt(saleRate)} ج.م
-            </span>
-          </div>
-          <div class="cl-row">
-            <span class="k"><i data-lucide="trending-up"></i> هامش الربح / جم</span>
-            <span class="v" style="color:${marginPerGram > 0 ? 'var(--success)' : marginPerGram < 0 ? 'var(--danger)' : 'var(--muted)'}">
-              ${marginPerGram > 0 ? '+' : ''}${GMS.moneyFmt(marginPerGram)} ج.م
-            </span>
-          </div>
-        </div>
-
-        <div class="calc-list" style="margin-top:16px">
-          <div class="cl-row">
             <span class="k"><i data-lucide="coins"></i> قيمة المصنعية (بيع)</span>
             <span class="v">${GMS.moneyFmt(item.workmanship_value)} ج.م</span>
           </div>
           <div class="cl-row">
             <span class="k"><i data-lucide="trending-up"></i> سعر 24K الحالي</span>
-            <span class="v" style="color:var(--primary)">
-              ${GMS.moneyFmt(price24)} ج.م
-            </span>
-          </div>
-          <div class="cl-row">
-            <span class="k"><i data-lucide="coins"></i> قيمة الذهب الحالية</span>
-            <span class="v">${GMS.moneyFmt(Number(item.pure_weight) * price24)} ج.م</span>
+            <span class="v" style="color:var(--primary)">${GMS.moneyFmt(price24)} ج.م</span>
           </div>
           <div class="cl-row hi">
-            <span class="k">
-              <i data-lucide="banknote"></i>
-              القيمة السوقية الحالية
-            </span>
+            <span class="k"><i data-lucide="banknote"></i> القيمة السوقية</span>
             <span class="v">${GMS.moneyFmt(liveValue)} ج.م</span>
           </div>
-          ${Math.abs(diff) > 0.5 ? `
-            <div class="cl-row">
-              <span class="k">
-                <i data-lucide="arrow-up-down"></i>
-                الفرق عن التكلفة
-              </span>
-              <span class="v" style="color:${diff > 0 ? 'var(--success)' : 'var(--danger)'}">
-                ${diff > 0 ? '+' : ''}${GMS.moneyFmt(diff)} ج.م
-              </span>
-            </div>
-            <div class="cl-row">
-              <span class="k">
-                <i data-lucide="archive"></i>
-                التكلفة المخزّنة
-              </span>
-              <span class="v" style="color:var(--muted);font-size:12px">
-                ${GMS.moneyFmt(storedCost)} ج.م
-              </span>
-            </div>
-          ` : ''}
         </div>
-
-        <div class="calc-list" style="margin-top:16px">
-          <div class="cl-row">
-            <span class="k"><i data-lucide="calendar"></i> تاريخ الإضافة</span>
-            <span class="v" style="font-size:12px">${GMS.dateTimeAr(item.created_at)}</span>
-          </div>
-          ${item.updated_at ? `
-            <div class="cl-row">
-              <span class="k"><i data-lucide="refresh-cw"></i> آخر تحديث</span>
-              <span class="v" style="font-size:12px">${GMS.dateTimeAr(item.updated_at)}</span>
-            </div>
-          ` : ''}
-        </div>
-
-        ${item.notes ? `
-          <div style="margin-top:14px;padding:12px 14px;border-radius:10px;
-                      background:var(--info-bg);
-                      border:1px solid color-mix(in srgb,var(--info) 30%,transparent)">
-            <div style="font-size:10.5px;font-weight:800;color:var(--info);
-                        text-transform:uppercase;margin-bottom:5px">ملاحظات</div>
-            <div style="font-size:12.5px;color:var(--text-2);font-weight:600">
-              ${GMS.esc(item.notes)}
-            </div>
-          </div>
-        ` : ''}
       `,
       footer: `
         <button class="btn" data-close>إغلاق</button>
+        ${isCurrentUserManager() ? `
+          <button class="btn btn-info" data-transfer>
+            <i data-lucide="arrow-right-left"></i> نقل لعهدة أخرى
+          </button>
+        ` : ''}
         <button class="btn" data-edit>
           <i data-lucide="pencil"></i> تعديل
         </button>
@@ -1627,12 +2007,604 @@
           close();
           await printTag(item);
         };
+        const transferBtn = el.querySelector('[data-transfer]');
+        if (transferBtn) {
+          transferBtn.onclick = () => {
+            close();
+            openTransferModal([item.sku]);
+          };
+        }
       },
     });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · ITEM MODAL (ADD / EDIT) — v3 مع دعم العيار المخصص
+     §10 · 🆕 v6 · INTERNAL STOCK TRANSFER MODAL
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function openTransferModal(preselectedSkus = null) {
+    if (!isCurrentUserManager()) {
+      return GMS.Toast?.err?.('غير مصرح', 'هذه العملية للمدير فقط');
+    }
+
+    if (!InvState.entities.length) {
+      return GMS.Toast?.warn?.('لا توجد كيانات');
+    }
+
+    /* العناصر المرشّحة للنقل */
+    let items;
+    if (preselectedSkus && preselectedSkus.length) {
+      items = InvState.items.filter(i => preselectedSkus.includes(i.sku));
+    } else if (InvState.selected.size > 0) {
+      items = InvState.items.filter(i => InvState.selected.has(i.sku));
+    } else {
+      items = [];
+    }
+
+    const entities = InvState.entities.filter(e => !e.isAll);
+
+    if (!entities.length) {
+      return GMS.Toast?.warn?.('لا توجد كيانات للنقل');
+    }
+
+    /* آخر كيان تم النقل إليه (للاختيار الافتراضي) */
+    const defaultTo = entities.length > 1 ? entities[1].key : entities[0].key;
+
+    GMS.Modal.open({
+      title: '📦 أمر نقل بضاعة داخلي',
+      icon: 'arrow-right-left',
+      size: 'xl',
+      body: `
+        <div style="padding:12px 14px;background:var(--info-bg);
+                    border-radius:10px;margin-bottom:14px;
+                    border-inline-start:3px solid var(--info);
+                    font-size:11.5px;font-weight:700;
+                    color:var(--text-2);line-height:1.6">
+          <i data-lucide="info" style="width:12px;height:12px;
+             display:inline;vertical-align:-2px;color:var(--info)"></i>
+          <b>أمر نقل بضاعة داخلي:</b> ينقل القطع من عهدة إلى عهدة أخرى
+          بدون تغيير ملكية المحل. تُسجَّل العملية في دفتر الأستاذ للسجلات.
+        </div>
+
+        <!-- من كيان / إلى كيان -->
+        <div style="display:grid;grid-template-columns:1fr auto 1fr;
+                    gap:14px;align-items:end;margin-bottom:16px">
+          <div class="field">
+            <label>من عهدة <span class="req">*</span></label>
+            <select id="trf-from">
+              <option value="">— اختر —</option>
+              ${entities.map(e => `
+                <option value="${GMS.esc(e.key)}">
+                  ${GMS.esc(e.name)}${e.rep_code ? ` (${e.rep_code})` : ''}
+                </option>
+              `).join('')}
+            </select>
+          </div>
+
+          <div style="padding-bottom:8px;color:var(--primary);
+                      font-weight:900">
+            <i data-lucide="arrow-left" style="width:24px;height:24px"></i>
+          </div>
+
+          <div class="field">
+            <label>إلى عهدة <span class="req">*</span></label>
+            <select id="trf-to">
+              <option value="">— اختر —</option>
+              ${entities.map(e => `
+                <option value="${GMS.esc(e.key)}" ${e.key === defaultTo ? 'selected' : ''}>
+                  ${GMS.esc(e.name)}${e.rep_code ? ` (${e.rep_code})` : ''}
+                </option>
+              `).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- قائمة القطع -->
+        <div style="font-size:11px;font-weight:800;color:var(--muted);
+                    text-transform:uppercase;letter-spacing:.4px;
+                    margin-bottom:10px;display:flex;align-items:center;
+                    gap:8px">
+          <i data-lucide="package" style="width:12px;height:12px"></i>
+          القطع المشمولة بالنقل
+          <span class="spacer" style="flex:1"></span>
+          <span class="chip info" id="trf-items-count">
+            ${GMS.intFmt(items.length)} قطعة
+          </span>
+          <button class="btn btn-sm" id="trf-picker-btn" type="button">
+            <i data-lucide="list-plus"></i> إضافة قطع
+          </button>
+        </div>
+
+        <div id="trf-items-host"
+             style="max-height:320px;overflow-y:auto;
+                    border:1px solid var(--border);border-radius:11px">
+          ${renderTransferItemsTable(items)}
+        </div>
+
+        <div class="field" style="margin-top:14px">
+          <label>ملاحظات على النقل</label>
+          <input id="trf-notes" placeholder="سبب النقل، رقم التسليم اليدوي…">
+        </div>
+
+        <div id="trf-preview" style="margin-top:14px"></div>
+      `,
+      footer: `
+        <button class="btn" data-close type="button">إلغاء</button>
+        <button class="btn btn-primary btn-lg" id="trf-confirm" type="button">
+          <i data-lucide="check-circle-2"></i>
+          تأكيد النقل
+        </button>
+      `,
+      onMount: (el, close) => {
+        let selectedItems = items.slice();
+
+        const $ = (id) => el.querySelector('#' + id);
+
+        /* ربط أزرار الإغلاق */
+        el.querySelectorAll('[data-close]').forEach(b => {
+          b.onclick = () => close();
+        });
+
+        /* Picker: إضافة قطع */
+        $('trf-picker-btn').onclick = () => {
+          openItemPicker({
+            excludeSkus: selectedItems.map(i => i.sku),
+            onAdd: (newItems) => {
+              newItems.forEach(ni => {
+                if (!selectedItems.find(x => x.sku === ni.sku)) {
+                  selectedItems.push(ni);
+                }
+              });
+              updateItemsList();
+            },
+          });
+        };
+
+        function updateItemsList() {
+          $('trf-items-host').innerHTML = renderTransferItemsTable(selectedItems);
+          $('trf-items-count').textContent = `${selectedItems.length} قطعة`;
+          window.lucide?.createIcons();
+          bindItemsRemove();
+
+          /* من يمنع النقل لو ما فيش قطع */
+          const btn = $('trf-confirm');
+          if (btn) btn.disabled = selectedItems.length === 0;
+        }
+
+        function bindItemsRemove() {
+          $('trf-items-host').querySelectorAll('[data-remove-sku]').forEach(b => {
+            b.onclick = () => {
+              const sku = b.dataset.removeSku;
+              selectedItems = selectedItems.filter(x => x.sku !== sku);
+              updateItemsList();
+            };
+          });
+        }
+
+        bindItemsRemove();
+        updateItemsList();
+
+        /* معاينة عند تغيير From/To */
+        function updatePreview() {
+          const fromKey = $('trf-from').value;
+          const toKey = $('trf-to').value;
+          const fromEnt = InvState.entities.find(e => e.key === fromKey);
+          const toEnt = InvState.entities.find(e => e.key === toKey);
+          const totalPure = selectedItems.reduce(
+            (a, i) => a + Number(i.pure_weight || 0), 0
+          );
+
+          const preview = $('trf-preview');
+          if (!fromEnt || !toEnt) { preview.innerHTML = ''; return; }
+
+          if (fromEnt.key === toEnt.key) {
+            preview.innerHTML = `
+              <div style="padding:12px 14px;background:var(--danger-bg);
+                          border-radius:10px;
+                          border:1px solid color-mix(in srgb,var(--danger) 35%,transparent);
+                          color:var(--danger);font-size:12px;font-weight:800">
+                <i data-lucide="alert-triangle"
+                   style="width:14px;height:14px;
+                          display:inline;vertical-align:-2px"></i>
+                لا يمكن النقل لنفس العهدة — اختر عهدة مختلفة.
+              </div>
+            `;
+            $('trf-confirm').disabled = true;
+            window.lucide?.createIcons();
+            return;
+          }
+
+          preview.innerHTML = `
+            <div style="padding:14px 16px;background:var(--gold-soft);
+                        border-radius:11px;
+                        border:1.5px solid color-mix(in srgb,var(--primary) 40%,var(--border));
+                        position:relative;overflow:hidden">
+              <div style="position:absolute;inset-block:0;
+                          inset-inline-start:0;width:3px;
+                          background:var(--gold-grad)"></div>
+              <div style="font-size:11px;font-weight:900;
+                          color:var(--warn);text-transform:uppercase;
+                          letter-spacing:.4px;margin-bottom:8px">
+                معاينة النقل
+              </div>
+              <div style="font-family:var(--font-mono);font-size:12.5px;
+                          font-weight:700;color:var(--text-2);
+                          line-height:1.9">
+                <div>من: <b>${GMS.esc(fromEnt.name)}</b></div>
+                <div>إلى: <b>${GMS.esc(toEnt.name)}</b></div>
+                <div>عدد القطع: <b>${selectedItems.length}</b></div>
+                <div>إجمالي البندق: <b style="color:var(--primary)">
+                  ${GMS.gramFmt(totalPure)} جم
+                </b></div>
+              </div>
+            </div>
+          `;
+          $('trf-confirm').disabled = false;
+          window.lucide?.createIcons();
+        }
+
+        $('trf-from').onchange = updatePreview;
+        $('trf-to').onchange = updatePreview;
+
+        /* تأكيد النقل */
+        $('trf-confirm').onclick = async () => {
+          const fromKey = $('trf-from').value;
+          const toKey = $('trf-to').value;
+          const notes = $('trf-notes').value.trim();
+
+          const fromEnt = InvState.entities.find(e => e.key === fromKey);
+          const toEnt = InvState.entities.find(e => e.key === toKey);
+
+          if (!fromEnt || !toEnt) {
+            return GMS.Toast?.err?.('اختر العهدتين');
+          }
+          if (fromEnt.key === toEnt.key) {
+            return GMS.Toast?.err?.('لا يمكن النقل لنفس العهدة');
+          }
+          if (!selectedItems.length) {
+            return GMS.Toast?.err?.('أضف قطعة واحدة على الأقل');
+          }
+
+          const ok = await GMS.Confirm?.ask?.(
+            `سيتم نقل ${selectedItems.length} قطعة من "${fromEnt.name}" إلى "${toEnt.name}". متابعة؟`,
+            { title: 'تأكيد النقل', okText: 'تنفيذ النقل', icon: 'arrow-right-left' }
+          );
+          if (!ok) return;
+
+          const btn = $('trf-confirm');
+          btn.disabled = true;
+          btn.innerHTML = `<i data-lucide="loader-circle"></i> جارٍ النقل…`;
+          window.lucide?.createIcons();
+
+          try {
+            await executeInternalTransfer({
+              fromEntity: fromEnt,
+              toEntity: toEnt,
+              items: selectedItems,
+              notes,
+            });
+
+            close();
+            GMS.Beep?.complete?.();
+            GMS.Toast?.ok?.(
+              `تم نقل ${selectedItems.length} قطعة`,
+              `من ${fromEnt.name} → ${toEnt.name}`
+            );
+
+            /* إعادة تحميل */
+            await loadInventory();
+            applyFilters();
+            render(document.getElementById('page'));
+          } catch (e) {
+            console.error('[Inventory.transfer]', e);
+            GMS.Beep?.error?.();
+            GMS.Toast?.err?.('فشل النقل', e.message);
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="check-circle-2"></i> إعادة المحاولة`;
+            window.lucide?.createIcons();
+          }
+        };
+
+        /* شغّل المعاينة الأولية */
+        setTimeout(updatePreview, 100);
+      },
+    });
+  }
+
+  function renderTransferItemsTable(items) {
+    if (!items.length) {
+      return `
+        <div class="empty" style="padding:40px 20px">
+          <i data-lucide="package"></i>
+          <p>لا توجد قطع مُضافة</p>
+          <span>اضغط "إضافة قطع" لاختيار القطع من المخزون</span>
+        </div>
+      `;
+    }
+
+    return `
+      <table class="tbl" style="font-size:11.5px">
+        <thead>
+          <tr>
+            <th>كود التاج</th>
+            <th style="width:60px" class="col-c">عيار</th>
+            <th style="width:90px" class="col-num">صافي (جم)</th>
+            <th style="width:100px" class="col-num">بندق 24K</th>
+            <th style="width:120px" class="col-num">القيمة</th>
+            <th style="width:50px" class="col-c">—</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(it => {
+            const info = getItemKaratInfo(it);
+            const val = computeLiveValue(it);
+            return `
+              <tr>
+                <td class="mono" style="font-weight:800">${GMS.esc(it.sku)}</td>
+                <td class="col-c">
+                  ${info.is_custom
+                    ? `<span class="karat-badge custom-karat-badge" style="font-size:10px">${info.custom_karat}</span>`
+                    : `<span class="karat-badge" data-k="${info.karat}" style="font-size:10px">${info.karat}K</span>`}
+                </td>
+                <td class="col-num">${GMS.gramFmt(it.net_weight)}</td>
+                <td class="col-num" style="color:var(--primary);font-weight:800">
+                  ${GMS.gramFmt(it.pure_weight)}
+                </td>
+                <td class="col-num" style="font-weight:800">
+                  ${GMS.moneyFmt(val)}
+                </td>
+                <td class="col-c">
+                  <button class="row-act danger" data-remove-sku="${GMS.esc(it.sku)}"
+                          type="button" style="width:26px;height:26px">
+                    <i data-lucide="x"></i>
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  /**
+   * 🆕 v6: تنفيذ النقل الداخلي — يحدّث العهدة على العناصر
+   */
+  async function executeInternalTransfer({ fromEntity, toEntity, items, notes }) {
+    const now = new Date().toISOString();
+    const voucherNo = `TRF-${Date.now().toString(36).toUpperCase().slice(-8)}`;
+
+    const newHolder = {
+      type: toEntity.type,
+      id: toEntity.id,
+      name: toEntity.name,
+    };
+
+    /* 1) تحديث كل عنصر */
+    for (const item of items) {
+      try {
+        const fresh = await GMS.IDB?.get?.(item.id) || item;
+        setItemHolder(fresh, newHolder);
+        fresh.updated_at = now;
+
+        /* حفظ في IDB */
+        if (GMS.IDB) {
+          await GMS.IDB.put(fresh);
+        }
+
+        /* تحديث المصفوفة المحلية */
+        const idx = InvState.items.findIndex(x => x.sku === item.sku);
+        if (idx >= 0) InvState.items[idx] = fresh;
+      } catch (e) {
+        console.warn('[Inventory.transfer] IDB update failed for', item.sku, e);
+      }
+    }
+
+    /* 2) تحديث Supabase لو متصل */
+    if (GMS.Supabase?.isReady?.()) {
+      try {
+        const client = GMS.Supabase.get();
+        const ids = items.map(i => i.id).filter(Boolean);
+        if (ids.length) {
+          await client
+            .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
+            .update({
+              holder_type: newHolder.type,
+              holder_id: newHolder.id,
+              holder_name: newHolder.name,
+              updated_at: now,
+            })
+            .in('id', ids);
+        }
+      } catch (e) {
+        console.warn('[Inventory.transfer] Supabase failed:', e);
+      }
+    }
+
+    /* 3) سجل حركة (Audit) */
+    if (GMS.Audit) {
+      try {
+        const totalPure = items.reduce(
+          (a, i) => a + Number(i.pure_weight || 0), 0
+        );
+        await GMS.Audit.log(
+          'TRANSFER',
+          'inventory',
+          voucherNo,
+          `نقل ${items.length} قطعة من "${fromEntity.name}" إلى "${toEntity.name}"`,
+          {
+            voucher_no: voucherNo,
+            from: fromEntity.key,
+            to: toEntity.key,
+            count: items.length,
+            total_pure: GMS.round(totalPure, 4),
+            skus: items.map(i => i.sku).slice(0, 50),
+            notes: notes || '',
+          }
+        );
+      } catch (_) {}
+    }
+
+    /* 4) Realtime emit */
+    if (GMS.Realtime) {
+      try {
+        GMS.Realtime.emit('inventory', 'UPDATE', {
+          action: 'transfer',
+          voucher_no: voucherNo,
+          from: fromEntity.key,
+          to: toEntity.key,
+          count: items.length,
+        });
+      } catch (_) {}
+    }
+
+    /* 5) Toast نهائي */
+    console.log(
+      `[Inventory] ✅ Transfer ${voucherNo}: ${items.length} items`,
+      { from: fromEntity.key, to: toEntity.key }
+    );
+
+    return { voucherNo, count: items.length };
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §11 · ITEM PICKER (نافذة فرعية لاختيار عناصر)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function openItemPicker(opts = {}) {
+    const { excludeSkus = [], onAdd = null } = opts;
+
+    const available = InvState.items
+      .filter(itemVisibleToUser)
+      .filter(i => i.status === 'IN_STOCK')
+      .filter(i => !excludeSkus.includes(i.sku));
+
+    GMS.Modal.open({
+      title: 'اختيار قطع من المخزون',
+      icon: 'list-plus',
+      size: 'xl',
+      body: `
+        <div class="search-wrap" style="margin-bottom:14px">
+          <i data-lucide="search"></i>
+          <input id="picker-search" placeholder="بحث بكود التاج…" autocomplete="off">
+        </div>
+        <div id="picker-list"
+             style="max-height:480px;overflow-y:auto;
+                    border:1px solid var(--border);border-radius:11px">
+          ${renderPickerItems(available)}
+        </div>
+      `,
+      footer: `
+        <button class="btn" data-close type="button">إغلاق</button>
+        <button class="btn btn-primary" id="picker-confirm" type="button" disabled>
+          إضافة المحدد
+        </button>
+      `,
+      onMount: (el, close) => {
+        const picked = new Set();
+
+        const $ = (id) => el.querySelector('#' + id);
+        const searchInput = $('picker-search');
+        const listHost = $('picker-list');
+        const confirmBtn = $('picker-confirm');
+
+        function bindList() {
+          listHost.querySelectorAll('[data-pick-sku]').forEach(row => {
+            const cb = row.querySelector('.cb');
+            row.onclick = (e) => {
+              if (e.target.tagName === 'INPUT') return;
+              cb.checked = !cb.checked;
+              cb.dispatchEvent(new Event('change'));
+            };
+            cb.onchange = () => {
+              if (cb.checked) picked.add(cb.dataset.sku);
+              else picked.delete(cb.dataset.sku);
+              confirmBtn.disabled = picked.size === 0;
+              confirmBtn.innerHTML = picked.size
+                ? `إضافة ${picked.size} قطعة`
+                : 'إضافة المحدد';
+            };
+          });
+        }
+
+        bindList();
+
+        if (searchInput) {
+          searchInput.oninput = (e) => {
+            const q = e.target.value.toLowerCase().trim();
+            const filtered = !q ? available : available.filter(i =>
+              (i.sku || '').toLowerCase().includes(q) ||
+              (i.category || '').toLowerCase().includes(q) ||
+              (i.manufacturer_name || '').toLowerCase().includes(q)
+            );
+            listHost.innerHTML = renderPickerItems(filtered, picked);
+            window.lucide?.createIcons();
+            bindList();
+          };
+        }
+
+        $('picker-confirm').onclick = () => {
+          const selected = available.filter(i => picked.has(i.sku));
+          if (typeof onAdd === 'function') onAdd(selected);
+          close();
+        };
+
+        el.querySelectorAll('[data-close]').forEach(b => {
+          b.onclick = () => close();
+        });
+      },
+    });
+  }
+
+  function renderPickerItems(items, picked = new Set()) {
+    if (!items.length) {
+      return `<div class="empty" style="padding:40px"><i data-lucide="package-x"></i><p>لا توجد قطع</p></div>`;
+    }
+
+    return items.slice(0, 500).map(it => {
+      const info = getItemKaratInfo(it);
+      const holder = getItemHolder(it);
+      const checked = picked.has(it.sku) ? 'checked' : '';
+
+      return `
+        <div data-pick-sku="${GMS.esc(it.sku)}"
+             style="display:grid;grid-template-columns:auto 1fr auto;
+                    gap:12px;align-items:center;
+                    padding:11px 14px;
+                    border-bottom:1px solid var(--border);
+                    cursor:pointer;transition:background .15s">
+          <input type="checkbox" class="cb" data-sku="${GMS.esc(it.sku)}" ${checked}>
+          <div style="min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+                        margin-bottom:3px">
+              <span class="mono" style="font-weight:800;font-size:12.5px">
+                ${GMS.esc(it.sku)}
+              </span>
+              ${info.is_custom
+                ? `<span class="karat-badge custom-karat-badge" style="font-size:9.5px">${info.custom_karat}</span>`
+                : `<span class="karat-badge" data-k="${info.karat}" style="font-size:9.5px">${info.karat}K</span>`}
+              ${renderHolderBadge(it)}
+            </div>
+            <div style="font-size:10.5px;color:var(--muted);font-weight:700">
+              ${GMS.esc(it.category || '—')} · صافي ${GMS.gramFmt(it.net_weight)} جم
+            </div>
+          </div>
+          <div style="text-align:end">
+            <div class="mono" style="font-size:12px;font-weight:900;
+                        color:var(--primary)">
+              ${GMS.gramFmt(it.pure_weight)} جم
+            </div>
+            <div style="font-size:9.5px;color:var(--muted);font-weight:700">
+              بندق 24K
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §12 · ITEM MODAL (ADD / EDIT) — محفوظ من v5
      ═════════════════════════════════════════════════════════════════════ */
 
   function openItemModal(item = null) {
@@ -1652,22 +2624,27 @@
       saleRate: Number(item_.workmanship_per_gram || 0),
       stonesIncluded: Boolean(item_.stones_included) || false,
 
-      /* ✅ v3: حالة العيار المخصص */
-      karatMode: 'standard',        /* 'standard' | 'custom' */
+      karatMode: 'standard',
       standardKarat: Number(item_.karat) || 21,
       customKarat: Number(item_.custom_karat) || 888,
       customPurity: Number(item_.purity_ratio) || 0.8880,
 
-      /* ✅ Quantity */
       quantity: 1,
       sameWeight: true,
       individualWeights: [],
+
+      /* 🆕 v6: العهدة */
+      holderKey: item_
+        ? (getItemHolder(item_).type === ENTITY_TYPES.B2B_REP.key
+            ? `rep:${getItemHolder(item_).id}`
+            : getItemHolder(item_).type)
+        : (InvState.entityFilter !== 'all' ? InvState.entityFilter : 'retail_shop'),
     };
 
-    /* ✅ v3: تحديد الحالة الابتدائية للعيار */
     if (isEdit && (item_.is_custom_karat === true || item_.custom_karat != null)) {
       mstate.karatMode = 'custom';
-      mstate.customKarat = Number(item_.custom_karat) || Math.round((Number(item_.purity_ratio) || 0.888) * 1000);
+      mstate.customKarat = Number(item_.custom_karat) ||
+        Math.round((Number(item_.purity_ratio) || 0.888) * 1000);
       mstate.customPurity = Number(item_.purity_ratio) || (mstate.customKarat / 1000);
     }
 
@@ -1683,11 +2660,7 @@
       title: isEdit ? `تعديل الصنف — ${item_.sku}` : 'إضافة صنف جديد',
       icon: isEdit ? 'pencil' : 'plus-circle',
       size: 'xl',
-      body: `
-        <div id="item-modal-body">
-          ${renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate)}
-        </div>
-      `,
+      body: `<div id="item-modal-body">${renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate)}</div>`,
       footer: `
         <button class="btn" data-close>إلغاء</button>
         <button class="btn btn-primary btn-lg" id="f-save">
@@ -1700,24 +2673,47 @@
     });
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.1 · Render Item Form — v3 مع العيار المخصص
-     ───────────────────────────────────────────────────────────────────── */
   function renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate) {
     const price24 = getCurrentPrice24();
 
+    /* خيارات العهدة */
+    const holderOptions = InvState.entities.filter(e => !e.isAll).map(e => `
+      <option value="${GMS.esc(e.key)}" ${mstate.holderKey === e.key ? 'selected' : ''}>
+        ${GMS.esc(e.name)}${e.rep_code ? ` (${e.rep_code})` : ''}
+      </option>
+    `).join('');
+
     return `
+      <!-- 🆕 v6: العهدة -->
+      <div style="padding:14px 16px;background:var(--violet-bg);border-radius:12px;
+                  border:1.5px solid color-mix(in srgb,var(--violet) 30%,var(--border));
+                  margin-bottom:16px">
+        <div style="font-size:11px;font-weight:800;color:var(--violet);
+                    text-transform:uppercase;letter-spacing:.5px;
+                    margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <i data-lucide="map-pin" style="width:12px;height:12px"></i>
+          العهدة / موقع القطعة
+        </div>
+        <div class="field" style="margin:0">
+          <label style="color:var(--violet)">العهدة المسؤولة</label>
+          <select id="f-holder">
+            ${holderOptions}
+          </select>
+          <span class="hint">
+            القطعة تُحتسب في جرد هذه العهدة — للنقل استخدم "أمر نقل بضاعة" من الشريط العلوي.
+          </span>
+        </div>
+      </div>
+
       <!-- Section 1: SKU + Manufacturer + Category -->
       <div class="grid-form three">
         <div class="field">
           <label>كود التاج الأساسي <span class="req">*</span>
-            ${!isEdit ? `<span class="hint" style="display:inline">
-              — سيُضاف رقم مسلسل لكل قطعة</span>` : ''}
+            ${!isEdit ? `<span class="hint" style="display:inline">— سيُضاف رقم مسلسل لكل قطعة</span>` : ''}
           </label>
           <div style="display:flex;gap:8px">
             <input id="f-sku" value="${GMS.esc(item_.sku || '')}"
-                   class="mono" dir="ltr"
-                   ${isEdit ? 'readonly' : ''}
+                   class="mono" dir="ltr" ${isEdit ? 'readonly' : ''}
                    style="font-weight:800">
             ${isEdit ? '' : `
               <button type="button" class="btn btn-sm" id="f-gen-sku"
@@ -1761,20 +2757,18 @@
         </div>
       </div>
 
-      <!-- ✅ v3: Section 2: Karat (Standard + Custom toggle) -->
+      <!-- Karat section (محفوظ من v5) -->
       <div style="margin-top:18px">
         <div style="font-size:11px;font-weight:800;color:var(--muted);
                     text-transform:uppercase;letter-spacing:.5px;
-                    margin-bottom:11px;display:flex;align-items:center;
-                    gap:8px">
+                    margin-bottom:11px;display:flex;align-items:center;gap:8px">
           <i data-lucide="gem" style="width:12px;height:12px"></i>
           العيار
           <span class="chip" style="font-size:9.5px;margin-inline-start:auto">
-            يدعم العيارات القياسية والمخصصة (سبائك، مستورد، كسر)
+            يدعم العيارات القياسية والمخصصة
           </span>
         </div>
 
-        <!-- Standard Karat Grid -->
         <div class="karat-grid" id="f-karat-standard-grid">
           ${GMS.KARAT_ORDER.map(k => `
             <button type="button"
@@ -1788,21 +2782,17 @@
                   class="karat-btn ${mstate.karatMode === 'custom' ? 'active' : ''} custom-karat-btn"
                   data-karat-custom="1">
             <div class="kb-num">
-              <i data-lucide="sliders-horizontal"
-                 style="width:20px;height:20px"></i>
+              <i data-lucide="sliders-horizontal" style="width:20px;height:20px"></i>
             </div>
             <div class="kb-ratio">مخصص</div>
           </button>
         </div>
 
-        <!-- Hidden input للعيار القياسي -->
         <input type="hidden" id="f-karat" value="${mstate.standardKarat}">
 
-        <!-- ✅ v3: Custom Karat Panel -->
         <div id="f-custom-karat-panel"
              style="margin-top:12px;padding:16px 18px;
-                    background:var(--warn-bg);
-                    border-radius:12px;
+                    background:var(--warn-bg);border-radius:12px;
                     border:1.5px solid color-mix(in srgb,var(--warn) 35%,var(--border));
                     ${mstate.karatMode === 'custom' ? '' : 'display:none'}">
           <div style="font-size:11px;font-weight:800;color:var(--warn);
@@ -1820,7 +2810,7 @@
                      value="${mstate.customKarat}"
                      class="mono"
                      style="font-weight:900;text-align:center;font-size:16px">
-              <span class="hint">من 300 إلى 999 (مثال: 888 للسبائك المستوردة)</span>
+              <span class="hint">من 300 إلى 999</span>
             </div>
             <div class="field">
               <label>أو نسبة النقاء مباشرة</label>
@@ -1833,39 +2823,22 @@
             </div>
           </div>
 
-          <!-- Quick presets للسبائك الشائعة -->
           <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap">
-            <button type="button" class="btn btn-sm" data-custom-preset="999.9">
-              999.9 (سويسري)
-            </button>
-            <button type="button" class="btn btn-sm" data-custom-preset="999">
-              999
-            </button>
-            <button type="button" class="btn btn-sm" data-custom-preset="995">
-              995
-            </button>
-            <button type="button" class="btn btn-sm" data-custom-preset="916">
-              916
-            </button>
-            <button type="button" class="btn btn-sm" data-custom-preset="900">
-              900
-            </button>
-            <button type="button" class="btn btn-sm" data-custom-preset="888">
-              888
-            </button>
+            <button type="button" class="btn btn-sm" data-custom-preset="999.9">999.9 (سويسري)</button>
+            <button type="button" class="btn btn-sm" data-custom-preset="999">999</button>
+            <button type="button" class="btn btn-sm" data-custom-preset="995">995</button>
+            <button type="button" class="btn btn-sm" data-custom-preset="916">916</button>
+            <button type="button" class="btn btn-sm" data-custom-preset="900">900</button>
+            <button type="button" class="btn btn-sm" data-custom-preset="888">888</button>
           </div>
 
-          <div style="margin-top:12px;padding:10px 14px;
-                      background:var(--surface);border-radius:9px;
-                      font-size:11.5px;font-weight:700;
-                      color:var(--text-2);
-                      display:flex;align-items:center;gap:8px">
-            <i data-lucide="info" style="width:13px;height:13px;
-                       color:var(--warn);flex-shrink:0"></i>
+          <div style="margin-top:12px;padding:10px 14px;background:var(--surface);
+                      border-radius:9px;font-size:11.5px;font-weight:700;
+                      color:var(--text-2);display:flex;align-items:center;gap:8px">
+            <i data-lucide="info" style="width:13px;height:13px;color:var(--warn);flex-shrink:0"></i>
             <span>
               سيتم استخدام النقاء
-              <b class="mono" id="f-purity-display"
-                 style="color:var(--warn);font-size:13px">
+              <b class="mono" id="f-purity-display" style="color:var(--warn);font-size:13px">
                 ${mstate.customPurity.toFixed(4)}
               </b>
               لحساب البندق 24K والقيمة السوقية.
@@ -1897,29 +2870,25 @@
         </div>
       </div>
 
-      <!-- Section 4: Dynamic Pricing -->
+      <!-- Pricing section -->
       <div id="f-pricing-section" style="margin-top:18px">
         ${renderPricingSection(mstate)}
       </div>
 
-      <!-- Section 5: Quantity & Weights -->
+      <!-- Quantity / Single weight -->
       ${!isEdit ? renderQuantitySection(mstate) : renderSingleWeightSection(item_, mstate)}
 
-      <!-- Section 6: Notes -->
+      <!-- Notes -->
       <div class="field" style="margin-top:13px">
         <label>ملاحظات</label>
         <input id="f-notes" value="${GMS.esc(item_.notes || '')}"
                placeholder="ملاحظات على الصنف…">
       </div>
 
-      <!-- Preview Box -->
       <div id="f-preview" style="margin-top:16px"></div>
     `;
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.2 · Quantity Section
-     ───────────────────────────────────────────────────────────────────── */
   function renderQuantitySection(mstate) {
     return `
       <div class="divider" style="margin:18px 0 14px"></div>
@@ -1935,14 +2904,9 @@
                   border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--info) 30%,var(--border))">
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;
-                    align-items:end">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:end">
           <div class="field">
-            <label>عدد القطع <span class="req">*</span>
-              <span class="hint" style="display:inline">
-                — أدخل عدد الوحدات (1 - 9999)
-              </span>
-            </label>
+            <label>عدد القطع <span class="req">*</span></label>
             <input type="number" id="f-quantity"
                    step="1" min="1" max="9999"
                    value="${mstate.quantity || 1}"
@@ -1952,35 +2916,28 @@
           </div>
 
           <div class="field">
-            <label style="justify-content:flex-start">
-              <span>طريقة إدخال الأوزان</span>
-            </label>
+            <label>طريقة إدخال الأوزان</label>
             <div style="display:flex;gap:6px;padding:4px;
-                        background:var(--surface);
-                        border-radius:10px;
+                        background:var(--surface);border-radius:10px;
                         border:1px solid var(--border)">
               <button type="button" id="f-mode-same"
                       style="flex:1;padding:9px 12px;border-radius:8px;
-                             font-weight:800;font-size:11.5px;
-                             cursor:pointer;border:none;
-                             font-family:inherit;
+                             font-weight:800;font-size:11.5px;cursor:pointer;
+                             border:none;font-family:inherit;
                              background:${mstate.sameWeight ? 'var(--primary)' : 'transparent'};
                              color:${mstate.sameWeight ? '#2a1f05' : 'var(--text-2)'};
                              transition:all .2s">
-                <i data-lucide="equal" style="width:11px;height:11px;
-                           display:inline;vertical-align:-1px"></i>
+                <i data-lucide="equal" style="width:11px;height:11px;display:inline;vertical-align:-1px"></i>
                 وزن موحّد
               </button>
               <button type="button" id="f-mode-diff"
                       style="flex:1;padding:9px 12px;border-radius:8px;
-                             font-weight:800;font-size:11.5px;
-                             cursor:pointer;border:none;
-                             font-family:inherit;
+                             font-weight:800;font-size:11.5px;cursor:pointer;
+                             border:none;font-family:inherit;
                              background:${!mstate.sameWeight ? 'var(--primary)' : 'transparent'};
                              color:${!mstate.sameWeight ? '#2a1f05' : 'var(--text-2)'};
                              transition:all .2s">
-                <i data-lucide="list" style="width:11px;height:11px;
-                           display:inline;vertical-align:-1px"></i>
+                <i data-lucide="list" style="width:11px;height:11px;display:inline;vertical-align:-1px"></i>
                 أوزان متنوعة
               </button>
             </div>
@@ -1997,30 +2954,17 @@
                      style="font-size:15px;font-weight:800;text-align:center"
                      placeholder="0.000">
             </div>
-
             <div class="field">
-              <label style="justify-content:space-between">
-                <span>وزن الأحجار (للوحدة)</span>
-                <label class="toggle-switch" style="font-size:10px;
-                            font-weight:700;gap:5px">
-                  <input type="checkbox" id="f-stones-included"
-                         ${mstate.stonesIncluded ? 'checked' : ''}>
-                  <span class="track" style="width:28px;height:16px"></span>
-                  <span style="color:var(--muted)">داخل الوزن</span>
-                </label>
-              </label>
+              <label>وزن الأحجار (للوحدة)</label>
               <input type="number" id="f-stone" step="0.001" min="0"
                      value="0" class="mono"
-                     ${mstate.stonesIncluded ? 'disabled' : ''}
                      style="text-align:center">
             </div>
-
             <div class="field">
-              <label>إجمالي الوزن القائم (لكل القطع)</label>
+              <label>إجمالي الوزن القائم</label>
               <input id="f-total-weight" readonly class="mono"
                      style="text-align:center;font-weight:900;
-                            color:var(--primary);
-                            background:var(--surface-3)">
+                            color:var(--primary);background:var(--surface-3)">
             </div>
           </div>
         </div>
@@ -2028,14 +2972,9 @@
         <div id="f-individual-weight-host"
              style="margin-top:14px;${!mstate.sameWeight ? '' : 'display:none'}">
           <div class="field">
-            <label>أوزان القطع <span class="req">*</span>
-              <span class="hint" style="display:inline">
-                — أدخل وزن كل قطعة في سطر منفصل (يجب أن يطابق عدد القطع)
-              </span>
-            </label>
-            <textarea id="f-weights-list"
-                      rows="6"
-                      placeholder="مثال:&#10;5.234&#10;5.421&#10;5.156&#10;..."
+            <label>أوزان القطع <span class="req">*</span></label>
+            <textarea id="f-weights-list" rows="6"
+                      placeholder="مثال:&#10;5.234&#10;5.421&#10;5.156"
                       class="mono"
                       style="width:100%;padding:11px 13px;
                              border-radius:var(--radius-sm);
@@ -2045,14 +2984,9 @@
                              line-height:1.8;direction:ltr;
                              text-align:left;resize:vertical"></textarea>
           </div>
-
-          <div style="display:flex;justify-content:space-between;
-                      align-items:center;margin-top:8px;
+          <div style="display:flex;justify-content:space-between;margin-top:8px;
                       font-size:11.5px;font-weight:700">
-            <span id="f-weights-counter"
-                  style="color:var(--muted)">
-              عدد الأوزان المُدخلة: 0
-            </span>
+            <span id="f-weights-counter" style="color:var(--muted)">عدد الأوزان: 0</span>
             <span id="f-weights-status"></span>
           </div>
         </div>
@@ -2061,35 +2995,27 @@
           <div class="field">
             <label>الوزن الصافي (للوحدة)</label>
             <input id="f-net" readonly class="mono"
-                   style="text-align:center;font-weight:800;
-                          background:var(--surface-3)">
+                   style="text-align:center;font-weight:800;background:var(--surface-3)">
           </div>
-
           <div class="field">
             <label>البندق 24K (للوحدة)</label>
             <input id="f-pure" readonly class="mono"
                    style="text-align:center;color:var(--primary);
                           font-weight:900;background:var(--surface-3)">
           </div>
-
           <div class="field">
             <label>الإجمالي (للوحدة)</label>
             <input id="f-total" readonly class="mono"
-                   style="text-align:center;font-weight:800;
-                          background:var(--surface-3)">
+                   style="text-align:center;font-weight:800;background:var(--surface-3)">
           </div>
         </div>
       </div>
     `;
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.3 · Single Weight Section (Edit mode)
-     ───────────────────────────────────────────────────────────────────── */
   function renderSingleWeightSection(item_, mstate) {
     return `
       <div class="divider" style="margin:18px 0 14px"></div>
-
       <div style="font-size:11px;font-weight:800;color:var(--muted);
                   text-transform:uppercase;letter-spacing:.5px;
                   margin-bottom:12px;display:flex;align-items:center;gap:6px">
@@ -2104,30 +3030,17 @@
                  value="${item_.weight_grams || ''}" class="mono"
                  style="font-size:15px;font-weight:800;text-align:center">
         </div>
-
         <div class="field">
-          <label style="justify-content:space-between">
-            <span>وزن الأحجار (جم)</span>
-            <label class="toggle-switch" style="font-size:10px;
-                        font-weight:700;gap:5px">
-              <input type="checkbox" id="f-stones-included"
-                     ${mstate.stonesIncluded ? 'checked' : ''}>
-              <span class="track" style="width:28px;height:16px"></span>
-              <span style="color:var(--muted)">داخل الوزن</span>
-            </label>
-          </label>
+          <label>وزن الأحجار (جم)</label>
           <input type="number" id="f-stone" step="0.001" min="0"
                  value="${item_.stone_weight || 0}" class="mono"
-                 ${mstate.stonesIncluded ? 'disabled' : ''}
                  style="text-align:center">
         </div>
-
         <div class="field">
           <label>الوزن الصافي (جم)</label>
           <input id="f-net" readonly class="mono"
                  value="${item_.net_weight || ''}"
-                 style="text-align:center;font-weight:800;
-                        background:var(--surface-3)">
+                 style="text-align:center;font-weight:800;background:var(--surface-3)">
         </div>
       </div>
 
@@ -2139,29 +3052,22 @@
                  style="text-align:center;color:var(--primary);
                         font-weight:900;background:var(--surface-3)">
         </div>
-
         <div class="field">
           <label>الإجمالي (ج.م)</label>
           <input id="f-total" readonly class="mono"
                  value="${item_.total_cost || ''}"
-                 style="text-align:center;font-weight:800;
-                        background:var(--surface-3)">
+                 style="text-align:center;font-weight:800;background:var(--surface-3)">
         </div>
-
         <div class="field">
           <label>سعر 24K الحالي</label>
           <input readonly class="mono"
                  value="${GMS.moneyFmt(getCurrentPrice24())} ج.م"
-                 style="text-align:center;font-weight:700;
-                        background:var(--surface-3)">
+                 style="text-align:center;font-weight:700;background:var(--surface-3)">
         </div>
       </div>
     `;
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.4 · Pricing Section
-     ───────────────────────────────────────────────────────────────────── */
   function renderPricingSection(mstate) {
     const mode = mstate.pricingMode || 'fixed';
     const manu = mstate.selectedManufacturer;
@@ -2185,23 +3091,19 @@
       <div style="padding:16px 18px;background:var(--gold-soft);
                   border-radius:12px;
                   border:1.5px solid color-mix(in srgb,var(--primary) 30%,var(--border))">
-
         <div style="display:flex;align-items:center;gap:10px;
                     margin-bottom:14px;flex-wrap:wrap">
           <div style="width:34px;height:34px;border-radius:9px;
                       display:grid;place-items:center;
                       background:var(--${modeMeta.color});
                       color:#fff;flex-shrink:0">
-            <i data-lucide="${modeMeta.icon}"
-               style="width:16px;height:16px"></i>
+            <i data-lucide="${modeMeta.icon}" style="width:16px;height:16px"></i>
           </div>
           <div style="flex:1">
-            <div style="font-size:12.5px;font-weight:900;
-                        color:var(--${modeMeta.color})">
+            <div style="font-size:12.5px;font-weight:900;color:var(--${modeMeta.color})">
               ${modeMeta.label} — ${GMS.esc(manu.name)}
             </div>
-            <div style="font-size:10.5px;color:var(--muted);
-                        font-weight:600;margin-top:2px">
+            <div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">
               ${modeMeta.description}
             </div>
           </div>
@@ -2212,37 +3114,27 @@
         <div class="grid-form" style="gap:12px;margin-top:14px">
           <div class="field">
             <label style="color:var(--danger)">
-              <i data-lucide="shopping-cart"
-                 style="width:12px;height:12px"></i>
+              <i data-lucide="shopping-cart" style="width:12px;height:12px"></i>
               مصنعية الشراء (ج.م/جم)
             </label>
-            <input type="number" id="f-purchase-rate"
-                   step="1" min="0"
-                   value="${mstate.purchaseRate || 0}"
-                   class="mono"
-                   style="font-weight:900;text-align:center;
-                          font-size:16px;color:var(--danger)">
+            <input type="number" id="f-purchase-rate" step="1" min="0"
+                   value="${mstate.purchaseRate || 0}" class="mono"
+                   style="font-weight:900;text-align:center;font-size:16px;color:var(--danger)">
           </div>
-
           <div class="field">
             <label style="color:var(--success)">
-              <i data-lucide="tag"
-                 style="width:12px;height:12px"></i>
+              <i data-lucide="tag" style="width:12px;height:12px"></i>
               مصنعية البيع (ج.م/جم)
             </label>
-            <input type="number" id="f-sale-rate"
-                   step="1" min="0"
-                   value="${mstate.saleRate || 0}"
-                   class="mono"
-                   style="font-weight:900;text-align:center;
-                          font-size:16px;color:var(--success)">
+            <input type="number" id="f-sale-rate" step="1" min="0"
+                   value="${mstate.saleRate || 0}" class="mono"
+                   style="font-weight:900;text-align:center;font-size:16px;color:var(--success)">
           </div>
         </div>
 
         <div id="f-margin-indicator"
              style="margin-top:12px;padding:10px 14px;
-                    background:var(--surface);border-radius:9px;
-                    text-align:center">
+                    background:var(--surface);border-radius:9px;text-align:center">
           ${renderMarginIndicator(mstate)}
         </div>
       </div>
@@ -2257,8 +3149,7 @@
           <select id="f-letter">
             <option value="">— اختر حرف —</option>
             ${(manu.letterRates || []).map(l => `
-              <option value="${GMS.esc(l.letter)}"
-                      data-rate="${l.rate}"
+              <option value="${GMS.esc(l.letter)}" data-rate="${l.rate}"
                       ${mstate.selectedLetter === l.letter ? 'selected' : ''}>
                 ${GMS.esc(l.letter)} — ${GMS.moneyFmt(l.rate)} ج.م/جم
               </option>
@@ -2267,7 +3158,6 @@
         </div>
       `;
     }
-
     if (mode === 'colors') {
       return `
         <div class="field">
@@ -2277,8 +3167,7 @@
             ${(manu.colorRates || []).map(c => {
               const color = GMS.getPricingColor(c.color);
               return `
-                <option value="${c.color}"
-                        data-rate="${c.rate}"
+                <option value="${c.color}" data-rate="${c.rate}"
                         data-hex="${color?.hex || '#6b7a95'}"
                         ${mstate.selectedColor === c.color ? 'selected' : ''}>
                   ${color?.label || c.color} — ${GMS.moneyFmt(c.rate)} ج.م/جم
@@ -2290,33 +3179,28 @@
         </div>
       `;
     }
-
     if (mode === 'items') {
       return `
         <div style="padding:10px 14px;background:var(--surface);
                     border-radius:9px;font-size:11.5px;
                     color:var(--muted);font-weight:600;
                     display:flex;align-items:center;gap:8px">
-          <i data-lucide="info"
-             style="width:13px;height:13px;flex-shrink:0"></i>
+          <i data-lucide="info" style="width:13px;height:13px;flex-shrink:0"></i>
           سيتم تحديد السعر تلقائياً بناءً على "التصنيف" المختار أعلاه
         </div>
       `;
     }
-
     if (mode === 'fixed') {
       return `
         <div style="padding:10px 14px;background:var(--surface);
                     border-radius:9px;font-size:11.5px;
                     color:var(--muted);font-weight:600;
                     display:flex;align-items:center;gap:8px">
-          <i data-lucide="equal"
-             style="width:13px;height:13px;flex-shrink:0"></i>
-          هذا المصنع له سعر ثابت لكل القطع — تم تعبئته تلقائياً
+          <i data-lucide="equal" style="width:13px;height:13px;flex-shrink:0"></i>
+          هذا المصنع له سعر ثابت — تم تعبئته تلقائياً
         </div>
       `;
     }
-
     return '';
   }
 
@@ -2324,25 +3208,14 @@
     const purchase = Number(mstate.purchaseRate || 0);
     const sale = Number(mstate.saleRate || 0);
     const margin = sale - purchase;
+    let color = 'var(--muted)', icon = 'minus', label = 'لا يوجد هامش';
 
-    let color = 'var(--muted)';
-    let icon = 'minus';
-    let label = 'لا يوجد هامش';
-
-    if (margin > 0) {
-      color = 'var(--success)';
-      icon = 'trending-up';
-      label = 'الربح المتوقع لكل جرام';
-    } else if (margin < 0) {
-      color = 'var(--danger)';
-      icon = 'alert-triangle';
-      label = 'تحذير: سعر البيع أقل من الشراء!';
-    }
+    if (margin > 0) { color = 'var(--success)'; icon = 'trending-up'; label = 'الربح المتوقع لكل جرام'; }
+    else if (margin < 0) { color = 'var(--danger)'; icon = 'alert-triangle'; label = 'تحذير: سعر البيع أقل من الشراء!'; }
 
     return `
       <span style="color:${color};font-weight:900;
-                   display:inline-flex;align-items:center;
-                   gap:8px;font-size:13px">
+                   display:inline-flex;align-items:center;gap:8px;font-size:13px">
         <i data-lucide="${icon}" style="width:15px;height:15px"></i>
         <span>${label}:</span>
         <span class="mono" style="font-size:15px">
@@ -2353,19 +3226,12 @@
     `;
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.5 · Bind Item Form — v3 مع ربط العيار المخصص
-     ───────────────────────────────────────────────────────────────────── */
   function bindItemForm(el, closeFn, isEdit, item_, mstate, manufacturers, categories) {
     const $id = (id) => el.querySelector('#' + id);
 
-    /* ✅ ربط زر الإلغاء */
     const closeBtn = el.querySelector('[data-close]');
-    if (closeBtn) {
-      closeBtn.onclick = () => closeFn();
-    }
+    if (closeBtn) closeBtn.onclick = () => closeFn();
 
-    /* ✅ v3: دوال مساعدة لقراءة العيار الحالي */
     const getCurrentKarat = () => {
       if (mstate.karatMode === 'custom') {
         return {
@@ -2383,12 +3249,10 @@
       };
     };
 
-    /* ─── Recalc ─────────────────────────────────────────────────── */
+    /* Recalc */
     const recalc = () => {
       const karatInfo = getCurrentKarat();
       const purityRatio = karatInfo.purity_ratio;
-
-      const stonesIncluded = $id('f-stones-included')?.checked || false;
       const purchaseRate = parseFloat($id('f-purchase-rate')?.value) || 0;
       const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
       const price24 = getCurrentPrice24();
@@ -2399,13 +3263,11 @@
 
       if (mstate.sameWeight || isEdit) {
         const gross = parseFloat($id('f-weight')?.value) || 0;
-        stoneUnit = stonesIncluded ? 0 : (parseFloat($id('f-stone')?.value) || 0);
+        stoneUnit = parseFloat($id('f-stone')?.value) || 0;
         netUnit = GMS.round(Math.max(0, gross - stoneUnit), 3);
       } else {
         const weights = parseWeightsInput($id('f-weights-list')?.value);
-        if (weights.length) {
-          netUnit = GMS.round(weights[0], 3);
-        }
+        if (weights.length) netUnit = GMS.round(weights[0], 3);
       }
 
       const pureUnit = GMS.round(netUnit * purityRatio, 4);
@@ -2439,64 +3301,43 @@
       });
     };
 
-    /* ─── ✅ v3: Standard Karat buttons ─────────────────────────────── */
+    /* Karat standard buttons */
     el.querySelectorAll('[data-karat-std]').forEach(btn => {
       btn.onclick = () => {
         mstate.karatMode = 'standard';
         mstate.standardKarat = Number(btn.dataset.karatStd);
-
-        /* Update UI */
-        el.querySelectorAll('[data-karat-std]').forEach(b => {
-          b.classList.toggle('active', b === btn);
-        });
-        const customBtn = el.querySelector('[data-karat-custom]');
-        if (customBtn) customBtn.classList.remove('active');
-
-        /* Hide custom panel */
+        el.querySelectorAll('[data-karat-std]').forEach(b => b.classList.toggle('active', b === btn));
+        const cb = el.querySelector('[data-karat-custom]');
+        if (cb) cb.classList.remove('active');
         const panel = $id('f-custom-karat-panel');
         if (panel) panel.style.display = 'none';
-
-        /* Sync hidden karat input */
-        const karatInput = $id('f-karat');
-        if (karatInput) karatInput.value = mstate.standardKarat;
-
-        /* Recalc margin for standard karat */
+        const ki = $id('f-karat');
+        if (ki) ki.value = mstate.standardKarat;
         if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
           applyItemBasedRate(el, mstate, recalc);
         }
-
         recalc();
       };
     });
 
-    /* ─── ✅ v3: Custom Karat button ──────────────────────────────── */
     const customBtn = el.querySelector('[data-karat-custom]');
     if (customBtn) {
       customBtn.onclick = () => {
         mstate.karatMode = 'custom';
-
-        el.querySelectorAll('[data-karat-std]').forEach(b => {
-          b.classList.remove('active');
-        });
+        el.querySelectorAll('[data-karat-std]').forEach(b => b.classList.remove('active'));
         customBtn.classList.add('active');
-
-        /* Show custom panel */
         const panel = $id('f-custom-karat-panel');
         if (panel) panel.style.display = '';
-
-        /* Focus on custom karat input */
         setTimeout(() => {
           const input = $id('f-custom-karat');
           if (input) {
             try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
           }
         }, 100);
-
         recalc();
       };
     }
 
-    /* ─── ✅ v3: Custom karat input ───────────────────────────────── */
     const customKaratInput = $id('f-custom-karat');
     if (customKaratInput) {
       customKaratInput.oninput = () => {
@@ -2505,77 +3346,51 @@
         v = Math.max(GMS.KARAT_LIMITS.min, Math.min(GMS.KARAT_LIMITS.max, v));
         mstate.customKarat = v;
         mstate.customPurity = GMS.round(v / 1000, 4);
-
-        /* Sync purity input */
         const purityInput = $id('f-custom-purity');
         if (purityInput) purityInput.value = mstate.customPurity.toFixed(4);
-
-        /* Update display */
         const disp = $id('f-purity-display');
         if (disp) disp.textContent = mstate.customPurity.toFixed(4);
-
         recalc();
-      };
-      customKaratInput.onblur = () => {
-        customKaratInput.value = mstate.customKarat;
       };
     }
 
-    /* ─── ✅ v3: Custom purity input ──────────────────────────────── */
     const customPurityInput = $id('f-custom-purity');
     if (customPurityInput) {
       customPurityInput.oninput = () => {
         lockInteraction();
         let v = parseFloat(customPurityInput.value) || 0.8880;
-        v = Math.max(GMS.KARAT_LIMITS.minPurity,
-                     Math.min(GMS.KARAT_LIMITS.maxPurity, v));
+        v = Math.max(GMS.KARAT_LIMITS.minPurity, Math.min(GMS.KARAT_LIMITS.maxPurity, v));
         mstate.customPurity = GMS.round(v, 4);
         mstate.customKarat = Math.round(mstate.customPurity * 1000);
-
-        /* Sync karat input */
         const karatInput = $id('f-custom-karat');
         if (karatInput) karatInput.value = mstate.customKarat;
-
-        /* Update display */
         const disp = $id('f-purity-display');
         if (disp) disp.textContent = mstate.customPurity.toFixed(4);
-
         recalc();
-      };
-      customPurityInput.onblur = () => {
-        customPurityInput.value = mstate.customPurity.toFixed(4);
       };
     }
 
-    /* ─── ✅ v3: Custom karat presets ─────────────────────────────── */
     el.querySelectorAll('[data-custom-preset]').forEach(btn => {
       btn.onclick = () => {
         const presetVal = parseFloat(btn.dataset.customPreset) || 888;
-
         if (presetVal >= 300) {
-          /* قيمة عيار */
           mstate.customKarat = Math.round(presetVal);
           mstate.customPurity = GMS.round(mstate.customKarat / 1000, 4);
         } else {
-          /* قيمة نقاء */
           mstate.customPurity = GMS.round(presetVal, 4);
           mstate.customKarat = Math.round(mstate.customPurity * 1000);
         }
-
-        const karatInput = $id('f-custom-karat');
-        if (karatInput) karatInput.value = mstate.customKarat;
-
-        const purityInput = $id('f-custom-purity');
-        if (purityInput) purityInput.value = mstate.customPurity.toFixed(4);
-
+        const k = $id('f-custom-karat');
+        if (k) k.value = mstate.customKarat;
+        const p = $id('f-custom-purity');
+        if (p) p.value = mstate.customPurity.toFixed(4);
         const disp = $id('f-purity-display');
         if (disp) disp.textContent = mstate.customPurity.toFixed(4);
-
         recalc();
       };
     });
 
-    /* ─── Manufacturer change ─────────────────────────────────────── */
+    /* Manufacturer change */
     const manuSelect = $id('f-manufacturer');
     if (manuSelect) {
       manuSelect.onfocus = () => lockInteraction();
@@ -2608,35 +3423,17 @@
           window.lucide?.createIcons();
           bindPricingInputs(el, mstate, manufacturers, recalc);
         }
-
         recalc();
       };
     }
 
-    /* ─── Stones included toggle ──────────────────────────────────── */
-    const stonesIncludedCb = $id('f-stones-included');
-    const stoneInput = $id('f-stone');
-    if (stonesIncludedCb && stoneInput) {
-      stonesIncludedCb.onchange = () => {
-        mstate.stonesIncluded = stonesIncludedCb.checked;
-        stoneInput.disabled = stonesIncludedCb.checked;
-        if (stonesIncludedCb.checked) stoneInput.value = '0';
-        recalc();
-      };
-    }
-
-    /* ─── Weight inputs ───────────────────────────────────────────── */
+    /* Weight inputs */
     ['f-weight', 'f-stone'].forEach(id => {
       const inp = $id(id);
-      if (inp) {
-        inp.oninput = () => {
-          lockInteraction();
-          recalc();
-        };
-      }
+      if (inp) inp.oninput = () => { lockInteraction(); recalc(); };
     });
 
-    /* ─── Quantity ────────────────────────────────────────────────── */
+    /* Quantity */
     const qtyInput = $id('f-quantity');
     if (qtyInput) {
       qtyInput.oninput = () => {
@@ -2649,7 +3446,7 @@
       };
     }
 
-    /* ─── Weight mode toggle ──────────────────────────────────────── */
+    /* Mode toggle */
     const sameModeBtn = $id('f-mode-same');
     const diffModeBtn = $id('f-mode-diff');
 
@@ -2680,7 +3477,6 @@
       };
     }
 
-    /* ─── Weights list ───────────────────────────────────────────── */
     const weightsList = $id('f-weights-list');
     if (weightsList) {
       weightsList.oninput = () => {
@@ -2690,7 +3486,7 @@
       };
     }
 
-    /* ─── Category ────────────────────────────────────────────────── */
+    /* Category change */
     const categorySelect = $id('f-category');
     if (categorySelect) {
       categorySelect.onfocus = () => lockInteraction();
@@ -2702,10 +3498,9 @@
       };
     }
 
-    /* ─── Pricing inputs ──────────────────────────────────────────── */
     bindPricingInputs(el, mstate, manufacturers, recalc);
 
-    /* ─── ✅ v3: Generate SKU — يدعم العيار المخصص ─────────────────── */
+    /* SKU generator */
     const genBtn = $id('f-gen-sku');
     if (genBtn) {
       genBtn.onclick = () => {
@@ -2713,11 +3508,9 @@
         const manuCode = manuSelect?.value || 'X';
         const manu = manufacturers.find(m => m.code === manuCode);
         const letter = manu?.letter || manuCode;
-
         const sku = GMS.generateSKU({
           manufacturerCode: manuCode,
           letter,
-          /* ✅ v3: نمرر customKarat أو purityRatio */
           karat: karatInfo.is_custom ? null : karatInfo.karat,
           customKarat: karatInfo.is_custom ? karatInfo.custom_karat : null,
           purityRatio: karatInfo.is_custom ? karatInfo.purity_ratio : null,
@@ -2727,12 +3520,11 @@
       };
     }
 
-    /* ─── Save ────────────────────────────────────────────────────── */
+    /* Save */
     $id('f-save').onclick = async () => {
       await handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat);
     };
 
-    /* ─── Initial recalc ─────────────────────────────────────────── */
     setTimeout(() => {
       if (mstate.pricingMode === 'items' && mstate.selectedManufacturer) {
         applyItemBasedRate(el, mstate, recalc);
@@ -2741,14 +3533,9 @@
     }, 50);
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.6 · Helpers
-     ───────────────────────────────────────────────────────────────────── */
-
   function parseWeightsInput(text) {
     if (!text) return [];
-    return String(text)
-      .split(/\r?\n/)
+    return String(text).split(/\r?\n/)
       .map(line => parseFloat(line.trim()))
       .filter(n => isFinite(n) && n > 0);
   }
@@ -2756,7 +3543,6 @@
   function updateWeightsCounter(el, mstate) {
     const counter = el.querySelector('#f-weights-counter');
     const status = el.querySelector('#f-weights-status');
-
     if (!counter || !status) return;
 
     const weights = parseWeightsInput(el.querySelector('#f-weights-list')?.value);
@@ -2766,18 +3552,13 @@
 
     if (weights.length === qty) {
       status.innerHTML = `<span style="color:var(--success);font-weight:800">
-        <i data-lucide="check-circle-2" style="width:12px;height:12px;
-                   display:inline;vertical-align:-1px"></i>
+        <i data-lucide="check-circle-2" style="width:12px;height:12px;display:inline;vertical-align:-1px"></i>
         مطابق ✓
       </span>`;
     } else if (weights.length < qty) {
-      status.innerHTML = `<span style="color:var(--warn);font-weight:800">
-        متبقي ${qty - weights.length} وزن
-      </span>`;
+      status.innerHTML = `<span style="color:var(--warn);font-weight:800">متبقي ${qty - weights.length} وزن</span>`;
     } else {
-      status.innerHTML = `<span style="color:var(--danger);font-weight:800">
-        زيادة ${weights.length - qty} وزن
-      </span>`;
+      status.innerHTML = `<span style="color:var(--danger);font-weight:800">زيادة ${weights.length - qty} وزن</span>`;
     }
     window.lucide?.createIcons();
   }
@@ -2795,129 +3576,49 @@
                   background:var(--surface-2);border-radius:11px;
                   border:1px solid var(--border)">
         <div>
-          <div style="font-size:10px;color:var(--muted);
-                      font-weight:800;text-transform:uppercase">
+          <div style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase">
             قيمة الذهب${qty > 1 ? '/وحدة' : ''}
           </div>
-          <div class="mono" style="font-size:13px;font-weight:900;
-                      margin-top:3px">
+          <div class="mono" style="font-size:13px;font-weight:900;margin-top:3px">
             ${GMS.moneyFmt(d.goldValueUnit)}
           </div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--danger);
-                      font-weight:800;text-transform:uppercase">
+          <div style="font-size:10px;color:var(--danger);font-weight:800;text-transform:uppercase">
             مصنعية الشراء
           </div>
-          <div class="mono" style="font-size:13px;font-weight:900;
-                      margin-top:3px;color:var(--danger)">
+          <div class="mono" style="font-size:13px;font-weight:900;margin-top:3px;color:var(--danger)">
             ${GMS.moneyFmt(d.purchaseMakeUnit)}
           </div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--success);
-                      font-weight:800;text-transform:uppercase">
+          <div style="font-size:10px;color:var(--success);font-weight:800;text-transform:uppercase">
             مصنعية البيع
           </div>
-          <div class="mono" style="font-size:13px;font-weight:900;
-                      margin-top:3px;color:var(--success)">
+          <div class="mono" style="font-size:13px;font-weight:900;margin-top:3px;color:var(--success)">
             ${GMS.moneyFmt(d.saleMakeUnit)}
           </div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--muted);
-                      font-weight:800;text-transform:uppercase">
+          <div style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase">
             البندق${qty > 1 ? '/وحدة' : ''}
           </div>
-          <div class="mono" style="font-size:13px;font-weight:900;
-                      margin-top:3px;color:var(--primary)">
+          <div class="mono" style="font-size:13px;font-weight:900;margin-top:3px;color:var(--primary)">
             ${d.pureUnit.toFixed(3)} جم
           </div>
-          ${isCustom ? `
-            <div class="mono" style="font-size:9.5px;
-                        color:var(--warn);font-weight:800;
-                        margin-top:2px">
-              نقاء ${Number(d.purityRatio).toFixed(4)}
-            </div>
-          ` : ''}
+          ${isCustom ? `<div class="mono" style="font-size:9.5px;color:var(--warn);font-weight:800;margin-top:2px">
+            نقاء ${Number(d.purityRatio).toFixed(4)}
+          </div>` : ''}
         </div>
         <div>
-          <div style="font-size:10px;color:var(--primary);
-                      font-weight:800;text-transform:uppercase">
+          <div style="font-size:10px;color:var(--primary);font-weight:800;text-transform:uppercase">
             الإجمالي${qty > 1 ? '/وحدة' : ''}
           </div>
-          <div class="mono" style="font-size:13px;font-weight:900;
-                      margin-top:3px;color:var(--primary)">
+          <div class="mono" style="font-size:13px;font-weight:900;margin-top:3px;color:var(--primary)">
             ${GMS.moneyFmt(d.totalUnit)}
           </div>
         </div>
       </div>
-
-      ${qty > 1 ? `
-        <div style="margin-top:10px;display:grid;
-                    grid-template-columns:repeat(3,1fr);gap:10px;
-                    padding:12px 14px;background:var(--info-bg);
-                    border-radius:11px;
-                    border:1px solid color-mix(in srgb,var(--info) 30%,var(--border));
-                    text-align:center">
-          <div>
-            <div style="font-size:10px;color:var(--info);
-                        font-weight:800;text-transform:uppercase">
-              عدد القطع
-            </div>
-            <div class="mono" style="font-size:15px;font-weight:900;
-                        color:var(--info);margin-top:2px">
-              ${qty}
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--info);
-                        font-weight:800;text-transform:uppercase">
-              إجمالي الربح المتوقع
-            </div>
-            <div class="mono" style="font-size:15px;font-weight:900;
-                        color:var(--success);margin-top:2px">
-              ${GMS.moneyFmt(d.profitUnit * qty)}
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:var(--info);
-                        font-weight:800;text-transform:uppercase">
-              SKU المولَّد
-            </div>
-            <div class="mono" style="font-size:11px;font-weight:700;
-                        color:var(--info);margin-top:2px;direction:ltr">
-              BASE-001 … BASE-${String(qty).padStart(3, '0')}
-            </div>
-          </div>
-        </div>
-      ` : ''}
-
-      ${d.profitUnit > 0 ? `
-        <div style="margin-top:10px;padding:10px 14px;
-                    background:var(--success-bg);
-                    border-radius:9px;
-                    border:1px solid color-mix(in srgb,var(--success) 30%,var(--border));
-                    font-size:12px;font-weight:800;
-                    color:var(--success);
-                    display:flex;align-items:center;gap:8px">
-          <i data-lucide="check-circle-2"
-             style="width:14px;height:14px"></i>
-          الربح المتوقع${qty > 1 ? ` للوحدة` : ''}: <span class="mono">${GMS.moneyFmt(d.profitUnit)}</span> ج.م
-        </div>
-      ` : d.profitUnit < 0 ? `
-        <div style="margin-top:10px;padding:10px 14px;
-                    background:var(--danger-bg);
-                    border-radius:9px;
-                    border:1px solid color-mix(in srgb,var(--danger) 30%,var(--border));
-                    font-size:12px;font-weight:800;
-                    color:var(--danger);
-                    display:flex;align-items:center;gap:8px">
-          <i data-lucide="alert-triangle"
-             style="width:14px;height:14px"></i>
-          خسارة محتملة: <span class="mono">${GMS.moneyFmt(Math.abs(d.profitUnit))}</span> ج.م
-        </div>
-      ` : ''}
     `;
     window.lucide?.createIcons();
   }
@@ -2935,10 +3636,7 @@
         mstate.selectedLetter = letterSelect.value;
         if (rate > 0) {
           const pi = $id('f-purchase-rate');
-          if (pi) {
-            pi.value = rate;
-            mstate.purchaseRate = rate;
-          }
+          if (pi) { pi.value = rate; mstate.purchaseRate = rate; }
         }
         recalc();
       };
@@ -2953,30 +3651,21 @@
         const rate = Number(opt?.dataset.rate || 0);
         const hex = opt?.dataset.hex || '#6b7a95';
         mstate.selectedColor = colorSelect.value;
-
         const preview = $id('f-color-preview');
         if (preview && colorSelect.value) {
           preview.innerHTML = `
-            <div style="display:flex;align-items:center;gap:10px;
-                        padding:8px 12px;background:var(--surface);
-                        border-radius:8px;font-size:11.5px;
-                        font-weight:700">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;
+                        background:var(--surface);border-radius:8px;
+                        font-size:11.5px;font-weight:700">
               <span style="width:20px;height:20px;border-radius:5px;
-                           border:1px solid var(--border);
-                           background:${hex}"></span>
+                           border:1px solid var(--border);background:${hex}"></span>
               <span>معاينة اللون</span>
             </div>
           `;
-        } else if (preview) {
-          preview.innerHTML = '';
-        }
-
+        } else if (preview) preview.innerHTML = '';
         if (rate > 0) {
           const pi = $id('f-purchase-rate');
-          if (pi) {
-            pi.value = rate;
-            mstate.purchaseRate = rate;
-          }
+          if (pi) { pi.value = rate; mstate.purchaseRate = rate; }
         }
         recalc();
       };
@@ -3004,12 +3693,9 @@
   function applyItemBasedRate(el, mstate, recalc) {
     const categorySelect = el.querySelector('#f-category');
     if (!categorySelect || !mstate.selectedManufacturer) return;
-
     const category = categorySelect.value;
     const manu = mstate.selectedManufacturer;
-
     const entry = (manu.itemRates || []).find(i => i.category === category);
-
     if (entry) {
       const purchaseInput = el.querySelector('#f-purchase-rate');
       if (purchaseInput) {
@@ -3020,9 +3706,10 @@
     }
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-     §9.7 · Save Handler — v3 مع دعم العيار المخصص
-     ───────────────────────────────────────────────────────────────────── */
+  /* ═════════════════════════════════════════════════════════════════════
+     §13 · SAVE ITEM (with holder support)
+     ═════════════════════════════════════════════════════════════════════ */
+
   async function handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat) {
     const $id = (id) => el.querySelector('#' + id);
 
@@ -3034,49 +3721,37 @@
     const saleRate = parseFloat($id('f-sale-rate')?.value) || 0;
     const price24 = getCurrentPrice24();
 
-    /* ✅ v3: الحصول على معلومات العيار الحالية */
     const karatInfo = getCurrentKarat();
 
-    /* Validation */
-    if (!baseSku) {
-      GMS.Beep?.error?.();
-      return GMS.Toast.err('كود SKU مطلوب');
-    }
+    /* 🆕 v6: العهدة */
+    const holderKey = $id('f-holder')?.value || 'retail_shop';
+    const holderEnt = InvState.entities.find(e => e.key === holderKey);
+    const holder = holderEnt
+      ? { type: holderEnt.type, id: holderEnt.id, name: holderEnt.name }
+      : { type: ENTITY_TYPES.RETAIL_SHOP.key, id: ENTITY_TYPES.RETAIL_SHOP.defaultId, name: ENTITY_TYPES.RETAIL_SHOP.label };
 
-    if (!manuCode) {
-      GMS.Beep?.error?.();
-      return GMS.Toast.err('المصنع مطلوب');
-    }
+    if (!baseSku) { GMS.Beep?.error?.(); return GMS.Toast.err('كود SKU مطلوب'); }
+    if (!manuCode) { GMS.Beep?.error?.(); return GMS.Toast.err('المصنع مطلوب'); }
 
-    /* ✅ v3: Validation للعيار المخصص */
     if (karatInfo.is_custom) {
       if (!GMS.isValidPurity(karatInfo.purity_ratio)) {
         GMS.Beep?.error?.();
-        return GMS.Toast.err(
-          'نقاء غير صالح',
-          `يجب أن يكون بين ${GMS.KARAT_LIMITS.minPurity} و ${GMS.KARAT_LIMITS.maxPurity}`
-        );
+        return GMS.Toast.err('نقاء غير صالح',
+          `يجب أن يكون بين ${GMS.KARAT_LIMITS.minPurity} و ${GMS.KARAT_LIMITS.maxPurity}`);
       }
     }
 
-    /* جمع الأوزان */
     let weights = [];
-
     if (isEdit || mstate.sameWeight) {
       const gross = parseFloat($id('f-weight')?.value) || 0;
-      if (gross <= 0) {
-        GMS.Beep?.error?.();
-        return GMS.Toast.err('الوزن مطلوب');
-      }
+      if (gross <= 0) { GMS.Beep?.error?.(); return GMS.Toast.err('الوزن مطلوب'); }
       weights = Array(qty).fill(gross);
     } else {
       weights = parseWeightsInput($id('f-weights-list')?.value);
       if (weights.length !== qty) {
         GMS.Beep?.error?.();
-        return GMS.Toast.err(
-          'عدد الأوزان غير مطابق',
-          `أدخلت ${weights.length} وزن — المطلوب ${qty}`
-        );
+        return GMS.Toast.err('عدد الأوزان غير مطابق',
+          `أدخلت ${weights.length} وزن — المطلوب ${qty}`);
       }
     }
 
@@ -3086,7 +3761,6 @@
     const colorCode = $id('f-color')?.value || '';
     const now = new Date().toISOString();
 
-    /* ✅ v3: بناء payload العيار الموحّد */
     const karatPayload = GMS.buildKaratPayload({
       karat: karatInfo.is_custom ? null : karatInfo.karat,
       customKarat: karatInfo.is_custom ? karatInfo.custom_karat : null,
@@ -3094,7 +3768,6 @@
       isCustom: karatInfo.is_custom,
     });
 
-    /* بناء القطع */
     const items = weights.map((gross, idx) => {
       const net = GMS.round(Math.max(0, gross - stoneUnit), 3);
       const pure = GMS.round(net * karatInfo.purity_ratio, 4);
@@ -3112,7 +3785,6 @@
         instance_number: qty > 1 ? (idx + 1) : null,
         category: $id('f-category').value,
 
-        /* ✅ v3: حقول العيار الجديدة */
         karat: karatPayload.karat,
         custom_karat: karatPayload.custom_karat,
         purity_ratio: karatPayload.purity_ratio,
@@ -3139,6 +3811,12 @@
         manufacturer_mode: manu?.pricingMode || null,
         letter_code: letterCode || null,
         color_code: colorCode || null,
+
+        /* 🆕 v6: العهدة */
+        holder_type: holder.type,
+        holder_id: holder.id,
+        holder_name: holder.name,
+
         notes: $id('f-notes').value.trim() || null,
         updated_at: now,
       };
@@ -3159,30 +3837,20 @@
         window.lucide?.createIcons();
       }
 
-      /* 1 · IndexedDB */
       if (GMS.IDB) {
-        for (const item of items) {
-          await GMS.IDB.put(item);
-        }
+        for (const item of items) await GMS.IDB.put(item);
       }
 
-      /* 2 · Supabase */
       if (GMS.Supabase?.isReady()) {
         const client = GMS.Supabase.get();
-
         if (isEdit) {
-          await client
-            .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
-            .update(items[0])
-            .eq('sku', items[0].sku);
+          await client.from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
+            .update(items[0]).eq('sku', items[0].sku);
         } else {
-          await client
-            .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
-            .insert(items);
+          await client.from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY).insert(items);
         }
       }
 
-      /* 3 · Update local array */
       if (isEdit) {
         const idx = InvState.items.findIndex(i => i.sku === items[0].sku);
         if (idx >= 0) InvState.items[idx] = items[0];
@@ -3190,73 +3858,30 @@
         items.forEach(it => InvState.items.unshift(it));
       }
 
-      /* 4 · Audit */
       if (GMS.Audit) {
         await GMS.Audit.log(
           isEdit ? 'UPDATE' : 'CREATE',
-          'inventory',
-          items[0].id,
-          isEdit
-            ? `عدّل الصنف ${items[0].sku}`
-            : `أضاف ${qty} قطعة — ${baseSku}`,
+          'inventory', items[0].id,
+          isEdit ? `عدّل الصنف ${items[0].sku}`
+                 : `أضاف ${qty} قطعة — ${baseSku} (عهدة: ${holder.name})`,
           {
             base_sku: baseSku,
             count: qty,
-            karat: karatInfo.is_custom ? `مخصص ${karatInfo.custom_karat}` : karatInfo.karat,
-            purity_ratio: karatInfo.purity_ratio,
-            is_custom_karat: karatInfo.is_custom,
-            total_weight: GMS.round(weights.reduce((a, b) => a + b, 0), 3),
+            holder_type: holder.type,
+            holder_id: holder.id,
+            holder_name: holder.name,
           }
         );
       }
 
-      /* 5 · Success toast */
-      const karatLabel = karatInfo.is_custom
-        ? `مخصص ${karatInfo.custom_karat} (${karatInfo.purity_ratio.toFixed(4)})`
-        : `${karatInfo.karat}K`;
-
-      if (isEdit) {
-        GMS.Toast.ok('تم حفظ التعديلات', `${items[0].sku} · ${karatLabel}`);
-      } else if (qty === 1) {
-        GMS.Toast.ok('تمت إضافة الصنف', `${items[0].sku} · ${karatLabel}`);
-      } else {
-        GMS.Toast.ok(
-          `تمت إضافة ${qty} قطعة`,
-          `${baseSku}-001 إلى ${baseSku}-${String(qty).padStart(3, '0')} · ${karatLabel}`
-        );
-      }
-
       GMS.Beep?.success?.();
-
-      /* 6 · Close + refresh */
       closeFn();
       applyFilters();
       render(document.getElementById('page'));
-
-      /* 7 · Ask to print QR tags */
-      if (!isEdit && qty > 0) {
-        setTimeout(() => {
-          GMS.Confirm.ask(
-            `هل تريد طباعة تاجات QR للقطع الـ ${qty} المُضافة؟`,
-            {
-              title: 'طباعة تاجات',
-              okText: 'طباعة الآن',
-              cancelText: 'لاحقاً',
-              icon: 'qr-code',
-            }
-          ).then(shouldPrint => {
-            if (shouldPrint && GMS.QR?.Printer) {
-              GMS.QR.Printer.print(items);
-            }
-          });
-        }, 400);
-      }
-
     } catch (e) {
       console.error('[Inventory.save]', e);
       GMS.Beep?.error?.();
       GMS.Toast.err('فشل الحفظ', e.message);
-
       const saveBtn = $id('f-save');
       if (saveBtn) {
         saveBtn.disabled = false;
@@ -3267,38 +3892,28 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · DELETE ITEM
+     §14 · DELETE ITEM
      ═════════════════════════════════════════════════════════════════════ */
 
   async function deleteItem(item) {
-    const ok = await GMS.Confirm.delete(
-      `سيتم حذف الصنف "${item.sku}" نهائياً. لا يمكن التراجع.`
-    );
+    const ok = await GMS.Confirm.delete(`سيتم حذف الصنف "${item.sku}" نهائياً. لا يمكن التراجع.`);
     if (!ok) return;
 
     try {
       if (GMS.IDB) await GMS.IDB.delete(item.id);
-
       if (GMS.Supabase?.isReady()) {
         await GMS.Supabase.get()
           .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
-          .delete()
-          .eq('id', item.id);
+          .delete().eq('id', item.id);
       }
-
       const idx = InvState.items.findIndex(i => i.sku === item.sku);
       if (idx >= 0) InvState.items.splice(idx, 1);
-
       InvState.selected.delete(item.sku);
-
       if (GMS.Audit) {
-        await GMS.Audit.log('DELETE', 'inventory', item.id,
-          `حذف الصنف ${item.sku}`);
+        await GMS.Audit.log('DELETE', 'inventory', item.id, `حذف الصنف ${item.sku}`);
       }
-
       GMS.Toast.ok('تم الحذف', item.sku);
       GMS.Beep?.delete?.();
-
       applyFilters();
       render(document.getElementById('page'));
     } catch (e) {
@@ -3308,13 +3923,12 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · BULK ACTIONS
+     §15 · BULK ACTIONS
      ═════════════════════════════════════════════════════════════════════ */
 
   async function handleBulkAction(action) {
     const selected = Array.from(InvState.selected);
     if (!selected.length) return;
-
     const items = InvState.items.filter(i => selected.includes(i.sku));
 
     switch (action) {
@@ -3326,126 +3940,82 @@
       case 'tag': await bulkPrintTags(items); break;
       case 'export': bulkExport(items); break;
       case 'delete': await bulkDelete(items); break;
+      case 'transfer': openTransferModal(selected); break;
     }
   }
 
   async function bulkPrintTags(items) {
-    if (!GMS.QR?.Printer) {
-      GMS.Toast.err('محرك الطباعة غير متاح');
-      return;
-    }
-
+    if (!GMS.QR?.Printer) return GMS.Toast.err('محرك الطباعة غير متاح');
     try {
       GMS.Loading.show('جارٍ توليد التاجات…');
       await GMS.QR.Printer.print(items);
       GMS.Toast.ok(`تمت طباعة ${items.length} تاج`);
     } catch (e) {
       GMS.Toast.err('فشلت الطباعة', e.message);
-    } finally {
-      GMS.Loading.hide();
-    }
+    } finally { GMS.Loading.hide(); }
   }
 
   function bulkExport(items) {
-    if (!GMS.Excel?.Exporter) {
-      GMS.Toast.err('محرك Excel غير متاح');
-      return;
-    }
+    if (!GMS.Excel?.Exporter) return GMS.Toast.err('محرك Excel غير متاح');
     GMS.Excel.Exporter.inventory(items, { filters: InvState.filters });
   }
 
   async function bulkDelete(items) {
-    const ok = await GMS.Confirm.delete(
-      `سيتم حذف ${items.length} صنف نهائياً. لا يمكن التراجع.`
-    );
+    const ok = await GMS.Confirm.delete(`سيتم حذف ${items.length} صنف نهائياً.`);
     if (!ok) return;
-
     GMS.Loading.show('جارٍ الحذف…');
-
-    let deleted = 0;
-    let failed = 0;
-
+    let deleted = 0, failed = 0;
     try {
       for (const item of items) {
         try {
           if (GMS.IDB) await GMS.IDB.delete(item.id);
-
           if (GMS.Supabase?.isReady()) {
             await GMS.Supabase.get()
               .from(GMS.SUPABASE_CONFIG.TABLES.INVENTORY)
-              .delete()
-              .eq('id', item.id);
+              .delete().eq('id', item.id);
           }
-
           const idx = InvState.items.findIndex(i => i.sku === item.sku);
           if (idx >= 0) InvState.items.splice(idx, 1);
-
           deleted++;
-        } catch (e) {
-          console.warn('[Inventory] Bulk delete failed:', item.sku, e);
-          failed++;
-        }
+        } catch (e) { failed++; }
       }
-
       InvState.selected.clear();
-
       if (GMS.Audit) {
         await GMS.Audit.log('DELETE', 'inventory', null,
           `حذف جماعي: ${deleted} صنف`, { deleted, failed });
       }
-
-      if (failed) {
-        GMS.Toast.warn('اكتمل الحذف مع أخطاء', `${deleted} نجح · ${failed} فشل`);
-      } else {
-        GMS.Toast.ok('تم الحذف', `${deleted} صنف`);
-      }
-
+      if (failed) GMS.Toast.warn('اكتمل الحذف مع أخطاء', `${deleted} نجح · ${failed} فشل`);
+      else GMS.Toast.ok('تم الحذف', `${deleted} صنف`);
       applyFilters();
       render(document.getElementById('page'));
-    } finally {
-      GMS.Loading.hide();
-    }
+    } finally { GMS.Loading.hide(); }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · EXPORT & PRINT
+     §16 · EXPORT & PRINT
      ═════════════════════════════════════════════════════════════════════ */
 
   function exportFiltered() {
-    if (!InvState.filtered.length) {
-      GMS.Toast.warn('لا توجد بيانات للتصدير');
-      return;
-    }
-    if (!GMS.Excel?.Exporter) {
-      GMS.Toast.err('محرك Excel غير متاح');
-      return;
-    }
-
-    /* ✅ v5: نضيف القيمة السوقية الحالية في التصدير */
+    if (!InvState.filtered.length) return GMS.Toast.warn('لا توجد بيانات للتصدير');
+    if (!GMS.Excel?.Exporter) return GMS.Toast.err('محرك Excel غير متاح');
     const price24 = getCurrentPrice24();
     const enriched = InvState.filtered.map(item => ({
       ...item,
       live_value: computeLiveValue(item, price24),
       current_price_24: price24,
+      holder_name: getItemHolder(item).name,
     }));
-
     GMS.Excel.Exporter.inventory(enriched, { filters: InvState.filters });
   }
 
   async function printTag(item) {
-    if (!GMS.QR?.Printer) {
-      GMS.Toast.err('محرك الطباعة غير متاح');
-      return;
-    }
-    try {
-      await GMS.QR.Printer.printOne(item);
-    } catch (e) {
-      GMS.Toast.err('فشلت الطباعة', e.message);
-    }
+    if (!GMS.QR?.Printer) return GMS.Toast.err('محرك الطباعة غير متاح');
+    try { await GMS.QR.Printer.printOne(item); }
+    catch (e) { GMS.Toast.err('فشلت الطباعة', e.message); }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · COLUMNS MANAGER
+     §17 · COLUMNS MANAGER
      ═════════════════════════════════════════════════════════════════════ */
 
   function openColumnsMenu(anchorEl) {
@@ -3453,13 +4023,11 @@
 
     const el = document.createElement('div');
     el.className = 'col-mgr';
-    el.style.cssText = `
-      position:absolute;top:calc(100% + 6px);inset-inline-end:0;
-      z-index:60;background:var(--surface);
+    el.style.cssText = `position:absolute;top:calc(100% + 6px);
+      inset-inline-end:0;z-index:60;background:var(--surface);
       border:1px solid var(--border-strong);border-radius:12px;
-      box-shadow:var(--shadow-2);min-width:220px;max-height:400px;
-      overflow-y:auto;padding:9px;
-    `;
+      box-shadow:var(--shadow-2);min-width:240px;max-height:400px;
+      overflow-y:auto;padding:9px;`;
 
     el.innerHTML = `
       <div style="padding:6px 9px 10px;font-size:10.5px;font-weight:800;
@@ -3468,7 +4036,6 @@
                   margin-bottom:5px">
         إظهار / إخفاء الأعمدة
       </div>
-
       ${COLUMNS.map(c => `
         <label style="display:flex;align-items:center;gap:9px;
                       padding:7px 9px;border-radius:7px;font-size:12px;
@@ -3479,9 +4046,7 @@
           <span>${GMS.esc(c.label)}</span>
         </label>
       `).join('')}
-
-      <div style="padding:10px 9px 3px;margin-top:5px;
-                  border-top:1px solid var(--border)">
+      <div style="padding:10px 9px 3px;margin-top:5px;border-top:1px solid var(--border)">
         <button class="btn btn-sm btn-block" id="inv-cols-reset">
           <i data-lucide="rotate-ccw"></i> إعادة ضبط
         </button>
@@ -3509,7 +4074,7 @@
 
     el.querySelector('#inv-cols-reset').onclick = () => {
       const defaults = {
-        sku: true, category: true, karat: true, weight_grams: true,
+        holder: true, sku: true, category: true, karat: true, weight_grams: true,
         net_weight: true, pure_weight: true, workmanship_per_gram: true,
         total_cost: true, branch: true, manufacturer: true,
         status: true, created_at: false,
@@ -3529,64 +4094,41 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · PRICE MANAGER LISTENER (v5)
+     §18 · PRICE LISTENER
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * ✅ v5: الاستماع لتغييرات سعر الذهب وتحديث الصفحة تلقائياً
-   */
   function bindPriceListener() {
-    /* 1 · اشتراك PriceManager */
     if (GMS.PriceManager?.on) {
       const unsub = GMS.PriceManager.on((newPrice, oldPrice) => {
-        /* تجاهل لو لسنا في صفحة المخزون */
         if (GMS.Router?.currentId?.() !== 'inventory') return;
-
-        console.log(
-          `[Inventory] 🔄 Price changed: ${oldPrice} → ${newPrice}, refreshing…`
-        );
-
-        /* أعد حساب الإحصائيات */
         applyFilters();
-
-        /* أعد تصيير الجدول + KPI */
         refreshTable();
-
-        /* Show subtle notification */
-        GMS.Toast?.info?.(
-          'تحديث لحظي',
-          `سعر الذهب: ${GMS.moneyFmt(newPrice)} ج.م · تم تحديث القيم`
-        );
       });
-
       InvState.unsubscribers.push(unsub);
     }
 
-    /* 2 · استمع لحدث goldPriceUpdated العام (fallback) */
     const priceEventHandler = (e) => {
       if (GMS.Router?.currentId?.() !== 'inventory') return;
       if (!e.detail?.prices?.price24) return;
-
       applyFilters();
       refreshTable();
     };
-
     window.addEventListener('goldPriceUpdated', priceEventHandler);
-
     InvState.unsubscribers.push(() => {
       window.removeEventListener('goldPriceUpdated', priceEventHandler);
     });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · INIT & CLEANUP
+     §19 · INIT & CLEANUP
      ═════════════════════════════════════════════════════════════════════ */
 
   async function init() {
     try {
       await loadInventory();
+      await loadEntities();      /* 🆕 v6 */
       applyFilters();
-      bindPriceListener();  /* ✅ v5: بدء الاستماع لتغييرات السعر */
+      bindPriceListener();
     } catch (e) {
       console.error('[Inventory.init]', e);
       GMS.Toast.err('فشل تحميل المخزون', e.message);
@@ -3599,7 +4141,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · VIEW REGISTRATION
+     §20 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
@@ -3612,6 +4154,7 @@
     state: InvState,
 
     load: loadInventory,
+    loadEntities,
     applyFilters,
 
     openItemModal,
@@ -3619,6 +4162,7 @@
     deleteItem,
     printTag,
     export: exportFiltered,
+    openTransferModal,          /* 🆕 v6 */
 
     bulkPrintTags,
     bulkExport,
@@ -3626,7 +4170,7 @@
 
     columns: COLUMNS,
 
-    /* ✅ API */
+    /* API */
     buildUniqueSku,
     lockInteraction,
     isInteractionLocked,
@@ -3634,29 +4178,31 @@
     getCurrentPrice24,
     computeLiveValue,
     computeAggregateValues,
+
+    /* 🆕 v6 */
+    getItemHolder,
+    setItemHolder,
+    isCurrentUserRep,
+    isCurrentUserManager,
+    ENTITY_TYPES,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · LOADED CONFIRMATION
+     §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Inventory View v5.0 loaded · Live Price Integration',
+    '%c📦 Inventory View v6.0 loaded · Holder Isolation + Internal Transfer',
     'color:#b8912f;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
 
   console.log(
-    `%c💰 Live values via PriceManager · Standard Karats + Custom (300-999)`,
+    `%c🔒 Role-Based Isolation · Entity Tabs · Transfer Voucher · Live Values`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🛡️  Interaction lock (10s) · Dropdowns protected during rerenders`,
-    'color:#1c4fd8;font-weight:700;font-size:11px;'
-  );
-
-  console.log(
-    `%c🆕 v5: Dynamic total_cost column · Live KPI values · Price change listener`,
+    `%c🆕 v6: getItemHolder / setItemHolder / openTransferModal / executeInternalTransfer`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
