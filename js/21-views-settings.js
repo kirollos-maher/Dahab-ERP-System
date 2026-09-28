@@ -1,7 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/21-views-settings.js
-   الإعدادات الشاملة — النسخة v6.0
+   الإعدادات الشاملة — النسخة v7.0
      - إعدادات عامة (الفروع، الماركات، بياعو الجملة)
+     - ✅ v7: توحيد وحدة الذهب (Base Karat Standardization)
      - المظهر واللغة والصوت
      - لوحة الأسعار اللحظية (PriceManager)
      - سياسة الإرجاع
@@ -13,11 +14,11 @@
      - نسخ احتياطي واستعادة
      - منطقة الخطر
 
-   ✅ v6 التغييرات الرئيسية:
-     • إضافة كارت "بياعو الجملة (B2B)" في التبويب العام
-     • رابط مباشر لوحدة B2B من الإعدادات
-     • عرض عدد البياعين النشطين + خزائنهم الإجمالية
-     • تحسين عرض الفروع والماركات مع أزرار إدارة
+   ✅ v7 التغييرات:
+     • كارت "توحيد وحدة الذهب" — اختيار عيار الأساس (18/21/24)
+     • Reactive propagation عبر GMS.BaseKarat
+     • صلاحية: SUPER_ADMIN / BRANCH_MANAGER / ACCOUNTANT
+     • معاينة تحويل مباشرة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -59,6 +60,9 @@
       offset: 0,
       autoRefreshEnabled: true,
       priceManagerInterval: 60,
+
+      /* ✅ v7: Base Karat */
+      baseKarat: 21,
     },
 
     /* آخر نسخة محفوظة */
@@ -136,7 +140,6 @@
       const allCustomers = GMS.B2B.getCustomers?.() || [];
       customersCount = allCustomers.length;
 
-      /* حاول قراءة الإحصائيات من VIEWS إن متاحة */
       try {
         const b2bState = GMS.Views?.b2b?.state;
         if (b2bState?.kpis) {
@@ -179,6 +182,18 @@
       }
     } catch (_) {
       SetState.draft.price24 = GMS.APP_CONFIG.DEFAULT_PRICE_24;
+    }
+
+    /* ✅ v7: Base Karat */
+    try {
+      if (GMS.BaseKarat?.current) {
+        SetState.draft.baseKarat = GMS.BaseKarat.current;
+      } else {
+        const v = Number(localStorage.getItem('gms.base_karat'));
+        SetState.draft.baseKarat = [18, 21, 24].includes(v) ? v : 21;
+      }
+    } catch (_) {
+      SetState.draft.baseKarat = 21;
     }
 
     /* Buy margin */
@@ -307,7 +322,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · TAB: GENERAL — ✅ v6 مع كارت B2B
+     §5 · TAB: GENERAL — ✅ v7 مع كارت Base Karat
      ═════════════════════════════════════════════════════════════════════ */
 
   function renderGeneralTab() {
@@ -399,6 +414,11 @@
 
             </div>
           </div>
+
+          <!-- ═══════════════════════════════════════════════════════════
+               ✅ v7: BASE KARAT CARD
+               ═══════════════════════════════════════════════════════════ -->
+          ${renderBaseKaratCard()}
         </div>
 
         <!-- Right: Branches & Manufacturers & B2B -->
@@ -485,7 +505,7 @@
             </div>
           </div>
 
-          <!-- ✅ B2B Sellers Card (v6 جديد) -->
+          <!-- ✅ B2B Sellers Card -->
           ${canManageB2B ? `
             <div class="card" style="
                         border:1.5px solid color-mix(in srgb,var(--violet) 35%,var(--border));
@@ -578,6 +598,212 @@
       </div>
     `;
   }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §5.1 · ✅ v7 · BASE KARAT STANDARDIZATION CARD
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function renderBaseKaratCard() {
+    const BK = GMS.BaseKarat;
+    if (!BK) return '';
+
+    const current = BK.current;
+    const isAdmin = ['SUPER_ADMIN', 'BRANCH_MANAGER', 'ACCOUNTANT']
+      .includes(GMS.Auth?.profile?.role);
+
+    return `
+      <div class="card" id="set-base-karat-card"
+           style="border:1.5px solid color-mix(in srgb,var(--primary) 35%,var(--border));
+                  background:linear-gradient(135deg,
+                    color-mix(in srgb,var(--primary) 6%,var(--surface)) 0%,
+                    var(--surface) 100%)">
+
+        <div class="card-head">
+          <h3 style="color:var(--primary)">
+            <i data-lucide="scale" style="color:var(--primary)"></i>
+            توحيد وحدة الذهب — عيار الأساس
+          </h3>
+          <div class="spacer" style="flex:1"></div>
+          <span class="chip" id="bk-active-chip"
+                style="background:var(--gold-soft);color:var(--warn)">
+            <i data-lucide="check-circle-2" style="width:12px;height:12px"></i>
+            النشط: ${BK.labelShort}
+          </span>
+        </div>
+
+        <div class="card-body">
+
+          <p style="font-size:12px;color:var(--muted);font-weight:600;
+                    line-height:1.75;margin:0 0 16px">
+            اختر العيار الذي تريد أن تُعرض به <b>جميع</b> أرصدة الذهب
+            في لوحة التحكم والمخزون والمحاسبة.<br>
+            <span style="color:var(--info)">
+              <i data-lucide="info"
+                 style="width:12px;height:12px;display:inline;
+                        vertical-align:-2px"></i>
+              البيانات المُخزَّنة لا تتغير — التحويل للعرض فقط،
+              ويعمل تلقائياً على كل الحركات.
+            </span>
+          </p>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);
+                      gap:10px;margin-bottom:16px">
+            ${BK.OPTIONS.map(opt => {
+              const isActive = current === opt.value;
+              const colorMap = {
+                primary: 'var(--primary)',
+                warn: 'var(--warn)',
+                info: 'var(--info)',
+              };
+              const clr = colorMap[opt.color] || 'var(--primary)';
+
+              return `
+                <button type="button" data-bk-option="${opt.value}"
+                        ${!isAdmin ? 'disabled' : ''}
+                        style="padding:16px 12px;border-radius:12px;
+                               cursor:${isAdmin ? 'pointer' : 'not-allowed'};
+                               border:2px solid ${isActive ? clr : 'var(--border)'};
+                               background:${isActive
+                                 ? `color-mix(in srgb,${clr} 10%,var(--surface))`
+                                 : 'var(--surface-2)'};
+                               text-align:center;transition:all .2s;
+                               opacity:${isAdmin ? '1' : '.55'};
+                               font-family:inherit">
+                  <div style="width:44px;height:44px;border-radius:12px;
+                              margin:0 auto 10px;
+                              display:grid;place-items:center;
+                              background:${isActive ? clr : 'var(--surface-3)'};
+                              color:${isActive ? '#fff' : 'var(--text-2)'}">
+                    <i data-lucide="${opt.value === 24 ? 'crown'
+                                   : opt.value === 21 ? 'gem'
+                                   : 'sparkles'}"
+                       style="width:22px;height:22px"></i>
+                  </div>
+                  <div style="font-weight:900;font-size:14px;
+                              color:${isActive ? clr : 'var(--text)'}">
+                    ${opt.value}K
+                  </div>
+                  <div style="font-size:10.5px;color:var(--muted);
+                              font-weight:700;margin-top:3px">
+                    نقاء ${(opt.ratio * 100).toFixed(2)}%
+                  </div>
+                  ${isActive ? `
+                    <div style="margin-top:8px;font-size:10px;
+                                color:${clr};font-weight:900">
+                      ✓ مُفعَّل حالياً
+                    </div>
+                  ` : ''}
+                </button>
+              `;
+            }).join('')}
+          </div>
+
+          ${!isAdmin ? `
+            <div style="padding:10px 14px;background:var(--warn-bg);
+                        border-radius:10px;font-size:11.5px;
+                        color:var(--warn);font-weight:700;
+                        border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)">
+              <i data-lucide="lock"
+                 style="width:12px;height:12px;display:inline;
+                        vertical-align:-2px"></i>
+              هذه الصلاحية متاحة للمدير أو المحاسب فقط.
+            </div>
+          ` : `
+            <div style="padding:12px 14px;background:var(--info-bg);
+                        border-radius:10px;font-size:11.5px;
+                        color:var(--text-2);font-weight:600;
+                        border-inline-start:3px solid var(--info);
+                        line-height:1.7">
+              <b style="color:var(--info)">مثال على التحويل:</b><br>
+              قطعة 10 جم عيار 18 =
+              <b class="mono" style="color:var(--primary)">
+                ${GMS.BaseKarat.convert(10, 18, current).toFixed(4)}
+              </b> جم
+              بعيار ${current}K
+              ·
+              <b class="mono">${GMS.BaseKarat.convert(10, 18, 24).toFixed(4)}</b>
+              جم بندق 24K
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  /* ─── Handlers: bind on General tab render ─── */
+  function bindBaseKaratCard() {
+    const card = document.getElementById('set-base-karat-card');
+    if (!card) return;
+
+    card.querySelectorAll('[data-bk-option]').forEach(btn => {
+      if (btn.disabled) return;
+
+      btn.onclick = async () => {
+        const val = Number(btn.dataset.bkOption);
+        if (val === GMS.BaseKarat.current) return;
+
+        const label = GMS.BaseKarat.LABELS[val] || `عيار ${val}`;
+
+        const ok = await GMS.Confirm.ask(
+          `سيتم تغيير عيار الأساس إلى "${label}".\n` +
+          `جميع الأرصدة ستُعرض بالعيار الجديد فوراً.\n` +
+          `(البيانات المخزَّنة لن تتأثر)`,
+          {
+            title: 'تغيير عيار الأساس',
+            okText: 'تفعيل',
+            danger: false,
+            icon: 'scale',
+          }
+        );
+        if (!ok) return;
+
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+
+        try {
+          const res = await GMS.BaseKarat.set(val);
+
+          if (!res.success) {
+            GMS.Toast.err('فشل التحديث', res.error || '');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+            return;
+          }
+
+          GMS.Beep?.complete?.();
+          GMS.Toast.ok(
+            `عيار الأساس: ${label}`,
+            `نقاء ${(GMS.BaseKarat.ratio * 100).toFixed(2)}%`
+          );
+
+          /* re-render card + propagate */
+          render(document.getElementById('page'));
+
+        } catch (e) {
+          GMS.Toast.err('خطأ', e.message);
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      };
+    });
+  }
+
+  /* ─── Hook: inject binding after tab renders ─── */
+  (function hookBaseKaratBinding() {
+    if (window.GMS?._bkBindInstalled) return;
+    window.GMS = window.GMS || {};
+    window.GMS._bkBindInstalled = true;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const observer = new MutationObserver(() => {
+        if (GMS.Views?.settings?.state?.activeTab === 'general') {
+          bindBaseKaratCard();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      setTimeout(bindBaseKaratCard, 1500);
+    });
+  })();
 
   /* ═════════════════════════════════════════════════════════════════════
      §6 · TAB: APPEARANCE
@@ -2414,7 +2640,6 @@
     const newRepQuickBtn = document.getElementById('set-new-rep-quick');
     if (newRepQuickBtn) {
       newRepQuickBtn.onclick = () => {
-        /* انتقل لـ B2B وافتح نافذة الإضافة */
         GMS.Router?.go('b2b');
         setTimeout(() => {
           try {
@@ -2425,6 +2650,9 @@
         }, 500);
       };
     }
+
+    /* ✅ v7: Base Karat binding */
+    bindBaseKaratCard();
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -3297,6 +3525,7 @@
         settings: {
           price24: SetState.draft.price24,
           buyMargin: SetState.draft.buyMargin,
+          baseKarat: SetState.draft.baseKarat,
           returnPolicy: {
             fullRefundDays: SetState.draft.fullRefundDays,
             partialRefundDays: SetState.draft.partialRefundDays,
@@ -3442,6 +3671,15 @@
 
         if (s.buyMargin !== undefined) {
           localStorage.setItem(GMS.LS_KEYS.BUY_MARGIN, String(s.buyMargin));
+        }
+
+        if (s.baseKarat && [18, 21, 24].includes(Number(s.baseKarat))) {
+          try {
+            localStorage.setItem('gms.base_karat', String(s.baseKarat));
+            if (GMS.BaseKarat) {
+              await GMS.BaseKarat.set(Number(s.baseKarat));
+            }
+          } catch (_) {}
         }
 
         if (s.returnPolicy) {
@@ -3591,6 +3829,7 @@
         ['الأسعار', 'سعر 24K (لحظي)', d.price24],
         ['الأسعار', 'هامش الشراء %', d.buyMargin],
         ['الأسعار', 'هامش الصاغة (ج.م)', d.offset],
+        ['العيارات', 'عيار الأساس', d.baseKarat],
         ['الإرجاع', 'استرجاع كامل (يوم)', d.fullRefundDays],
         ['الإرجاع', 'استرجاع جزئي (يوم)', d.partialRefundDays],
         ['الإرجاع', 'نسبة الجزئي %', d.partialRefundPct],
@@ -3676,7 +3915,7 @@
      §31 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚙️  Settings View v6.0 loaded · 10 tabs + B2B Integration',
+    '%c⚙️  Settings View v7.0 loaded · 10 tabs + B2B + Base Karat',
     'color:#6b7a95;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#eef2f8;border-radius:4px;'
   );
@@ -3687,7 +3926,7 @@
   );
 
   console.log(
-    `%c🆕 v6: B2B card in General tab · Quick open · Live stats · B2B backup/restore/clear`,
+    `%c🆕 v7: Base Karat Standardization card · 18/21/24 · Reactive propagation`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
