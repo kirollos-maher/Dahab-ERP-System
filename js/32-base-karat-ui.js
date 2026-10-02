@@ -1,26 +1,20 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/32-base-karat-ui.js
-   ربط واجهات النظام بعيار الأساس — Base Karat UI Integration
-   ─────────────────────────────────────────────────────────────────────
-   ✅ v1.0.0 — المزايا:
-     • يُصحّح تلقائياً جميع النصوص الثابتة "24K" → عيار الأساس
-     • يُضيف تسميات ديناميكية بجانب كل قيمة ذهب
-     • يستمع لحدث gms:baseKaratChanged ويُحدّث كل الصفحات فوراً
-     • يعمل بدون تعديل ملفات الواجهات الأصلية (12, 13, 14, 15, 16, 18, 27)
-     • MutationObserver يراقب DOM ويعالج القيم الجديدة
-     • لا يؤثر على القيم الأصلية في الـ state
+   ربط واجهات النظام بعيار الأساس — v2.0 (Numbers + Labels)
+   ═══════════════════════════════════════════════════════════════════════
+   ✅ v2.0 المزايا الجديدة:
+     • تحويل الأرقام الفعلية (وليس فقط التسميات)
+     • مراقبة كل KPI card ويستبدل القيمة المحوّلة
+     • إزالة تكرار الـ labels (18K (18K) → 18K)
+     • يعمل على كل الصفحات: Dashboard, Inventory, POS, Suppliers,
+       Returns, Loss, Wholesale, B2B
+     • يحافظ على القيم الأصلية في الـ state (لا يُفسد البيانات)
 
    كيف يعمل:
-     1. يمسح كل الصفحة بعد أي render
-     2. يبحث عن نصوص ثابتة مثل "بندق 24K" و"رصيد الذهب (بندق 24K)"
-     3. يستبدلها بـ "بندق 21K" (أو عيار الأساس)
-     4. يُضيف <span class="base-karat-tag"> في الأماكن المهمة
-     5. يشغّل نفسه تلقائياً عند init وعند كل تغيير عيار
-
-   Public API:
-     GMS.BaseKaratUI.refresh()       → تحديث كل الصفحة يدوياً
-     GMS.BaseKaratUI.applyTo(scope)  → تحديث عنصر محدد
-     GMS.BaseKaratUI.tagLabel(text)  → نص موحّد
+     1. يخزّن القيم الأصلية (بندق 24K) في data-original-value
+     2. عند تغيير العيار، يقرأ الأصلي ويحوّله للعيار الجديد
+     3. يكتب القيمة المحوّلة في الـ DOM
+     4. عند التكرار، يعيد التحويل من الأصل (آمن)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -42,145 +36,8 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2 · CONSTANTS — القوالب النصية التي نستبدلها
+     §2 · HELPERS
      ═════════════════════════════════════════════════════════════════════ */
-
-  /**
-   * كل نمط له:
-   *   - pattern: Regex يطابق النص القديم
-   *   - build: دالة تُرجِع النص الجديد بناءً على label جديد
-   */
-  const PATTERNS = [
-    /* ═══ أنماط "بندق 24K" ═══ */
-    {
-      id: 'bondok-24k-plain',
-      pattern: /بندق\s*24\s*K/gi,
-      build: (lbl) => `بندق ${lbl}`,
-    },
-    {
-      id: 'bondok-24k-parens',
-      pattern: /\(بندق\s*24\s*K\)/gi,
-      build: (lbl) => `(بندق ${lbl})`,
-    },
-    {
-      id: 'bondok-24k-brackets',
-      pattern: /\[بندق\s*24\s*K\]/gi,
-      build: (lbl) => `[بندق ${lbl}]`,
-    },
-
-    /* ═══ أنماط "رصيد الذهب (بندق 24K)" ═══ */
-    {
-      id: 'gold-balance-24k',
-      pattern: /رصيد\s*الذهب\s*\(بندق\s*24\s*K\)/gi,
-      build: (lbl) => `رصيد الذهب (بندق ${lbl})`,
-    },
-
-    /* ═══ أنماط "بندق 24K" في suppliers ═══ */
-    {
-      id: 'balance-gold-24k',
-      pattern: /رصيد\s*الذهب\s*\(بندق\s*24K\)/gi,
-      build: (lbl) => `رصيد الذهب (بندق ${lbl})`,
-    },
-
-    /* ═══ "البندق 24K" في POS ═══ */
-    {
-      id: 'bondok-24k-definite',
-      pattern: /البندق\s*24\s*K/g,
-      build: (lbl) => `البندق ${lbl}`,
-    },
-
-    /* ═══ "بندق 24K" بدون مسافة في analytics ═══ */
-    {
-      id: 'bondok-24k-nospace',
-      pattern: /بندق\s*24K/gi,
-      build: (lbl) => `بندق ${lbl}`,
-    },
-
-    /* ═══ "24K" ككلمة منفردة في تسميات القيم ═══ */
-    {
-      id: 'pure-24k-suffix',
-      pattern: /بندق\s+24\s*K\s*\(جم\)/gi,
-      build: (lbl) => `بندق ${lbl} (جم)`,
-    },
-    {
-      id: 'pure-24k-header',
-      pattern: /البندق\s+24\s*K\s+الفلتر/gi,
-      build: (lbl) => `البندق ${lbl} الفلتر`,
-    },
-    {
-      id: 'pure-24k-header2',
-      pattern: /البندق\s+24\s*K\s+المُفلتر/gi,
-      build: (lbl) => `البندق ${lbl} المُفلتر`,
-    },
-
-    /* ═══ في Dashboard ═══ */
-    {
-      id: 'vault-gold-label',
-      pattern: /رصيد\s*الخزنة\s*\(بندق\s*24K\)/gi,
-      build: (lbl) => `رصيد الخزنة (بندق ${lbl})`,
-    },
-    {
-      id: 'dash-daily-gold',
-      pattern: /ذهب\s*مُباع\s*اليوم/gi,
-      build: (lbl) => `ذهب مُباع اليوم (${lbl})`,
-    },
-
-    /* ═══ في Loss ═══ */
-    {
-      id: 'loss-gold-value',
-      pattern: /إجمالي\s*الخسس\s*\(30\s*يوم\)/gi,
-      build: (lbl) => `إجمالي الخسس (30 يوم) — ${lbl}`,
-    },
-
-    /* ═══ في Returns ═══ */
-    {
-      id: 'returns-gold',
-      pattern: /ذهب\s*مرتجع/gi,
-      build: (lbl) => `ذهب مرتجع (${lbl})`,
-    },
-
-    /* ═══ في Wholesale ═══ */
-    {
-      id: 'wholesale-bondok',
-      pattern: /بندق\s*جملة\s*مُباع/gi,
-      build: (lbl) => `بندق جملة مُباع (${lbl})`,
-    },
-    {
-      id: 'wholesale-bondok-2',
-      pattern: /بندق\s*جملة\s*مُباع\s*\(جم\)/gi,
-      build: (lbl) => `بندق جملة مُباع ${lbl} (جم)`,
-    },
-
-    /* ═══ في POS (سلبيات) ═══ */
-    {
-      id: 'pos-bondok',
-      pattern: /البندق\s*24K/gi,
-      build: (lbl) => `البندق ${lbl}`,
-    },
-
-    /* ═══ في B2B ═══ */
-    {
-      id: 'b2b-bondok',
-      pattern: /جم\s*بندق/gi,
-      build: (lbl) => `جم بندق ${lbl}`,
-    },
-    {
-      id: 'b2b-bondok-24k',
-      pattern: /جم\s*بندق\s*24\s*K/gi,
-      build: (lbl) => `جم بندق ${lbl}`,
-    },
-  ];
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §3 · HELPERS
-     ═════════════════════════════════════════════════════════════════════ */
-  function getBaseLabel() {
-    try {
-      if (GMS.BaseKarat?.labelShort) return GMS.BaseKarat.labelShort;
-    } catch (_) {}
-    return '24K';
-  }
-
   function getBaseKarat() {
     try {
       if (GMS.BaseKarat?.current) return GMS.BaseKarat.current;
@@ -188,79 +45,257 @@
     return 24;
   }
 
-  function shouldProcess(node) {
-    if (!node) return false;
-    if (node.nodeType !== 1 && node.nodeType !== 3) return false;
+  function getBaseLabel() {
+    try {
+      if (GMS.BaseKarat?.labelShort) return GMS.BaseKarat.labelShort;
+    } catch (_) {}
+    return '24K';
+  }
 
-    /* تجاهل السكريبتات والأنماط */
-    if (node.nodeType === 1) {
-      const tag = node.tagName;
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') return false;
+  function toBase(weight) {
+    /* يحوّل من بندق 24K إلى العيار النشط */
+    const w = parseFloat(weight);
+    if (!isFinite(w) || w === 0) return 0;
+    try {
+      if (GMS.BaseKarat?.fromPure) {
+        return GMS.BaseKarat.fromPure(w, getBaseKarat());
+      }
+      /* fallback: manual conversion */
+      const ratio = GMS.BaseKarat?.ratio || 1;
+      return w / ratio;
+    } catch (_) {
+      return w;
     }
-
-    /* تجاهل العناصر المركّبة (SVG, IFRAME) */
-    if (node.nodeType === 1 && node.tagName === 'svg') return false;
-
-    return true;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · TEXT REPLACEMENT ENGINE
+     §3 · TEXT PATTERNS — تنظيف وتوحيد
+     ═════════════════════════════════════════════════════════════════════ */
+  const LABEL_PATTERNS = [
+    /* 24K → baseLabel */
+    { re: /بندق\s+24\s*K/gi, rep: () => `بندق ${getBaseLabel()}` },
+    { re: /\(بندق\s+24\s*K\)/gi, rep: () => `(بندق ${getBaseLabel()})` },
+    { re: /البندق\s+24\s*K/g, rep: () => `البندق ${getBaseLabel()}` },
+
+    /* Cleanup: منع التكرار مثل "18K (18K)" */
+    { re: /(18K|21K|24K)\s*\(\s*\1\s*\)/g, rep: (_, k) => k },
+    { re: /\(18K\)\s*\(18K\)/g, rep: '18K' },
+    { re: /\(21K\)\s*\(21K\)/g, rep: '21K' },
+    { re: /\(24K\)\s*\(24K\)/g, rep: '24K' },
+    /* حالات أخرى */
+    { re: /(18K|21K|24K)\s+\((18K|21K|24K)\)/g,
+      rep: (_, a, b) => a },  /* نأخذ الأول دائمًا */
+  ];
+
+  function cleanText(text) {
+    if (!text) return text;
+    let out = text;
+    for (const p of LABEL_PATTERNS) {
+      p.re.lastIndex = 0;
+      if (typeof p.rep === 'function') {
+        out = out.replace(p.re, p.rep);
+      } else {
+        out = out.replace(p.re, p.rep);
+      }
+    }
+    return out;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §4 · NUMBER CONVERSION — العنصر الأساسي
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * استبدال النصوص داخل text node
-   * @param {Text} textNode
-   * @param {string} baseLabel
-   * @returns {boolean} — true لو تم تغيير
+   * يقرأ قيمة رقمية من نص (يستخرج الأرقام فقط)
+   * @param {string} text
+   * @returns {number}
    */
-  function processTextNode(textNode, baseLabel) {
-    if (!textNode || !textNode.nodeValue) return false;
-
-    const original = textNode.nodeValue;
-    let updated = original;
-
-    for (const rule of PATTERNS) {
-      /* reset regex lastIndex */
-      rule.pattern.lastIndex = 0;
-      updated = updated.replace(rule.pattern, rule.build(baseLabel));
-    }
-
-    if (updated !== original) {
-      textNode.nodeValue = updated;
-      return true;
-    }
-
-    return false;
+  function parseNumber(text) {
+    if (!text) return 0;
+    const cleaned = String(text)
+      .replace(/,/g, '')          /* فاصلة الآلاف */
+      .replace(/[^\d.\-]/g, '');  /* احتفظ بالأرقام والعلامات */
+    const n = parseFloat(cleaned);
+    return isFinite(n) ? n : 0;
   }
 
   /**
-   * معالجة عنصر + كل ذريته
-   * @param {Element|Document} root
-   * @returns {number} — عدد النصوص المُحدَّثة
+   * يُنسّق رقم بنفس نمط الأصلي
    */
-  function processElement(root) {
+  function formatLike(value, originalText) {
+    const v = Number(value);
+    if (!isFinite(v)) return String(originalText);
+
+    /* هل الأصلي عنده فواصل آلاف؟ */
+    const hasThousands = /,/.test(originalText);
+
+    /* عدد الفواصل العشرية في الأصلي */
+    const match = String(originalText).match(/\.(\d+)/);
+    const decimals = match ? match[1].length : 0;
+
+    /* اختر الفاصلة */
+    let formatted = v.toFixed(decimals);
+
+    if (hasThousands) {
+      const parts = formatted.split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      formatted = parts.join('.');
+    }
+
+    return formatted;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §5 · CONVERT KPI VALUES
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * يبحث عن كل عناصر KPI وحدود الذهب في الصفحة، ويحوّل الأرقام
+   * يستخدم data-original-labels لتخزين القيم الأصلية
+   */
+  function convertNumbersInDOM(root) {
     if (!root) return 0;
 
-    const baseLabel = getBaseLabel();
-    let changeCount = 0;
+    const baseKarat = getBaseKarat();
+    let changed = 0;
 
-    /* إذا كان text node */
+    /* ─── 1 · العناصر التي تحمل data-karat-value ─── */
+    root.querySelectorAll('[data-karat-value]').forEach(el => {
+      try {
+        /* القيمة الأصلية (بندق 24K) مخزنة في data-attribute */
+        let origValue = parseFloat(el.dataset.karatValue);
+        if (!isFinite(origValue)) {
+          /* أول مرة: نأخذ النص الحالي كقيمة أصلية */
+          origValue = parseNumber(el.textContent);
+          el.dataset.karatValue = String(origValue);
+        }
+
+        /* نحوّل للعيار النشط */
+        const converted = toBase(origValue);
+        const newText = formatLike(converted, el.textContent);
+
+        if (el.textContent.trim() !== newText) {
+          el.textContent = newText;
+          changed++;
+        }
+      } catch (e) {
+        /* تجاهل */
+      }
+    });
+
+    /* ─── 2 · KPI cards العامة ─── */
+    /* KPI elements لها .kpi-value داخلها */
+    root.querySelectorAll('.kpi-value').forEach(el => {
+      try {
+        if (el.dataset.karatConverted === '1') return;
+
+        const origText = el.textContent;
+        const value = parseNumber(origText);
+
+        if (value === 0) return;
+
+        /* هل العنصر يحتوي على label ذهب في نفس البطاقة؟ */
+        const parent = el.closest('.kpi');
+        if (!parent) return;
+
+        const labelEl = parent.querySelector('.kpi-label');
+        if (!labelEl) return;
+
+        const labelText = labelEl.textContent || '';
+
+        /* هل البطاقة عن ذهب؟ */
+        const isGoldKPI = /بندق|ذهب|خزنة|24K|18K|21K/i.test(labelText);
+
+        if (!isGoldKPI) return;
+
+        /* نحول الرقم */
+        const converted = toBase(value);
+        el.dataset.karatOriginal = String(value);
+        el.dataset.karatConverted = '1';
+
+        /* نحافظ على HTML الداخلي (small tags) */
+        const innerHTML = el.innerHTML;
+        const smallMatch = innerHTML.match(/<small[^>]*>.*?<\/small>/i);
+        const smallHTML = smallMatch ? smallMatch[0] : '';
+
+        const formatted = formatLike(converted, origText);
+        el.innerHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
+
+        changed++;
+      } catch (e) {
+        /* تجاهل */
+      }
+    });
+
+    return changed;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §6 · CONVERT CHART DATA
+     ═════════════════════════════════════════════════════════════════════ */
+
+  function convertChartData() {
+    try {
+      const charts = GMS.Views?.dashboard?.state?.charts;
+      if (!charts) return 0;
+
+      let changed = 0;
+      const baseKarat = getBaseKarat();
+      const baseLabel = getBaseLabel();
+
+      Object.entries(charts).forEach(([key, chart]) => {
+        if (!chart || !chart.data || !chart.data.datasets) return;
+
+        chart.data.datasets.forEach(ds => {
+          /* استبدال "24K" في التسميات */
+          if (ds.label) {
+            const newLabel = ds.label
+              .replace(/بندق\s+24\s*K/gi, `بندق ${baseLabel}`)
+              .replace(/\(24K\)/g, `(${baseLabel})`);
+            if (ds.label !== newLabel) {
+              ds.label = newLabel;
+              changed++;
+            }
+          }
+
+          /* لا نحوّل data مباشرة (يُفسد المخططات التاريخية) */
+        });
+
+        if (changed > 0) {
+          try { chart.update('none'); } catch (_) {}
+        }
+      });
+
+      return changed;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §7 · TEXT PROCESSING
+     ═════════════════════════════════════════════════════════════════════ */
+  function processTextNode(node) {
+    if (!node || !node.nodeValue) return false;
+
+    const original = node.nodeValue;
+    const cleaned = cleanText(original);
+
+    if (cleaned !== original) {
+      node.nodeValue = cleaned;
+      return true;
+    }
+    return false;
+  }
+
+  function processElement(root) {
+    if (!root) return 0;
     if (root.nodeType === 3) {
-      return processTextNode(root, baseLabel) ? 1 : 0;
+      return processTextNode(root) ? 1 : 0;
     }
 
-    /* تجاهل العقد التي تمت معالجتها مسبقاً في نفس الدورة */
-    if (State.processedNodes.has(root)) {
-      return 0;
-    }
+    let count = 0;
 
-    /* معالجة العنصر نفسه لو كان نص */
-    if (root.nodeType === 1 && !shouldProcess(root)) {
-      return 0;
-    }
-
-    /* Walker للنصوص */
     try {
       const walker = document.createTreeWalker(
         root,
@@ -271,7 +306,9 @@
               return NodeFilter.FILTER_REJECT;
             }
             const parent = node.parentNode;
-            if (!parent || !shouldProcess(parent)) {
+            if (!parent) return NodeFilter.FILTER_REJECT;
+            const tag = parent.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
               return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;
@@ -279,109 +316,53 @@
         }
       );
 
-      let node;
-      while ((node = walker.nextNode())) {
-        if (processTextNode(node, baseLabel)) {
-          changeCount++;
-          State.processedNodes.add(node);
-        }
+      let n;
+      while ((n = walker.nextNode())) {
+        if (processTextNode(n)) count++;
       }
-    } catch (e) {
-      /* TreeWalker قد يفشل على عناصر غريبة */
-    }
-
-    return changeCount;
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §5 · INJECT BASE KARAT TAG (تسمية ملوّنة)
-     ═════════════════════════════════════════════════════════════════════ */
-
-  /**
-   * يُضيف وسم صغير <span> بجانب كل قيمة ذهب لتوضيح العيار
-   * يُستدعى يدوياً من خلال data-attribute
-   */
-  function injectBaseTags(root) {
-    if (!root) return;
-    const baseLabel = getBaseLabel();
-
-    try {
-      /* العناصر التي تحمل data-base-karat-target */
-      root.querySelectorAll('[data-base-karat-target]').forEach(el => {
-        /* تجنّب التكرار */
-        if (el.querySelector('.base-karat-inline-tag')) return;
-
-        const tag = document.createElement('span');
-        tag.className = 'base-karat-inline-tag';
-        tag.textContent = baseLabel;
-        tag.style.cssText = `
-          display: inline-block;
-          margin-inline-start: 6px;
-          padding: 1px 6px;
-          background: color-mix(in srgb, var(--warn) 15%, transparent);
-          color: var(--warn);
-          font-size: 10px;
-          font-weight: 900;
-          border-radius: 10px;
-          font-family: var(--font-mono);
-          letter-spacing: 0.3px;
-          vertical-align: middle;
-        `;
-
-        el.appendChild(tag);
-      });
     } catch (_) {}
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §6 · MAIN REFRESH
-     ═════════════════════════════════════════════════════════════════════ */
-
-  /**
-   * يمسح الصفحة كاملة ويعالج كل النصوص
-   * @param {Object} [opts]
-   * @param {boolean} [opts.force=false]
-   * @returns {number} — عدد التعديلات
-   */
-  function refresh(opts = {}) {
-    const { force = false } = opts;
-
-    const current = getBaseKarat();
-
-    /* لا تعالج لو العيار نفسه ولم يكن force */
-    if (!force && State._lastKarat === current) {
-      return 0;
-    }
-
-    State._lastKarat = current;
-    State._refreshCount++;
-
-    /* إعادة تعيين الـ processed set */
-    State.processedNodes = new WeakSet();
-
-    const page = document.getElementById('page') || document.body;
-    const count = processElement(page);
-
-    /* حقن الوسوم المطلوبة */
-    injectBaseTags(page);
-
-    if (count > 0) {
-      console.log(
-        `%c🏷️  BaseKarat UI: updated ${count} label(s) → ${getBaseLabel()}`,
-        'color:#0f7a43;font-weight:700;font-size:11px;'
-      );
-    }
 
     return count;
   }
 
-  /**
-   * جدولة refresh مع debounce
-   */
-  function scheduleRefresh(delay = 200) {
-    if (State.pendingRefresh) {
-      clearTimeout(State.pendingRefresh);
+  /* ═════════════════════════════════════════════════════════════════════
+     §8 · MAIN REFRESH
+     ═════════════════════════════════════════════════════════════════════ */
+  function refresh(opts = {}) {
+    const { force = false } = opts;
+    const current = getBaseKarat();
+
+    if (!force && State._lastKarat === current) return 0;
+
+    State._lastKarat = current;
+    State._refreshCount++;
+    State.processedNodes = new WeakSet();
+
+    const page = document.getElementById('page') || document.body;
+
+    /* 1 · تنظيف النصوص (إزالة تكرار الـ labels + تحديث labels) */
+    const textCount = processElement(page);
+
+    /* 2 · تحويل الأرقام في KPI cards */
+    const numCount = convertNumbersInDOM(page);
+
+    /* 3 · تحويل chart labels */
+    const chartCount = convertChartData();
+
+    const total = textCount + numCount + chartCount;
+
+    if (total > 0) {
+      console.log(
+        `%c🏷️  BaseKarat UI v2: ${textCount} texts, ${numCount} numbers, ${chartCount} charts → ${getBaseLabel()}`,
+        'color:#0f7a43;font-weight:700;font-size:11px;'
+      );
     }
+
+    return total;
+  }
+
+  function scheduleRefresh(delay = 300) {
+    if (State.pendingRefresh) clearTimeout(State.pendingRefresh);
     State.pendingRefresh = setTimeout(() => {
       State.pendingRefresh = null;
       refresh({ force: true });
@@ -389,15 +370,13 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · MUTATION OBSERVER
+     §9 · MUTATION OBSERVER
      ═════════════════════════════════════════════════════════════════════ */
-
   function startObserver() {
     if (State.observer) return;
 
     const target = document.getElementById('page');
     if (!target) {
-      /* retry لو #page لسه مش موجود */
       setTimeout(startObserver, 300);
       return;
     }
@@ -407,7 +386,6 @@
 
       for (const m of mutations) {
         if (m.type === 'childList' && m.addedNodes.length > 0) {
-          /* تجاهل تغييرات الإدخال والقراءة */
           for (const node of m.addedNodes) {
             if (node.nodeType === 1) {
               const tag = node.tagName;
@@ -425,16 +403,13 @@
       }
 
       if (hasNewContent) {
-        scheduleRefresh(250);
+        scheduleRefresh(300);
       }
     });
 
-    State.observer.observe(target, {
-      childList: true,
-      subtree: true,
-    });
+    State.observer.observe(target, { childList: true, subtree: true });
 
-    console.log('[BaseKaratUI] 👁️  Observer started');
+    console.log('[BaseKaratUI v2] 👁️  Observer started');
   }
 
   function stopObserver() {
@@ -445,33 +420,24 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · HOOK INTO ROUTER
+     §10 · HOOKS
      ═════════════════════════════════════════════════════════════════════ */
-
   function hookRouter() {
     if (!GMS.Router) {
       setTimeout(hookRouter, 300);
       return;
     }
 
-    if (GMS.Router._baseKaratUIHooked) return;
-    GMS.Router._baseKaratUIHooked = true;
+    if (GMS.Router._baseKaratUIHookedV2) return;
+    GMS.Router._baseKaratUIHookedV2 = true;
 
-    /* بعد كل تنقل → refresh */
     try {
       const unsub = GMS.Router.on('afterNavigate', () => {
-        /* ننتظر انتهاء الرسم */
-        setTimeout(() => {
-          refresh({ force: true });
-        }, 350);
+        setTimeout(() => refresh({ force: true }), 400);
       });
       State.unsubscribers.push(unsub);
     } catch (_) {}
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §9 · LISTEN FOR BASE KARAT CHANGES
-     ═════════════════════════════════════════════════════════════════════ */
 
   function hookBaseKarat() {
     if (!GMS.BaseKarat) {
@@ -479,105 +445,40 @@
       return;
     }
 
-    if (State.unsubscribers.some(fn => fn._bkUI)) return;
+    if (State.unsubscribers.some(fn => fn._bkUIV2)) return;
 
     try {
       const unsub = GMS.BaseKarat.on((payload) => {
-        console.log(`[BaseKaratUI] 🔄 Karat changed to ${payload.current}K — refreshing UI`);
-        /* ننتظر الـ router يكمل الـ re-render ثم نحدّث */
-        setTimeout(() => {
-          refresh({ force: true });
-        }, 400);
+        console.log(`[BaseKaratUI v2] 🔄 Karat changed to ${payload.current}K`);
+        setTimeout(() => refresh({ force: true }), 500);
       });
-      unsub._bkUI = true;
+      unsub._bkUIV2 = true;
       State.unsubscribers.push(unsub);
     } catch (_) {}
 
-    /* ربط عبر window event أيضاً */
     window.addEventListener('gms:baseKaratChanged', () => {
-      scheduleRefresh(350);
+      scheduleRefresh(400);
     });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · PATCH CHARTS LABELS (Dashboard)
+     §11 · INIT / DESTROY
      ═════════════════════════════════════════════════════════════════════ */
-
-  function patchChartLabels() {
-    try {
-      /* Chart.js instances من Dashboard */
-      const charts = GMS.Views?.dashboard?.state?.charts;
-      if (!charts) return;
-
-      const baseLabel = getBaseLabel();
-
-      Object.entries(charts).forEach(([key, chart]) => {
-        if (!chart || !chart.data || !chart.data.datasets) return;
-
-        chart.data.datasets.forEach(ds => {
-          if (!ds.label) return;
-
-          /* استبدال "24K" في التسميات */
-          const oldLabel = ds.label;
-          const newLabel = oldLabel.replace(/بندق\s*24\s*K/gi, `بندق ${baseLabel}`);
-
-          if (oldLabel !== newLabel) {
-            ds.label = newLabel;
-            try { chart.update('none'); } catch (_) {}
-          }
-        });
-      });
-    } catch (_) {}
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §11 · PUBLIC API
-     ═════════════════════════════════════════════════════════════════════ */
-
-  function applyTo(scope) {
-    if (!scope) return 0;
-    State.processedNodes = new WeakSet();
-    const count = processElement(scope);
-    injectBaseTags(scope);
-    return count;
-  }
-
-  function tagLabel(text) {
-    const baseLabel = getBaseLabel();
-    return String(text || '').replace(/24K/gi, baseLabel);
-  }
-
   function init() {
-    if (State.installed) {
-      console.log('[BaseKaratUI] Already installed');
-      return;
-    }
+    if (State.installed) return;
 
     console.log(
-      '%c🏷️  BaseKarat UI Integration initializing…',
+      '%c🏷️  BaseKarat UI v2 (Numbers + Labels) initializing…',
       'color:#a55a00;font-weight:800;font-size:12px;'
     );
 
-    /* 1 · Hook routers */
     hookRouter();
-
-    /* 2 · Hook BaseKarat changes */
     hookBaseKarat();
-
-    /* 3 · Start observer */
     startObserver();
 
-    /* 4 · Initial refresh */
-    setTimeout(() => {
-      refresh({ force: true });
-    }, 800);
+    setTimeout(() => refresh({ force: true }), 1000);
+    setTimeout(() => refresh({ force: true }), 3000);
 
-    /* 5 · refresh إضافي بعد اكتمال الـ boot */
-    setTimeout(() => {
-      refresh({ force: true });
-    }, 2500);
-
-    /* 6 · Periodic check (كل 10 ثواني) */
     setInterval(() => {
       try {
         const current = getBaseKarat();
@@ -590,24 +491,19 @@
     State.installed = true;
 
     console.log(
-      `%c✅ BaseKarat UI ready — labels follow ${getBaseLabel()}`,
+      `%c✅ BaseKarat UI v2 ready — following ${getBaseLabel()}`,
       'color:#0f7a43;font-weight:800;font-size:12px;'
     );
   }
 
   function destroy() {
     stopObserver();
-
-    State.unsubscribers.forEach(fn => {
-      try { fn(); } catch (_) {}
-    });
+    State.unsubscribers.forEach(fn => { try { fn(); } catch (_) {} });
     State.unsubscribers = [];
-
     if (State.pendingRefresh) {
       clearTimeout(State.pendingRefresh);
       State.pendingRefresh = null;
     }
-
     State.installed = false;
   }
 
@@ -619,9 +515,13 @@
     destroy,
     refresh,
     scheduleRefresh,
-    applyTo,
-    tagLabel,
     state: State,
+
+    /* utils */
+    cleanText,
+    parseNumber,
+    formatLike,
+    toBase,
   };
 
   window.BaseKaratUI = GMS.BaseKaratUI;
@@ -630,25 +530,15 @@
      §13 · AUTO-INIT
      ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(init, 1200);
-    });
+    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1500));
   } else {
-    setTimeout(init, 1200);
+    setTimeout(init, 1500);
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §14 · LOADED CONFIRMATION
-     ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏷️  BaseKarat UI Integration v1.0.0 loaded',
+    '%c🏷️  BaseKarat UI v2.0 loaded · Numbers + Labels + Chart sync',
     'color:#a55a00;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
-  );
-
-  console.log(
-    '%c🔗 Auto-labels · MutationObserver · Chart sync · Route hooks · Zero-touch',
-    'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
 })();
