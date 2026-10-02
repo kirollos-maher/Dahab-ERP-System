@@ -1,14 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/32-base-karat-ui.js
-   Base Karat UI — v2.4 (FINAL SAFE MODE)
+   Base Karat UI — v2.5 (FIX: Hard Reload Persistence)
    ─────────────────────────────────────────────────────────────────────
-   ✅ v2.4 الإصلاحات الحاسمة:
-     • cleanText يحمي النصوص القصيرة والـ labels المستقلة
-     • MutationObserver يُوقف بالكامل في الصفحات المحظورة
-     • convertNumbersInDOM يتحقق من isProtected
-     • convertChartData يحمي النصوص القصيرة
-     • استثناء إضافي: البيانات الأصلية للـ charts
-     • حماية من auto-replace داخل "14K", "22K", "18K", "21K", "24K"
+   ✅ v2.5 الإصلاح الحاسم:
+     • يعمل صح عند Hard Reload — مش بس عند التغيير اليدوي
+     • يتتبّع hash المحتوى بدل _lastKarat فقط
+     • يفحص DOM كل 500ms بدل الاعتماد على Observer فقط
+     • يضيف auto-retry كل ثانية لما الصفحة تترسم
+     • يحوّل الأرقام مباشرة عند أول render
+     • force=true افتراضي في refresh بعد init
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -27,7 +27,10 @@
     processedNodes: new WeakSet(),
     _lastKarat: null,
     _lastRoute: null,
+    _lastDOMHash: null,        /* 🆕 v2.5: hash المحتوى */
     _refreshCount: 0,
+    _initTime: Date.now(),
+    _lastRefreshAt: null,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -75,6 +78,24 @@
     }
   }
 
+  /* 🆕 v2.5: حساب hash بسيط للمحتوى */
+  function domHash() {
+    try {
+      const page = document.getElementById('page');
+      if (!page) return '';
+      const text = page.textContent || '';
+      let hash = 0;
+      const sample = text.slice(0, 2000);
+      for (let i = 0; i < sample.length; i++) {
+        hash = ((hash << 5) - hash) + sample.charCodeAt(i);
+        hash |= 0;
+      }
+      return String(hash);
+    } catch (_) {
+      return '';
+    }
+  }
+
   /* ═════════════════════════════════════════════════════════════════════
      §4 · PROTECTED SELECTORS
      ═════════════════════════════════════════════════════════════════════ */
@@ -92,9 +113,9 @@
     '#set-base-karat-card',
     '.kpi',
     '.setting-item',
-    '.price-karat-cell',   /* 🆕 خلايا الأسعار في settings */
-    '.live-price-cell',    /* 🆕 */
-    '[data-price-cell]',   /* 🆕 */
+    '.price-karat-cell',
+    '.live-price-cell',
+    '[data-price-cell]',
   ];
 
   function isProtected(el) {
@@ -105,55 +126,43 @@
     return false;
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §5 · PROTECTED TEXT — تحديث حرج
-     ═════════════════════════════════════════════════════════════════════
-     المشكلة كانت هنا في v2.3: cleanText ما كانش يستدعي هذه
-     الحماية الكاملة، فكان النص "24K" بيتحول لـ "18K".
-     ═════════════════════════════════════════════════════════════════════ */
   function isProtectedText(text) {
     if (!text) return true;
-
     const t = String(text).trim();
-
-    /* ✅ نص قصير جدًا */
     if (t.length <= 4) return true;
-
-    /* ✅ فقط رقم */
     if (/^\s*[\d.,\-+]+\s*$/.test(t)) return true;
-
-    /* ✅ مجرد عيار لوحده (بأي صيغة) */
     if (/^(14K|18K|21K|22K|24K)$/.test(t)) return true;
-    if (/^(\d{1,3})K?$/.test(t)) return true;    /* "24" أو "888K" */
-
-    /* ✅ مجرد "K" أو رمز */
+    if (/^(\d{1,3})K?$/.test(t)) return true;
     if (/^[Kk\s\-]+$/.test(t)) return true;
-
-    /* ✅ سطر لا يحتوي حروف عربية أو إنجليزية (مثل "0.7500") */
     if (!/[\u0600-\u06FFa-zA-Z]/.test(t)) return true;
-
-    /* ✅ أسعار و أعشار */
     if (/^[\d.]+K?$/.test(t)) return true;
-
     return false;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · CLEANING PATTERNS — v2.4 (بسيطة وآمنة)
+     §5 · CLEANING PATTERNS — v2.5
      ═════════════════════════════════════════════════════════════════════
-     حذف كل الأنماط الخطرة زي \b24K\b → 18K
-     الآن نتعامل فقط مع "بندق" و"جم بندق"
+     ✅ يعالج "بندق 24K" و "بندق 18K" و "بندق 21K" — كلها
      ═════════════════════════════════════════════════════════════════════ */
   const CLEAN_PATTERNS = [
-    /* إزالة "بندق" فقط — لا نلمس العيارات المنفردة */
-    { re: /\(\s*بندق\s+(18K|21K|24K)\s*\)/gi, rep: '($1)' },
-    { re: /\(\s*بندق\s+(\d{2})\s*\)/gi, rep: '($1K)' },
-    { re: /بندق\s+(18K|21K|24K)/gi, rep: '$1' },
-    { re: /بندق\s+(\d{2})\b/gi, rep: '$1K' },
-    { re: /البندق\s+(18K|21K|24K)/gi, rep: 'العيار $1' },
+    /* أولاً: استبدال العيار داخل "بندق X" بالعيار النشط */
+    { re: /بندق\s+24K/gi, rep: () => `بندق ${getBaseLabel()}` },
+    { re: /بندق\s+21K/gi, rep: () => `بندق ${getBaseLabel()}` },
+    { re: /بندق\s+18K/gi, rep: () => `بندق ${getBaseLabel()}` },
+
+    /* ثانياً: مع أقواس */
+    { re: /\(\s*بندق\s+(24K|21K|18K)\s*\)/gi, rep: () => `(بندق ${getBaseLabel()})` },
+
+    /* ثالثاً: بندق + رقم */
+    { re: /بندق\s+(\d{2})\b/gi, rep: () => `بندق ${getBaseLabel()}` },
+
+    /* رابعاً: "البندق X" */
+    { re: /البندق\s+(24K|21K|18K)/gi, rep: () => `العيار ${getBaseLabel()}` },
+
+    /* خامساً: أنماط مركّبة */
     { re: /بندق\s+جملة\s+مُباع/gi, rep: 'جملة مُباعة' },
     { re: /بندق\s+جملة/gi, rep: 'جملة' },
-    { re: /جم\s+بندق\s+(18K|21K|24K)/gi, rep: 'جم $1' },
+    { re: /جم\s+بندق\s+(24K|21K|18K)/gi, rep: () => `جم ${getBaseLabel()}` },
     { re: /جم\s+بندق/gi, rep: 'جم' },
     { re: /البندق\s+الفلتر/gi, rep: 'العيار المفلتر' },
     { re: /البندق\s+المُفلتر/gi, rep: 'العيار المُفلتر' },
@@ -162,7 +171,7 @@
     { re: /^بندق\s+/gi, rep: '' },
     { re: /\s+بندق$/gi, rep: '' },
 
-    /* تنظيف المسافات والأقواس */
+    /* تنظيف */
     { re: /\(\s*\)/g, rep: '' },
     { re: /\s{2,}/g, rep: ' ' },
     { re: /\s+\(/g, rep: ' (' },
@@ -170,14 +179,12 @@
     { re: /\(\s+/g, rep: '(' },
     { re: /\s+\)/g, rep: ')' },
 
-    /* إزالة تكرار العيار */
+    /* إزالة التكرار */
     { re: /(18K|21K|24K)\s*\(\s*\1\s*\)/g, rep: '$1' },
   ];
 
   function cleanText(text) {
     if (!text) return text;
-
-    /* ✅ حماية نصية صارمة — الأهم في v2.4 */
     if (isProtectedText(text)) return text;
 
     let out = String(text);
@@ -190,7 +197,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · NUMBER HELPERS
+     §6 · NUMBER HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   function parseNumber(text) {
     if (!text) return 0;
@@ -217,13 +224,16 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · CONVERT NUMBERS
+     §7 · 🆕 v2.5: CONVERT NUMBERS — قوي بجد
      ═════════════════════════════════════════════════════════════════════ */
   function convertNumbersInDOM(root) {
     if (!root) return 0;
     if (isSkippedRoute()) return 0;
+
+    const baseKarat = getBaseKarat();
     let changed = 0;
 
+    /* ─── 1 · [data-karat-value] ─── */
     root.querySelectorAll('[data-karat-value]').forEach(el => {
       try {
         if (isProtected(el)) return;
@@ -244,6 +254,7 @@
       } catch (_) {}
     });
 
+    /* ─── 2 · .kpi-value داخل .kpi ─── */
     root.querySelectorAll('.kpi-value').forEach(el => {
       try {
         if (isProtected(el)) return;
@@ -259,17 +270,69 @@
         if (!labelEl) return;
 
         const labelText = labelEl.textContent || '';
-        const isGoldKPI = /ذهب|خزنة|جم/i.test(labelText);
+
+        /* ✅ نوسّع النطاق: أي KPI فيه "خزنة", "ذهب", "جم", "موردين", "بندق", "18K", "21K", "24K" */
+        const isGoldKPI = /ذهب|خزنة|جم|موردين|بندق|18K|21K|24K/i.test(labelText);
 
         if (!isGoldKPI) return;
 
+        /* ✅ نتحقق: هل القيمة مخزنة كأصلية؟ */
         let origValue = parseFloat(el.dataset.karatOriginal);
+
+        /* ✅ لو ما فيش قيمة أصلية محفوظة → نخزّن الحالية كأصلية */
         if (!isFinite(origValue)) {
           origValue = value;
           el.dataset.karatOriginal = String(origValue);
         }
 
+        /* ✅ نحوّل من الأصلية دايماً — يمنع التحويل المزدوج */
         const converted = toBase(origValue);
+
+        /* نحافظ على HTML الداخلي */
+        const innerHTML = el.innerHTML;
+        const smallMatch = innerHTML.match(/<small[^>]*>.*?<\/small>/i);
+        const smallHTML = smallMatch ? smallMatch[0] : '';
+
+        const formatted = formatLike(converted, origText);
+        const newHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
+
+        if (el.innerHTML !== newHTML) {
+          el.innerHTML = newHTML;
+          changed++;
+        }
+      } catch (_) {}
+    });
+
+    /* ─── 3 · 🆕 v2.5: KPI أخرى فيه أرقام ذهب بدون label واضح ─── */
+    /* مثال: بعض البطاقات ممكن تكون قيمها داخل .kpi-value مباشرة أو .cl-row .v */
+    root.querySelectorAll('.cl-row .v, .stat-value, .metric-value').forEach(el => {
+      try {
+        if (isProtected(el)) return;
+        if (el.dataset.karatOriginal) return; /* Already processed */
+
+        const origText = el.textContent;
+        const value = parseNumber(origText);
+
+        /* نتجاهل القيم الصغيرة جداً (ممكن تكون نسب مئوية) */
+        if (value < 1 || value > 1000000) return;
+
+        /* هل العنصر داخل سياق ذهب؟ */
+        const container = el.closest('.cl-row') || el.closest('.card') || el.parentElement;
+        if (!container) return;
+
+        const contextText = container.textContent || '';
+
+        /* فقط لو فيه إشارة لذهب أو عيار */
+        const isGoldContext = /بندق|ذهب|خزنة|18K|21K|24K/i.test(contextText);
+
+        /* لكن لازم نتجنب: أسعار (فيها ج.م), تواريخ, إلخ */
+        const isPrice = /ج\.م|جنيه|EGP/i.test(contextText);
+        const isPercentage = /%|نسبة|نقاء/i.test(contextText);
+
+        if (!isGoldContext || isPrice || isPercentage) return;
+
+        el.dataset.karatOriginal = String(value);
+        const converted = toBase(value);
 
         const innerHTML = el.innerHTML;
         const smallMatch = innerHTML.match(/<small[^>]*>.*?<\/small>/i);
@@ -277,7 +340,6 @@
 
         const formatted = formatLike(converted, origText);
         el.innerHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
-
         changed++;
       } catch (_) {}
     });
@@ -286,12 +348,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · CHARTS — مع حماية النصوص
+     §8 · CHARTS
      ═════════════════════════════════════════════════════════════════════ */
   function convertChartData() {
     try {
       if (isSkippedRoute()) return 0;
-
       const charts = GMS.Views?.dashboard?.state?.charts;
       if (!charts) return 0;
 
@@ -299,14 +360,10 @@
 
       Object.entries(charts).forEach(([key, chart]) => {
         if (!chart || !chart.data || !chart.data.datasets) return;
-
         let chartChanged = false;
 
         chart.data.datasets.forEach(ds => {
-          if (ds.label) {
-            /* ✅ حماية صارمة */
-            if (isProtectedText(ds.label)) return;
-
+          if (ds.label && !isProtectedText(ds.label)) {
             const cleaned = cleanText(ds.label);
             if (ds.label !== cleaned) {
               ds.label = cleaned;
@@ -328,7 +385,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · TEXT PROCESSING
+     §9 · TEXT PROCESSING
      ═════════════════════════════════════════════════════════════════════ */
   function processTextNode(node) {
     if (!node || !node.nodeValue) return false;
@@ -336,14 +393,12 @@
 
     const parent = node.parentNode;
     if (!parent) return false;
-
     if (isProtected(parent)) return false;
 
     const original = node.nodeValue;
     if (isProtectedText(original)) return false;
 
     const cleaned = cleanText(original);
-
     if (cleaned !== original) {
       node.nodeValue = cleaned;
       return true;
@@ -365,9 +420,7 @@
         NodeFilter.SHOW_TEXT,
         {
           acceptNode: (node) => {
-            if (!node.nodeValue || !node.nodeValue.trim()) {
-              return NodeFilter.FILTER_REJECT;
-            }
+            if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
             const parent = node.parentNode;
             if (!parent) return NodeFilter.FILTER_REJECT;
 
@@ -375,9 +428,7 @@
             if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
               return NodeFilter.FILTER_REJECT;
             }
-
             if (isProtected(parent)) return NodeFilter.FILTER_REJECT;
-
             if (isProtectedText(node.nodeValue)) return NodeFilter.FILTER_REJECT;
 
             return NodeFilter.FILTER_ACCEPT;
@@ -395,12 +446,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · MAIN REFRESH
+     §10 · 🆕 v2.5: MAIN REFRESH — ذكي
      ═════════════════════════════════════════════════════════════════════ */
   function refresh(opts = {}) {
-    const { force = false } = opts;
+    const { force = true } = opts;  /* ✅ v2.5: default = true */
 
-    /* ✅ حماية إضافية */
     if (isSkippedRoute()) {
       State._lastKarat = getBaseKarat();
       State._lastRoute = GMS.Router?.currentId?.() || 'settings';
@@ -410,13 +460,21 @@
     const current = getBaseKarat();
     const route = GMS.Router?.currentId?.() || 'unknown';
 
-    if (!force && State._lastKarat === current && State._lastRoute === route) {
+    /* 🆕 v2.5: نستخدم hash المحتوى — لو المحتوى تغير، نعالج */
+    const hash = domHash();
+
+    if (!force
+        && State._lastKarat === current
+        && State._lastRoute === route
+        && State._lastDOMHash === hash) {
       return 0;
     }
 
     State._lastKarat = current;
     State._lastRoute = route;
+    State._lastDOMHash = hash;
     State._refreshCount++;
+    State._lastRefreshAt = new Date().toISOString();
     State.processedNodes = new WeakSet();
 
     const page = document.getElementById('page') || document.body;
@@ -429,7 +487,7 @@
 
     if (total > 0) {
       console.log(
-        `%c✨ BaseKarat UI v2.4: ${textCount} texts, ${numCount} numbers, ${chartCount} charts (route: ${route})`,
+        `%c✨ BaseKarat UI v2.5: ${textCount} texts, ${numCount} numbers, ${chartCount} charts (route: ${route}, karat: ${current}K)`,
         'color:#0f7a43;font-weight:700;font-size:11px;'
       );
     }
@@ -447,7 +505,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · OBSERVER — مع فحص skip كامل
+     §11 · OBSERVER
      ═════════════════════════════════════════════════════════════════════ */
   function startObserver() {
     if (State.observer) return;
@@ -459,7 +517,6 @@
     }
 
     State.observer = new MutationObserver((mutations) => {
-      /* ✅ تجاهل كامل في الصفحات المحظورة */
       if (isSkippedRoute()) return;
 
       let hasNewContent = false;
@@ -489,7 +546,7 @@
 
     State.observer.observe(target, { childList: true, subtree: true });
 
-    console.log('[BaseKaratUI v2.4] 👁️  Observer started (FINAL SAFE MODE)');
+    console.log('[BaseKaratUI v2.5] 👁️  Observer started');
   }
 
   function stopObserver() {
@@ -500,6 +557,47 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
+     §12 · 🆕 v2.5: WATCHDOG — يفحص كل 800ms أول 15 ثانية
+     ═════════════════════════════════════════════════════════════════════
+     هذا هو الإصلاح الرئيسي: يضمن أن الصفحة تُعالج حتى لو ما فيش
+     mutation event (مثل عند Hard Reload مع router sync)
+     ═════════════════════════════════════════════════════════════════════ */
+  function startWatchdog() {
+    let ticks = 0;
+    const interval = setInterval(() => {
+      ticks++;
+
+      /* نتوقف بعد 30 ثانية */
+      if (ticks > 40) {
+        clearInterval(interval);
+        return;
+      }
+
+      if (isSkippedRoute()) return;
+
+      try {
+        /* نحسب hash — لو تغيّر، نعالج */
+        const hash = domHash();
+        const current = getBaseKarat();
+
+        if (hash && hash !== State._lastDOMHash) {
+          refresh({ force: true });
+        }
+        /* لو العيار تغيّر */
+        else if (current !== State._lastKarat) {
+          refresh({ force: true });
+        }
+        /* أول 8 ثواني — نعيد المحاولة دايماً */
+        else if (ticks <= 10) {
+          refresh({ force: true });
+        }
+      } catch (_) {}
+    }, 800);
+
+    State.unsubscribers.push(() => clearInterval(interval));
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
      §13 · HOOKS
      ═════════════════════════════════════════════════════════════════════ */
   function hookRouter() {
@@ -507,21 +605,23 @@
       setTimeout(hookRouter, 300);
       return;
     }
-    if (GMS.Router._baseKaratUIHookedV24) return;
-    GMS.Router._baseKaratUIHookedV24 = true;
+    if (GMS.Router._baseKaratUIHookedV25) return;
+    GMS.Router._baseKaratUIHookedV25 = true;
 
     try {
       const unsub = GMS.Router.on('afterNavigate', (data) => {
         const route = data?.to || GMS.Router.currentId?.();
-        console.log(`[BaseKaratUI v2.4] 🧭 Navigated to: ${route}`);
+        console.log(`[BaseKaratUI v2.5] 🧭 Navigated to: ${route}`);
 
-        /* ✅ لا نعمل refresh في الصفحات المحظورة */
         if (SKIP_ROUTES.includes(route)) {
           State._lastRoute = route;
           return;
         }
 
-        setTimeout(() => refresh({ force: true }), 500);
+        /* 🆕 v2.5: نستدعي refresh فوراً + بعد 400ms */
+        setTimeout(() => refresh({ force: true }), 50);
+        setTimeout(() => refresh({ force: true }), 400);
+        setTimeout(() => refresh({ force: true }), 1200);
       });
       State.unsubscribers.push(unsub);
     } catch (_) {}
@@ -532,21 +632,24 @@
       setTimeout(hookBaseKarat, 300);
       return;
     }
-    if (State.unsubscribers.some(fn => fn._bkUIV24)) return;
+    if (State.unsubscribers.some(fn => fn._bkUIV25)) return;
 
     try {
       const unsub = GMS.BaseKarat.on((payload) => {
-        console.log(`[BaseKaratUI v2.4] 🔄 Karat → ${payload.current}K`);
+        console.log(`[BaseKaratUI v2.5] 🔄 Karat → ${payload.current}K`);
         if (isSkippedRoute()) return;
+
+        /* 🆕 نعمل refresh فوراً */
+        setTimeout(() => refresh({ force: true }), 100);
         setTimeout(() => refresh({ force: true }), 500);
       });
-      unsub._bkUIV24 = true;
+      unsub._bkUIV25 = true;
       State.unsubscribers.push(unsub);
     } catch (_) {}
 
     window.addEventListener('gms:baseKaratChanged', () => {
       if (isSkippedRoute()) return;
-      scheduleRefresh(400);
+      scheduleRefresh(200);
     });
   }
 
@@ -557,31 +660,25 @@
     if (State.installed) return;
 
     console.log(
-      '%c🏷️  BaseKarat UI v2.4 (FINAL SAFE) initializing…',
+      '%c🏷️  BaseKarat UI v2.5 (Hard Reload FIX) initializing…',
       'color:#a55a00;font-weight:800;font-size:12px;'
     );
 
     hookRouter();
     hookBaseKarat();
     startObserver();
+    startWatchdog();
 
+    /* ✅ v2.5: نستدعي refresh عدة مرات بعد init */
+    setTimeout(() => refresh({ force: true }), 500);
     setTimeout(() => refresh({ force: true }), 1000);
-    setTimeout(() => refresh({ force: true }), 3000);
-
-    setInterval(() => {
-      try {
-        if (isSkippedRoute()) return;
-        const current = getBaseKarat();
-        if (State._lastKarat !== current) {
-          refresh({ force: true });
-        }
-      } catch (_) {}
-    }, 10000);
+    setTimeout(() => refresh({ force: true }), 2000);
+    setTimeout(() => refresh({ force: true }), 3500);
 
     State.installed = true;
 
     console.log(
-      `%c✅ BaseKarat UI v2.4 ready — Skipped: [${SKIP_ROUTES.join(', ')}]`,
+      `%c✅ BaseKarat UI v2.5 ready — following ${getBaseLabel()}`,
       'color:#0f7a43;font-weight:800;font-size:12px;'
     );
   }
@@ -616,16 +713,16 @@
   window.BaseKaratUI = GMS.BaseKaratUI;
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · AUTO-INIT
+     §16 · AUTO-INIT — 🆕 v2.5: أسرع
      ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1500));
+    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 500));
   } else {
-    setTimeout(init, 1500);
+    setTimeout(init, 500);
   }
 
   console.log(
-    '%c🏷️  BaseKarat UI v2.4 loaded · FINAL SAFE · Settings untouched',
+    '%c🏷️  BaseKarat UI v2.5 loaded · Hard Reload FIX',
     'color:#a55a00;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
