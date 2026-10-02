@@ -5,10 +5,16 @@
    يسمح للمدير/المحاسب باختيار عيار الأساس الذي تُعرض به جميع أرصدة
    الذهب في النظام (لوحة التحكم، المخزون، المحاسبة، دفتر العملاء).
 
-   ✅ v1.0.0 المزايا:
+   ✅ v1.0.1 — التحديثات:
+     • Resilient Supabase: يتخطى بهدوء عند NO_ORG / RPC مفقودة / صلاحيات
+     • يظهر تحذير فقط عند فشل حقيقي (network error مثلاً)
+     • يستمر في العمل محلياً في كل الحالات بدون كسر الواجهة
+     • Console.info بدل warn لحالات "غير مُهيّأ"
+
+   ✅ v1.0.0 المزايا الأساسية:
      • تفاعلي كامل (Reactive) — أي تغيير يُحدّث كل الواجهات فوراً
      • يحفظ في: LocalStorage + IndexedDB + Supabase (اختياري)
-     • يتزامن بين التبويبات (BroadcastChannel)
+     • يتزامن بين التبويبات (BroadcastChannel + storage event)
      • يتحقق من الصلاحيات (SUPER_ADMIN / BRANCH_MANAGER / ACCOUNTANT)
      • دوال تحويل دقيقة (18 ↔ 21 ↔ 24 + مخصص)
      • يحافظ على البيانات الأصلية — التحويل للعرض فقط
@@ -22,7 +28,7 @@
      GMS.BaseKarat.OPTIONS       → [{value, ratio, color, icon, label}]
      GMS.BaseKarat.LABELS        → {18: 'عيار 18', 21: '...', 24: '...'}
      GMS.BaseKarat.COLORS        → {18: '#6b7a95', 21: '#9c7726', 24: '#c8a24a'}
-     GMS.BaseKarat.set(karat)    → async { success, current, previous, error }
+     GMS.BaseKarat.set(karat)    → async { success, current, previous, error, skipped? }
      GMS.BaseKarat.convert(w, from, to)
      GMS.BaseKarat.toBase(w, from)      → يحوّل إلى العيار النشط
      GMS.BaseKarat.fromBase(baseW, to)  → يحوّل من العيار النشط
@@ -107,7 +113,7 @@
 
     lastChangedAt: null,
     lastChangedBy: null,
-    syncStatus: 'idle',            /* 'idle' | 'syncing' | 'synced' | 'error' */
+    syncStatus: 'idle',            /* 'idle' | 'syncing' | 'synced' | 'error' | 'local-only' */
     lastError: null,
 
     listeners: new Set(),
@@ -294,33 +300,68 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · SUPABASE SYNC (اختياري — يعمل لو متاح)
+     §7 · SUPABASE SYNC (اختياري + Resilient)
+     ─────────────────────────────────────────────────────────────────────
+     - لو RPC مش موجودة → نتخطى بهدوء
+     - لو organizations فاضي → نتخطى بهدوء
+     - لو ما فيش صلاحية → نتخطى بهدوء
+     - في كل الحالات: LocalStorage يشتغل عادي
      ═════════════════════════════════════════════════════════════════════ */
   async function saveSupabase(karat) {
     try {
-      if (!GMS.Supabase?.isReady?.()) return { skipped: true };
+      if (!GMS.Supabase?.isReady?.()) {
+        return { skipped: true, reason: 'no_supabase' };
+      }
 
       const client = GMS.Supabase.get();
-      if (!client) return { skipped: true };
+      if (!client) return { skipped: true, reason: 'no_client' };
 
-      /* RPC: set_base_karat */
       const { data, error } = await client.rpc('set_base_karat', {
         p_karat: karat,
       });
 
+      /* ── خطأ شبكة/SQL ── */
       if (error) {
-        console.warn('[BaseKarat.saveSupabase] RPC failed:', error.message);
+        const msg = String(error.message || '');
+
+        /* حالات "غير مُهيّأ" — نتخطى بهدوء */
+        const isConfigIssue =
+          msg.includes('NO_ORG') ||
+          msg.includes('does not exist') ||
+          msg.includes('permission denied') ||
+          msg.includes('function') ||
+          msg.includes('schema') ||
+          msg.includes('relation');
+
+        if (isConfigIssue) {
+          console.info('[BaseKarat] ☁️ Remote skipped (config):', msg);
+          return { skipped: true, reason: msg };
+        }
+
+        /* خطأ حقيقي */
         return { success: false, error: error.message };
       }
 
+      /* ── الدالة رجعت success:false ── */
       if (data && data.success === false) {
-        return { success: false, error: data.error || 'RPC failed' };
+        if (data.error === 'NO_ORG') {
+          console.info('[BaseKarat] ☁️ Remote skipped: NO_ORG (no organizations row)');
+          return { skipped: true, reason: 'NO_ORG' };
+        }
+        if (data.error === 'NOT_ADMIN') {
+          console.info('[BaseKarat] ☁️ Remote skipped: NOT_ADMIN');
+          return { skipped: true, reason: 'NOT_ADMIN' };
+        }
+        if (data.error === 'INVALID_KARAT') {
+          return { success: false, error: 'INVALID_KARAT' };
+        }
+        return { success: false, error: data.error || 'RPC returned failure' };
       }
 
       return { success: true, data };
     } catch (e) {
-      console.warn('[BaseKarat.saveSupabase]', e);
-      return { success: false, error: e.message };
+      console.warn('[BaseKarat.saveSupabase] exception:', e);
+      return { skipped: true, reason: e.message };
     }
   }
 
@@ -335,7 +376,19 @@
       const { data, error } = await client.rpc('current_base_karat');
 
       if (error) {
-        console.warn('[BaseKarat.loadSupabase] RPC failed:', error.message);
+        const msg = String(error.message || '');
+
+        const isConfigIssue =
+          msg.includes('does not exist') ||
+          msg.includes('permission denied') ||
+          msg.includes('function') ||
+          msg.includes('schema');
+
+        if (isConfigIssue) {
+          console.info('[BaseKarat] ☁️ Remote load skipped (config):', msg);
+        } else {
+          console.warn('[BaseKarat.loadSupabase] RPC failed:', msg);
+        }
         return null;
       }
 
@@ -445,7 +498,7 @@
    * @param {Object} [opts]
    * @param {boolean} [opts.silent=false]
    * @param {boolean} [opts.skipRemote=false]
-   * @returns {Promise<{success:boolean, current?:number, previous?:number, error?:string}>}
+   * @returns {Promise<{success:boolean, current?:number, previous?:number, error?:string, skipped?:string}>}
    */
   async function set(karat, opts = {}) {
     const { silent = false, skipRemote = false } = opts;
@@ -487,13 +540,20 @@
     State.lastError = null;
 
     const previous = State.current;
+    let remoteSkipReason = null;
 
     try {
-      /* 5 · Supabase first (لو متاح + غير متخطى) */
+      /* 5 · Supabase (اختياري — لا يوقف العملية لو فشل التهيئة) */
       if (!skipRemote) {
         const remoteResult = await saveSupabase(next);
 
-        if (remoteResult && remoteResult.success === false) {
+        /* ✅ نتوقف فقط عند فشل حقيقي (مش skip) */
+        const isRealFailure =
+          remoteResult &&
+          remoteResult.success === false &&
+          !remoteResult.skipped;
+
+        if (isRealFailure) {
           State.loading = false;
           State.syncStatus = 'error';
           State.lastError = remoteResult.error || 'فشل حفظ الإعداد في السحابة';
@@ -503,15 +563,25 @@
             previous,
           };
         }
+
+        /* لو تم التخطي — نسجّل السبب لكن نكمل */
+        if (remoteResult?.skipped) {
+          remoteSkipReason = remoteResult.reason;
+          console.info('[BaseKarat] → Local-only mode:', remoteSkipReason);
+          State.syncStatus = 'local-only';
+        }
       }
 
       /* 6 · Update state */
       State.current = next;
       State.previous = previous;
-      State.source = 'local';
+      State.source = remoteSkipReason ? 'local' : 'supabase';
       State.lastChangedAt = new Date().toISOString();
       State.lastChangedBy = currentUser().name;
-      State.syncStatus = 'synced';
+
+      if (!remoteSkipReason) {
+        State.syncStatus = 'synced';
+      }
 
       /* 7 · Persist */
       saveLocal(next, {
@@ -552,13 +622,15 @@
               current: next,
               ratio: RATIOS[next],
               changed_by: currentUser().id,
+              remote_skipped: Boolean(remoteSkipReason),
             }
           );
         } catch (_) {}
       }
 
       console.log(
-        `%c⚖️ Base Karat: ${previous}K → ${next}K`,
+        `%c⚖️ Base Karat: ${previous}K → ${next}K` +
+        (remoteSkipReason ? ` (local-only: ${remoteSkipReason})` : ''),
         'color:#a55a00;font-weight:900;font-size:13px;'
       );
 
@@ -567,6 +639,7 @@
         current: State.current,
         previous,
         ratio: RATIOS[next],
+        skipped: remoteSkipReason || undefined,
       };
 
     } catch (e) {
@@ -868,7 +941,7 @@
 
     /**
      * نص عرض واضح للعيار النشط (للاستخدام في التسميات)
-     * @returns {string}  "21K Equivalent" | "عيار 21"
+     * @returns {string}  "21K Equivalent" | "عيار 21 (معادل)"
      */
     displayLabel(lang) {
       const l = lang || (GMS.I18n?.lang) || 'ar';
@@ -912,7 +985,7 @@
      §17 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚖️  BaseKarat v1.0.0 loaded · Dynamic Standardization',
+    '%c⚖️  BaseKarat v1.0.1 loaded · Resilient Local-First Mode',
     'color:#a55a00;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
@@ -925,6 +998,11 @@
   console.log(
     '%c📖 API: GMS.BaseKarat.set(21) · .convert(w, from, to) · .toBase(w, from) · .on(cb)',
     'color:#1c4fd8;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c☁️  Supabase missing config → silently falls back to LocalStorage (no crash)',
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
 })();
