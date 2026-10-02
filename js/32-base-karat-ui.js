@@ -1,20 +1,19 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/32-base-karat-ui.js
-   ربط واجهات النظام بعيار الأساس — v2.0 (Numbers + Labels)
+   ربط واجهات النظام بعيار الأساس — v2.1 (بدون كلمة "بندق")
    ═══════════════════════════════════════════════════════════════════════
-   ✅ v2.0 المزايا الجديدة:
-     • تحويل الأرقام الفعلية (وليس فقط التسميات)
-     • مراقبة كل KPI card ويستبدل القيمة المحوّلة
-     • إزالة تكرار الـ labels (18K (18K) → 18K)
-     • يعمل على كل الصفحات: Dashboard, Inventory, POS, Suppliers,
-       Returns, Loss, Wholesale, B2B
-     • يحافظ على القيم الأصلية في الـ state (لا يُفسد البيانات)
+   ✅ v2.1 المزايا الجديدة:
+     • إزالة كلمة "بندق" من كل الموقع
+     • استبدال "بندق 18K" → "18K"
+     • استبدال "البندق 18K" → "العيار 18K"
+     • استبدال "بندق جملة مُباع" → "جملة مُباعة"
+     • استبدال "جم بندق" → "جم"
+     • تنظيف الأقواس المكررة
+     • التحويل الرياضي للأرقام (محفوظ من v2.0)
 
-   كيف يعمل:
-     1. يخزّن القيم الأصلية (بندق 24K) في data-original-value
-     2. عند تغيير العيار، يقرأ الأصلي ويحوّله للعيار الجديد
-     3. يكتب القيمة المحوّلة في الـ DOM
-     4. عند التكرار، يعيد التحويل من الأصل (آمن)
+   Public API:
+     GMS.BaseKaratUI.refresh()   → تحديث يدوي
+     GMS.BaseKaratUI.cleanText(t) → تنظيف نص واحد
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -53,14 +52,12 @@
   }
 
   function toBase(weight) {
-    /* يحوّل من بندق 24K إلى العيار النشط */
     const w = parseFloat(weight);
     if (!isFinite(w) || w === 0) return 0;
     try {
       if (GMS.BaseKarat?.fromPure) {
         return GMS.BaseKarat.fromPure(w, getBaseKarat());
       }
-      /* fallback: manual conversion */
       const ratio = GMS.BaseKarat?.ratio || 1;
       return w / ratio;
     } catch (_) {
@@ -69,71 +66,110 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · TEXT PATTERNS — تنظيف وتوحيد
+     §3 · CLEANING PATTERNS — v2.1 (إزالة "بندق")
      ═════════════════════════════════════════════════════════════════════ */
-  const LABEL_PATTERNS = [
-    /* 24K → baseLabel */
-    { re: /بندق\s+24\s*K/gi, rep: () => `بندق ${getBaseLabel()}` },
-    { re: /\(بندق\s+24\s*K\)/gi, rep: () => `(بندق ${getBaseLabel()})` },
-    { re: /البندق\s+24\s*K/g, rep: () => `البندق ${getBaseLabel()}` },
 
-    /* Cleanup: منع التكرار مثل "18K (18K)" */
-    { re: /(18K|21K|24K)\s*\(\s*\1\s*\)/g, rep: (_, k) => k },
+  /**
+   * ترتيب المهم: الأنماط الأكثر تحديداً أولاً
+   * كل نمط: {re: regex, rep: string | function}
+   */
+  const CLEAN_PATTERNS = [
+    /* ─── إزالة "بندق" في العناوين المركّبة ─── */
+
+    /* "بندق جملة مُباع (X)" → "جملة مُباعة (X)" */
+    { re: /بندق\s+جملة\s+مُباع/gi, rep: 'جملة مُباعة' },
+
+    /* "بندق جملة" → "جملة" */
+    { re: /بندق\s+جملة/gi, rep: 'جملة' },
+
+    /* "رصيد الذهب (بندق 18K)" → "رصيد الذهب (18K)" */
+    { re: /\(بندق\s+(18K|21K|24K)\)/gi, rep: '($1)' },
+
+    /* "رصيد الذهب (بندق 24)" → "رصيد الذهب (24K)" */
+    { re: /\(بندق\s+(\d{2})\)/gi, rep: '($1K)' },
+
+    /* "جم بندق 18K" → "جم 18K" */
+    { re: /جم\s+بندق\s+(18K|21K|24K)/gi, rep: 'جم $1' },
+
+    /* "جم بندق" → "جم" */
+    { re: /جم\s+بندق/gi, rep: 'جم' },
+
+    /* "البندق 18K" → "العيار 18K" */
+    { re: /البندق\s+(18K|21K|24K)/gi, rep: 'العيار $1' },
+
+    /* "البندق المفلتر" → "العيار المفلتر" */
+    { re: /البندق\s+الفلتر/gi, rep: 'العيار المفلتر' },
+    { re: /البندق\s+المُفلتر/gi, rep: 'العيار المُفلتر' },
+    { re: /البندق\s+المفلترة/gi, rep: 'العيار المُفلترة' },
+
+    /* "البندق" وحده → "العيار" */
+    { re: /البندق\b/gi, rep: 'العيار' },
+
+    /* "بندق 18K" → "18K" */
+    { re: /بندق\s+(18K|21K|24K)/gi, rep: '$1' },
+
+    /* "بندق 24" → "24K" */
+    { re: /بندق\s+(\d{2})\b/gi, rep: '$1K' },
+
+    /* "بندق" في أي مكان → حذف + مسافة نظيفة */
+    { re: /\s+بندق\s+/gi, rep: ' ' },
+    { re: /^بندق\s+/gi, rep: '' },
+    { re: /\s+بندق$/gi, rep: '' },
+    { re: /بندق/gi, rep: '' },
+
+    /* ─── تنظيف المسافات الزائدة ─── */
+    { re: /\s{2,}/g, rep: ' ' },
+    { re: /\s+\(/g, rep: ' (' },
+    { re: /\)\s+/g, rep: ') ' },
+    { re: /\(\s+/g, rep: '(' },
+    { re: /\s+\)/g, rep: ')' },
+
+    /* ─── إزالة التكرار: "18K (18K)" → "18K" ─── */
+    { re: /(18K|21K|24K)\s*\(\s*\1\s*\)/g, rep: '$1' },
     { re: /\(18K\)\s*\(18K\)/g, rep: '18K' },
     { re: /\(21K\)\s*\(21K\)/g, rep: '21K' },
     { re: /\(24K\)\s*\(24K\)/g, rep: '24K' },
-    /* حالات أخرى */
-    { re: /(18K|21K|24K)\s+\((18K|21K|24K)\)/g,
-      rep: (_, a, b) => a },  /* نأخذ الأول دائمًا */
+
+    /* "18K 18K" → "18K" */
+    { re: /(18K|21K|24K)\s+(18K|21K|24K)/g, rep: (m, a, b) => a === b ? a : m },
+
+    /* ─── تنظيف أقواس فارغة ─── */
+    { re: /\(\s*\)/g, rep: '' },
+    { re: /\[\s*\]/g, rep: '' },
   ];
 
   function cleanText(text) {
     if (!text) return text;
-    let out = text;
-    for (const p of LABEL_PATTERNS) {
+    let out = String(text);
+    for (const p of CLEAN_PATTERNS) {
       p.re.lastIndex = 0;
-      if (typeof p.rep === 'function') {
-        out = out.replace(p.re, p.rep);
-      } else {
-        out = out.replace(p.re, p.rep);
-      }
+      out = out.replace(p.re, p.rep);
     }
+    /* trim أخير */
+    out = out.replace(/\s{2,}/g, ' ').trim();
     return out;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · NUMBER CONVERSION — العنصر الأساسي
+     §4 · NUMBER CONVERSION
      ═════════════════════════════════════════════════════════════════════ */
-
-  /**
-   * يقرأ قيمة رقمية من نص (يستخرج الأرقام فقط)
-   * @param {string} text
-   * @returns {number}
-   */
   function parseNumber(text) {
     if (!text) return 0;
     const cleaned = String(text)
-      .replace(/,/g, '')          /* فاصلة الآلاف */
-      .replace(/[^\d.\-]/g, '');  /* احتفظ بالأرقام والعلامات */
+      .replace(/,/g, '')
+      .replace(/[^\d.\-]/g, '');
     const n = parseFloat(cleaned);
     return isFinite(n) ? n : 0;
   }
 
-  /**
-   * يُنسّق رقم بنفس نمط الأصلي
-   */
   function formatLike(value, originalText) {
     const v = Number(value);
     if (!isFinite(v)) return String(originalText);
 
-    /* هل الأصلي عنده فواصل آلاف؟ */
     const hasThousands = /,/.test(originalText);
-
-    /* عدد الفواصل العشرية في الأصلي */
     const match = String(originalText).match(/\.(\d+)/);
     const decimals = match ? match[1].length : 0;
 
-    /* اختر الفاصلة */
     let formatted = v.toFixed(decimals);
 
     if (hasThousands) {
@@ -148,29 +184,18 @@
   /* ═════════════════════════════════════════════════════════════════════
      §5 · CONVERT KPI VALUES
      ═════════════════════════════════════════════════════════════════════ */
-
-  /**
-   * يبحث عن كل عناصر KPI وحدود الذهب في الصفحة، ويحوّل الأرقام
-   * يستخدم data-original-labels لتخزين القيم الأصلية
-   */
   function convertNumbersInDOM(root) {
     if (!root) return 0;
-
-    const baseKarat = getBaseKarat();
     let changed = 0;
 
-    /* ─── 1 · العناصر التي تحمل data-karat-value ─── */
     root.querySelectorAll('[data-karat-value]').forEach(el => {
       try {
-        /* القيمة الأصلية (بندق 24K) مخزنة في data-attribute */
         let origValue = parseFloat(el.dataset.karatValue);
         if (!isFinite(origValue)) {
-          /* أول مرة: نأخذ النص الحالي كقيمة أصلية */
           origValue = parseNumber(el.textContent);
           el.dataset.karatValue = String(origValue);
         }
 
-        /* نحوّل للعيار النشط */
         const converted = toBase(origValue);
         const newText = formatLike(converted, el.textContent);
 
@@ -178,13 +203,9 @@
           el.textContent = newText;
           changed++;
         }
-      } catch (e) {
-        /* تجاهل */
-      }
+      } catch (_) {}
     });
 
-    /* ─── 2 · KPI cards العامة ─── */
-    /* KPI elements لها .kpi-value داخلها */
     root.querySelectorAll('.kpi-value').forEach(el => {
       try {
         if (el.dataset.karatConverted === '1') return;
@@ -194,7 +215,6 @@
 
         if (value === 0) return;
 
-        /* هل العنصر يحتوي على label ذهب في نفس البطاقة؟ */
         const parent = el.closest('.kpi');
         if (!parent) return;
 
@@ -202,18 +222,14 @@
         if (!labelEl) return;
 
         const labelText = labelEl.textContent || '';
-
-        /* هل البطاقة عن ذهب؟ */
-        const isGoldKPI = /بندق|ذهب|خزنة|24K|18K|21K/i.test(labelText);
+        const isGoldKPI = /ذهب|خزنة|18K|21K|24K/i.test(labelText);
 
         if (!isGoldKPI) return;
 
-        /* نحول الرقم */
         const converted = toBase(value);
         el.dataset.karatOriginal = String(value);
         el.dataset.karatConverted = '1';
 
-        /* نحافظ على HTML الداخلي (small tags) */
         const innerHTML = el.innerHTML;
         const smallMatch = innerHTML.match(/<small[^>]*>.*?<\/small>/i);
         const smallHTML = smallMatch ? smallMatch[0] : '';
@@ -222,47 +238,40 @@
         el.innerHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
 
         changed++;
-      } catch (e) {
-        /* تجاهل */
-      }
+      } catch (_) {}
     });
 
     return changed;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · CONVERT CHART DATA
+     §6 · CHART DATA
      ═════════════════════════════════════════════════════════════════════ */
-
   function convertChartData() {
     try {
       const charts = GMS.Views?.dashboard?.state?.charts;
       if (!charts) return 0;
 
       let changed = 0;
-      const baseKarat = getBaseKarat();
-      const baseLabel = getBaseLabel();
 
       Object.entries(charts).forEach(([key, chart]) => {
         if (!chart || !chart.data || !chart.data.datasets) return;
 
+        let chartChanged = false;
+
         chart.data.datasets.forEach(ds => {
-          /* استبدال "24K" في التسميات */
           if (ds.label) {
-            const newLabel = ds.label
-              .replace(/بندق\s+24\s*K/gi, `بندق ${baseLabel}`)
-              .replace(/\(24K\)/g, `(${baseLabel})`);
-            if (ds.label !== newLabel) {
-              ds.label = newLabel;
-              changed++;
+            const cleaned = cleanText(ds.label);
+            if (ds.label !== cleaned) {
+              ds.label = cleaned;
+              chartChanged = true;
             }
           }
-
-          /* لا نحوّل data مباشرة (يُفسد المخططات التاريخية) */
         });
 
-        if (changed > 0) {
+        if (chartChanged) {
           try { chart.update('none'); } catch (_) {}
+          changed++;
         }
       });
 
@@ -290,9 +299,7 @@
 
   function processElement(root) {
     if (!root) return 0;
-    if (root.nodeType === 3) {
-      return processTextNode(root) ? 1 : 0;
-    }
+    if (root.nodeType === 3) return processTextNode(root) ? 1 : 0;
 
     let count = 0;
 
@@ -340,20 +347,15 @@
 
     const page = document.getElementById('page') || document.body;
 
-    /* 1 · تنظيف النصوص (إزالة تكرار الـ labels + تحديث labels) */
     const textCount = processElement(page);
-
-    /* 2 · تحويل الأرقام في KPI cards */
     const numCount = convertNumbersInDOM(page);
-
-    /* 3 · تحويل chart labels */
     const chartCount = convertChartData();
 
     const total = textCount + numCount + chartCount;
 
     if (total > 0) {
       console.log(
-        `%c🏷️  BaseKarat UI v2: ${textCount} texts, ${numCount} numbers, ${chartCount} charts → ${getBaseLabel()}`,
+        `%c✨ BaseKarat UI v2.1: ${textCount} texts, ${numCount} numbers, ${chartCount} charts cleaned`,
         'color:#0f7a43;font-weight:700;font-size:11px;'
       );
     }
@@ -370,7 +372,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · MUTATION OBSERVER
+     §9 · OBSERVER
      ═════════════════════════════════════════════════════════════════════ */
   function startObserver() {
     if (State.observer) return;
@@ -409,7 +411,7 @@
 
     State.observer.observe(target, { childList: true, subtree: true });
 
-    console.log('[BaseKaratUI v2] 👁️  Observer started');
+    console.log('[BaseKaratUI v2.1] 👁️  Observer started');
   }
 
   function stopObserver() {
@@ -427,9 +429,8 @@
       setTimeout(hookRouter, 300);
       return;
     }
-
-    if (GMS.Router._baseKaratUIHookedV2) return;
-    GMS.Router._baseKaratUIHookedV2 = true;
+    if (GMS.Router._baseKaratUIHookedV21) return;
+    GMS.Router._baseKaratUIHookedV21 = true;
 
     try {
       const unsub = GMS.Router.on('afterNavigate', () => {
@@ -444,15 +445,14 @@
       setTimeout(hookBaseKarat, 300);
       return;
     }
-
-    if (State.unsubscribers.some(fn => fn._bkUIV2)) return;
+    if (State.unsubscribers.some(fn => fn._bkUIV21)) return;
 
     try {
       const unsub = GMS.BaseKarat.on((payload) => {
-        console.log(`[BaseKaratUI v2] 🔄 Karat changed to ${payload.current}K`);
+        console.log(`[BaseKaratUI v2.1] 🔄 Karat → ${payload.current}K`);
         setTimeout(() => refresh({ force: true }), 500);
       });
-      unsub._bkUIV2 = true;
+      unsub._bkUIV21 = true;
       State.unsubscribers.push(unsub);
     } catch (_) {}
 
@@ -468,7 +468,7 @@
     if (State.installed) return;
 
     console.log(
-      '%c🏷️  BaseKarat UI v2 (Numbers + Labels) initializing…',
+      '%c🏷️  BaseKarat UI v2.1 (No "بندق") initializing…',
       'color:#a55a00;font-weight:800;font-size:12px;'
     );
 
@@ -491,7 +491,7 @@
     State.installed = true;
 
     console.log(
-      `%c✅ BaseKarat UI v2 ready — following ${getBaseLabel()}`,
+      `%c✅ BaseKarat UI v2.1 ready — no "بندق", following ${getBaseLabel()}`,
       'color:#0f7a43;font-weight:800;font-size:12px;'
     );
   }
@@ -516,8 +516,6 @@
     refresh,
     scheduleRefresh,
     state: State,
-
-    /* utils */
     cleanText,
     parseNumber,
     formatLike,
@@ -536,7 +534,7 @@
   }
 
   console.log(
-    '%c🏷️  BaseKarat UI v2.0 loaded · Numbers + Labels + Chart sync',
+    '%c🏷️  BaseKarat UI v2.1 loaded · No "بندق" · Numbers + Labels + Charts',
     'color:#a55a00;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
