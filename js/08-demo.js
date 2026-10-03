@@ -1,21 +1,25 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/08-demo.js
-   مولّد البيانات التجريبية الكامل:
-     - الفروع والمصانع والموردين
-     - العملاء والموظفين
-     - ✅ B2B_REPS + B2B_CUSTOMERS + REP_LEDGERS (v2 جديد)
-     - المخزون (1,200+ صنف) مع حقول المصنعية المزدوجة
-     - الفواتير والبنود
-     - دفتر الأستاذ (ذهبي + نقدي)
-     - الورديات والمصروفات والعمولات
-     - سجلات الخسس (سبك، تحميم، ششني)
-     - طابور المزامنة
+   مولّد البيانات التجريبية الكامل (معطّل افتراضيًا)
+   ─────────────────────────────────────────────────────────────────────
+   ✅ v3: تعطيل بيانات الـ Demo افتراضيًا
+     • النظام يبدأ فاضي تمامًا
+     • عشان ترجع البيانات، غيّر DEMO_ENABLED = true
+     • البيانات الثابتة (الفروع، الماركات، الفئات) لسه موجودة
+       لأنها جزء من الكود وليست بيانات عشوائية
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
   'use strict';
 
   const GMS = window.GMS = window.GMS || {};
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §0 · DEMO ENABLED FLAG
+     ═════════════════════════════════════════════════════════════════════
+     ✅ غيّر القيمة دي إلى true عشان ترجع البيانات التجريبية
+     ═════════════════════════════════════════════════════════════════════ */
+  const DEMO_ENABLED = false;
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · PRNG DETERMINISTIC
@@ -32,7 +36,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2 · STATIC DEMO DATA
+     §2 · STATIC DEMO DATA (ثابت — مش بيتأثر بالـ DEMO_ENABLED)
      ═════════════════════════════════════════════════════════════════════ */
 
   const BRANCHES = [
@@ -179,7 +183,7 @@
   ];
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2.5 · ✅ B2B SALES REPS + CUSTOMERS (v2 جديد)
+     §2.5 · B2B SALES REPS + CUSTOMERS (ثابت — لسه موجود بس مش بيُستخدم)
      ═════════════════════════════════════════════════════════════════════ */
   const B2B_REPS = [
     {
@@ -1110,7 +1114,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · ✅ B2B REP LEDGERS GENERATOR (v2 جديد)
+     §14 · REP LEDGERS GENERATOR
      ═════════════════════════════════════════════════════════════════════ */
   function generateRepLedgers(seed = 7070) {
     const rnd = mulberry32(seed);
@@ -1196,8 +1200,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · CACHE CONTROLLER
+     §15 · CACHE CONTROLLER — النقطة الرئيسية
+     ─────────────────────────────────────────────────────────────────────
+     ✅ v3: كل الدوال بترجع مصفوفة فاضية لما DEMO_ENABLED = false
      ═════════════════════════════════════════════════════════════════════ */
+
   const DemoData = {
 
     _inventory: null,
@@ -1210,9 +1217,15 @@
     _assayRecords: null,
     _polishingBatches: null,
     _returns: null,
-    _repLedgers: null,   /* ✅ جديد */
+    _repLedgers: null,
+
+    /* ─── Getters الرئيسية ─── */
 
     getInventory(force = false) {
+      if (!DEMO_ENABLED) {
+        this._inventory = [];
+        return this._inventory;
+      }
       if (!this._inventory || force) {
         const isMobile = /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile/i.test(
           navigator.userAgent || ''
@@ -1229,6 +1242,10 @@
     },
 
     getSales(force = false) {
+      if (!DEMO_ENABLED) {
+        this._sales = [];
+        return this._sales;
+      }
       if (!this._sales || force) {
         this._sales = generateSales(this.getInventory(), 500, 90);
         console.log(`[Demo] Generated ${this._sales.length} sales`);
@@ -1237,6 +1254,10 @@
     },
 
     getLedgerEntries(force = false) {
+      if (!DEMO_ENABLED) {
+        this._ledgerEntries = [];
+        return this._ledgerEntries;
+      }
       if (!this._ledgerEntries || force) {
         this._ledgerEntries = generateLedgerEntries(200, 180);
         console.log(`[Demo] Generated ${this._ledgerEntries.length} ledger entries`);
@@ -1245,6 +1266,10 @@
     },
 
     getShifts(force = false) {
+      if (!DEMO_ENABLED) {
+        this._shifts = [];
+        return this._shifts;
+      }
       if (!this._shifts || force) {
         this._shifts = generateShifts(30);
         console.log(`[Demo] Generated ${this._shifts.length} shifts`);
@@ -1253,6 +1278,10 @@
     },
 
     getExpenses(force = false) {
+      if (!DEMO_ENABLED) {
+        this._expenses = [];
+        return this._expenses;
+      }
       if (!this._expenses || force) {
         this._expenses = generateExpenses(80, 90);
         console.log(`[Demo] Generated ${this._expenses.length} expenses`);
@@ -1261,6 +1290,10 @@
     },
 
     getCommissions(force = false) {
+      if (!DEMO_ENABLED) {
+        this._commissions = [];
+        return this._commissions;
+      }
       if (!this._commissions || force) {
         this._commissions = generateCommissions();
         console.log(`[Demo] Generated ${this._commissions.length} commissions`);
@@ -1269,6 +1302,10 @@
     },
 
     getMeltingBatches(force = false) {
+      if (!DEMO_ENABLED) {
+        this._meltingBatches = [];
+        return this._meltingBatches;
+      }
       if (!this._meltingBatches || force) {
         this._meltingBatches = generateMeltingBatches(25);
         console.log(`[Demo] Generated ${this._meltingBatches.length} melting batches`);
@@ -1277,6 +1314,10 @@
     },
 
     getAssayRecords(force = false) {
+      if (!DEMO_ENABLED) {
+        this._assayRecords = [];
+        return this._assayRecords;
+      }
       if (!this._assayRecords || force) {
         this._assayRecords = generateAssayRecords(40);
         console.log(`[Demo] Generated ${this._assayRecords.length} assay records`);
@@ -1285,6 +1326,10 @@
     },
 
     getPolishingBatches(force = false) {
+      if (!DEMO_ENABLED) {
+        this._polishingBatches = [];
+        return this._polishingBatches;
+      }
       if (!this._polishingBatches || force) {
         this._polishingBatches = generatePolishingBatches(30);
         console.log(`[Demo] Generated ${this._polishingBatches.length} polishing batches`);
@@ -1293,6 +1338,10 @@
     },
 
     getReturns(force = false) {
+      if (!DEMO_ENABLED) {
+        this._returns = [];
+        return this._returns;
+      }
       if (!this._returns || force) {
         this._returns = generateReturns(this.getInventory(), 50);
         console.log(`[Demo] Generated ${this._returns.length} returns`);
@@ -1300,16 +1349,23 @@
       return this._returns;
     },
 
-    /* ✅ B2B Accessors */
+    /* ─── B2B Accessors ─── */
+
     getB2BReps() {
+      if (!DEMO_ENABLED) return [];
       return B2B_REPS.map(r => ({ ...r }));
     },
 
     getB2BCustomers() {
+      if (!DEMO_ENABLED) return [];
       return B2B_CUSTOMERS.map(c => ({ ...c }));
     },
 
     getRepLedgers(force = false) {
+      if (!DEMO_ENABLED) {
+        this._repLedgers = [];
+        return this._repLedgers;
+      }
       if (!this._repLedgers || force) {
         this._repLedgers = generateRepLedgers();
         console.log(`[Demo] Generated ${this._repLedgers.length} rep ledger entries`);
@@ -1317,7 +1373,7 @@
       return this._repLedgers;
     },
 
-    /* ─── Static data ─────────────────────────────────────────────── */
+    /* ─── Static data getters (لازم تفضل موجودة) ─── */
 
     getBranches() {
       return BRANCHES;
@@ -1334,10 +1390,12 @@
     },
 
     getSuppliers() {
+      if (!DEMO_ENABLED) return [];
       return SUPPLIERS;
     },
 
     getCustomers() {
+      if (!DEMO_ENABLED) return [];
       return CUSTOMERS;
     },
 
@@ -1361,14 +1419,14 @@
       return CATEGORIES;
     },
 
-    /* ─── Bulk generation ─────────────────────────────────────────── */
+    /* ─── Bulk generation ─── */
 
     generateAll() {
       return {
         branches: BRANCHES,
         manufacturers: this.getManufacturers(),
-        suppliers: SUPPLIERS,
-        customers: CUSTOMERS,
+        suppliers: this.getSuppliers(),
+        customers: this.getCustomers(),
         salespeople: SALESPEOPLE,
         inventory: this.getInventory(),
         sales: this.getSales(),
@@ -1380,8 +1438,6 @@
         assayRecords: this.getAssayRecords(),
         polishingBatches: this.getPolishingBatches(),
         returns: this.getReturns(),
-
-        /* ✅ B2B */
         b2bReps: this.getB2BReps(),
         b2bCustomers: this.getB2BCustomers(),
         repLedgers: this.getRepLedgers(),
@@ -1399,11 +1455,16 @@
       this._assayRecords = null;
       this._polishingBatches = null;
       this._returns = null;
-      this._repLedgers = null;    /* ✅ جديد */
+      this._repLedgers = null;
       console.log('[Demo] Cache cleared');
     },
 
     regenerate(seed) {
+      if (!DEMO_ENABLED) {
+        console.log('[Demo] ⚠️ Demo disabled — cannot regenerate');
+        return this.generateAll();
+      }
+
       this.clearCache();
       _inventoryCache = null;
 
@@ -1418,6 +1479,31 @@
     },
 
     stats() {
+      if (!DEMO_ENABLED) {
+        return {
+          branches: BRANCHES.length,
+          manufacturers: this.getManufacturers().length,
+          suppliers: 0,
+          customers: 0,
+          salespeople: SALESPEOPLE.length,
+          inventory: 0,
+          inventoryByStatus: {},
+          inventoryByKarat: {},
+          sales: 0,
+          ledgerEntries: 0,
+          shifts: 0,
+          expenses: 0,
+          commissions: 0,
+          meltingBatches: 0,
+          assayRecords: 0,
+          polishingBatches: 0,
+          returns: 0,
+          b2bReps: 0,
+          b2bCustomers: 0,
+          repLedgers: 0,
+        };
+      }
+
       const inv = this.getInventory();
       const byStatus = {};
       const byKarat = {};
@@ -1445,13 +1531,15 @@
         assayRecords: this.getAssayRecords().length,
         polishingBatches: this.getPolishingBatches().length,
         returns: this.getReturns().length,
-        b2bReps: B2B_REPS.length,            /* ✅ جديد */
-        b2bCustomers: B2B_CUSTOMERS.length,   /* ✅ جديد */
-        repLedgers: this.getRepLedgers().length,  /* ✅ جديد */
+        b2bReps: B2B_REPS.length,
+        b2bCustomers: B2B_CUSTOMERS.length,
+        repLedgers: this.getRepLedgers().length,
       };
     },
 
     searchInventory(query, filters = {}) {
+      if (!DEMO_ENABLED) return [];
+
       const { karat, status, branch_id, category, limit = 200 } = filters;
       let rows = this.getInventory();
 
@@ -1508,8 +1596,8 @@
     ASSAY_OFFICES,
     EXPENSE_CATEGORIES,
     CATEGORIES,
-    B2B_REPS,           /* ✅ جديد */
-    B2B_CUSTOMERS,      /* ✅ جديد */
+    B2B_REPS,
+    B2B_CUSTOMERS,
   };
 
   GMS.DemoUtils = {
@@ -1523,7 +1611,7 @@
     generateAssayRecords,
     generatePolishingBatches,
     generateReturns,
-    generateRepLedgers,   /* ✅ جديد */
+    generateRepLedgers,
     mulberry32,
     resolvePurchaseRate,
     pickManufacturerContext,
@@ -1538,22 +1626,36 @@
   /* ═════════════════════════════════════════════════════════════════════
      §17 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
-  console.log(
-    '%c📊 Demo Data v2 loaded · 9 entity types + B2B',
-    'color:#a55a00;font-weight:800;font-size:12px;padding:1px 5px;' +
-    'background:#fdf3e3;border-radius:4px;'
-  );
+  if (DEMO_ENABLED) {
+    console.log(
+      '%c📊 Demo Data v3 loaded · ⚠️ DEMO ENABLED',
+      'color:#a55a00;font-weight:800;font-size:12px;padding:1px 5px;' +
+      'background:#fdf3e3;border-radius:4px;'
+    );
 
-  console.log(
-    `%c🏢 ${BRANCHES.length} branches · ${MANUFACTURERS.length} manufacturers · ` +
-    `${SUPPLIERS.length} suppliers · 1,200 inventory items · 500 sales`,
-    'color:#6b7a95;font-weight:700;font-size:11px;'
-  );
+    console.log(
+      `%c🏢 ${BRANCHES.length} branches · ${MANUFACTURERS.length} manufacturers · ` +
+      `${SUPPLIERS.length} suppliers · 1,200 inventory items · 500 sales`,
+      'color:#6b7a95;font-weight:700;font-size:11px;'
+    );
+  } else {
+    console.log(
+      '%c📊 Demo Data v3 loaded · ✅ DEMO DISABLED (نظام نظيف)',
+      'color:#0f7a43;font-weight:900;font-size:12px;padding:1px 5px;' +
+      'background:#e6f6ee;border-radius:4px;'
+    );
 
-  console.log(
-    `%c🆕 v2: ${B2B_REPS.length} B2B reps · ${B2B_CUSTOMERS.length} B2B customers · generateRepLedgers()`,
-    'color:#6b3fa0;font-weight:900;font-size:11px;'
-  );
+    console.log(
+      `%c🏢 ${BRANCHES.length} branches · ${MANUFACTURERS.length} manufacturers · ` +
+      `Inventory EMPTY · Sales EMPTY · B2B EMPTY`,
+      'color:#6b7a95;font-weight:700;font-size:11px;'
+    );
+
+    console.log(
+      `%c💡 لتفعيل بيانات الـ Demo: غيّر DEMO_ENABLED = true في js/08-demo.js`,
+      'color:#1c4fd8;font-weight:900;font-size:11px;'
+    );
+  }
 
   /* ═════════════════════════════════════════════════════════════════════
      ✅ js/08-demo.js — نهاية الملف
