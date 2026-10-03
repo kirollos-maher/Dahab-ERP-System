@@ -1,14 +1,30 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/32-base-karat-ui.js
-   Base Karat UI — v2.4 (FINAL SAFE MODE)
+   Base Karat UI — v3.0 (إعادة كتابة كاملة)
    ─────────────────────────────────────────────────────────────────────
-   ✅ v2.4 الإصلاحات الحاسمة:
-     • cleanText يحمي النصوص القصيرة والـ labels المستقلة
-     • MutationObserver يُوقف بالكامل في الصفحات المحظورة
-     • convertNumbersInDOM يتحقق من isProtected
-     • convertChartData يحمي النصوص القصيرة
-     • استثناء إضافي: البيانات الأصلية للـ charts
-     • حماية من auto-replace داخل "14K", "22K", "18K", "21K", "24K"
+   ✅ v3.0 — المنطق الجديد:
+     • يعمل مرة واحدة فقط عند كل render (بدون Observer)
+     • يستثني Settings و Audit نهائياً
+     • يحوّل الأرقام + النصوص في مرور واحد
+     • يعمل صح بعد Hard Reload
+     • يستمع لحدث BaseKarat.on() للتحديث الفوري
+     • لا يتضارب مع ملف 31 (فصل واضح للمسؤوليات)
+
+   كيف يعمل:
+     1. عند init → يربط نفسه بـ Router.afterNavigate
+     2. عند كل تنقل → يستدعي processPage() مرة واحدة
+     3. processPage():
+        أ. يمسح عناصر الذهب (.kpi-value مع label ذهب)
+        ب. يحوّل الأرقام الرياضية
+        ج. ينظّف النصوص (استبدال 24K/21K/18K + إزالة "بندق")
+        د. يحدث Chart labels
+     4. عند تغيير BaseKarat → يعيد processPage() فوراً
+
+   Public API:
+     GMS.BaseKaratUI.refresh()         → معالجة فورية
+     GMS.BaseKaratUI.processPage()     → اسم بديل
+     GMS.BaseKaratUI.isSkipRoute()     → هل الصفحة محظورة؟
+     GMS.BaseKaratUI.diagnostics()     → تشخيص
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -17,17 +33,19 @@
   const GMS = window.GMS = window.GMS || {};
 
   /* ═════════════════════════════════════════════════════════════════════
-     §1 · STATE
+     §1 · STATE — بسيط جدًا
      ═════════════════════════════════════════════════════════════════════ */
   const State = {
     installed: false,
-    observer: null,
-    pendingRefresh: null,
-    unsubscribers: [],
-    processedNodes: new WeakSet(),
-    _lastKarat: null,
-    _lastRoute: null,
-    _refreshCount: 0,
+    _currentRoute: null,
+    _unsubscribers: [],
+    _stats: {
+      totalProcessed: 0,
+      numbersConverted: 0,
+      textsCleaned: 0,
+      chartsUpdated: 0,
+      lastRun: null,
+    },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -35,66 +53,54 @@
      ═════════════════════════════════════════════════════════════════════ */
   const SKIP_ROUTES = ['settings', 'audit'];
 
-  function isSkippedRoute() {
+  function isSkipRoute() {
     try {
-      const current = GMS.Router?.currentId?.();
-      return SKIP_ROUTES.includes(current);
+      const r = GMS.Router?.currentId?.();
+      return SKIP_ROUTES.includes(r);
     } catch (_) {
       return false;
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · HELPERS
+     §3 · BASE KARAT HELPERS
      ═════════════════════════════════════════════════════════════════════ */
-  function getBaseKarat() {
-    try {
-      if (GMS.BaseKarat?.current) return GMS.BaseKarat.current;
-    } catch (_) {}
-    return 24;
+  function getKarat() {
+    try { return GMS.BaseKarat?.current || 24; } catch (_) { return 24; }
   }
 
-  function getBaseLabel() {
-    try {
-      if (GMS.BaseKarat?.labelShort) return GMS.BaseKarat.labelShort;
-    } catch (_) {}
-    return '24K';
+  function getLabel() {
+    try { return GMS.BaseKarat?.labelShort || '24K'; } catch (_) { return '24K'; }
   }
 
-  function toBase(weight) {
-    const w = parseFloat(weight);
-    if (!isFinite(w) || w === 0) return 0;
+  /**
+   * تحويل من بندق 24K إلى العيار النشط
+   */
+  function convert(w) {
+    const v = parseFloat(w);
+    if (!isFinite(v) || v === 0) return 0;
     try {
       if (GMS.BaseKarat?.fromPure) {
-        return GMS.BaseKarat.fromPure(w, getBaseKarat());
+        return GMS.BaseKarat.fromPure(v, getKarat());
       }
-      const ratio = GMS.BaseKarat?.ratio || 1;
-      return w / ratio;
+      const ratio = getKarat() / 24;
+      return ratio > 0 ? v / ratio : v;
     } catch (_) {
-      return w;
+      return v;
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · PROTECTED SELECTORS
+     §4 · PROTECTED — لا نلمس
      ═════════════════════════════════════════════════════════════════════ */
   const PROTECTED_SELECTORS = [
+    'button', 'input', 'select', 'textarea',
+    'a[href]',
     '[data-bk-option]',
     '[data-karat]',
-    '[data-bk-custom]',
-    'button',
-    'input',
-    'select',
-    'textarea',
-    'a[href]',
+    '[data-no-karat-ui]',
     '.base-karat-card',
-    '[data-bk-card]',
-    '#set-base-karat-card',
-    '.kpi',
-    '.setting-item',
-    '.price-karat-cell',   /* 🆕 خلايا الأسعار في settings */
-    '.live-price-cell',    /* 🆕 */
-    '[data-price-cell]',   /* 🆕 */
+    '.kpi', // بطاقات في Settings
   ];
 
   function isProtected(el) {
@@ -106,87 +112,105 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · PROTECTED TEXT — تحديث حرج
-     ═════════════════════════════════════════════════════════════════════
-     المشكلة كانت هنا في v2.3: cleanText ما كانش يستدعي هذه
-     الحماية الكاملة، فكان النص "24K" بيتحول لـ "18K".
+     §5 · TEXT PROTECTION
      ═════════════════════════════════════════════════════════════════════ */
   function isProtectedText(text) {
     if (!text) return true;
-
     const t = String(text).trim();
 
-    /* ✅ نص قصير جدًا */
-    if (t.length <= 4) return true;
+    /* نص قصير جدًا */
+    if (t.length < 3) return true;
 
-    /* ✅ فقط رقم */
-    if (/^\s*[\d.,\-+]+\s*$/.test(t)) return true;
-
-    /* ✅ مجرد عيار لوحده (بأي صيغة) */
-    if (/^(14K|18K|21K|22K|24K)$/.test(t)) return true;
-    if (/^(\d{1,3})K?$/.test(t)) return true;    /* "24" أو "888K" */
-
-    /* ✅ مجرد "K" أو رمز */
-    if (/^[Kk\s\-]+$/.test(t)) return true;
-
-    /* ✅ سطر لا يحتوي حروف عربية أو إنجليزية (مثل "0.7500") */
+    /* نص كله أرقام ورموز */
     if (!/[\u0600-\u06FFa-zA-Z]/.test(t)) return true;
-
-    /* ✅ أسعار و أعشار */
-    if (/^[\d.]+K?$/.test(t)) return true;
 
     return false;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · CLEANING PATTERNS — v2.4 (بسيطة وآمنة)
+     §6 · TEXT CLEANING — v3.0 (منظّم)
      ═════════════════════════════════════════════════════════════════════
-     حذف كل الأنماط الخطرة زي \b24K\b → 18K
-     الآن نتعامل فقط مع "بندق" و"جم بندق"
+     المرحلة 1: استبدال العيار القديم بالجديد
+     المرحلة 2: إزالة "بندق"
+     المرحلة 3: تنظيف المسافات والأقواس
      ═════════════════════════════════════════════════════════════════════ */
-  const CLEAN_PATTERNS = [
-    /* إزالة "بندق" فقط — لا نلمس العيارات المنفردة */
-    { re: /\(\s*بندق\s+(18K|21K|24K)\s*\)/gi, rep: '($1)' },
-    { re: /\(\s*بندق\s+(\d{2})\s*\)/gi, rep: '($1K)' },
-    { re: /بندق\s+(18K|21K|24K)/gi, rep: '$1' },
-    { re: /بندق\s+(\d{2})\b/gi, rep: '$1K' },
-    { re: /البندق\s+(18K|21K|24K)/gi, rep: 'العيار $1' },
-    { re: /بندق\s+جملة\s+مُباع/gi, rep: 'جملة مُباعة' },
-    { re: /بندق\s+جملة/gi, rep: 'جملة' },
-    { re: /جم\s+بندق\s+(18K|21K|24K)/gi, rep: 'جم $1' },
-    { re: /جم\s+بندق/gi, rep: 'جم' },
-    { re: /البندق\s+الفلتر/gi, rep: 'العيار المفلتر' },
-    { re: /البندق\s+المُفلتر/gi, rep: 'العيار المُفلتر' },
-    { re: /البندق\b/gi, rep: 'العيار' },
-    { re: /\s+بندق\s+/gi, rep: ' ' },
-    { re: /^بندق\s+/gi, rep: '' },
-    { re: /\s+بندق$/gi, rep: '' },
-
-    /* تنظيف المسافات والأقواس */
-    { re: /\(\s*\)/g, rep: '' },
-    { re: /\s{2,}/g, rep: ' ' },
-    { re: /\s+\(/g, rep: ' (' },
-    { re: /\)\s+/g, rep: ') ' },
-    { re: /\(\s+/g, rep: '(' },
-    { re: /\s+\)/g, rep: ')' },
-
-    /* إزالة تكرار العيار */
-    { re: /(18K|21K|24K)\s*\(\s*\1\s*\)/g, rep: '$1' },
-  ];
-
   function cleanText(text) {
     if (!text) return text;
-
-    /* ✅ حماية نصية صارمة — الأهم في v2.4 */
     if (isProtectedText(text)) return text;
 
+    const baseLabel = getLabel();
     let out = String(text);
-    for (const p of CLEAN_PATTERNS) {
-      p.re.lastIndex = 0;
-      out = out.replace(p.re, p.rep);
-    }
-    out = out.replace(/\s{2,}/g, ' ').trim();
-    return out;
+
+    /* ─── المرحلة 1: استبدال العيارات غير النشطة ─── */
+
+    /* "(24K)" و "(21K)" و "(18K)" → "(baseLabel)" — لو مختلفة */
+    out = out.replace(/\(\s*(24K|21K|18K)\s*\)/g, (m, k) => {
+      return k === baseLabel ? m : `(${baseLabel})`;
+    });
+
+    /* "24K" و "21K" و "18K" منفصلة → baseLabel */
+    out = out.replace(/\b(24K|21K|18K)\b/g, (m, k) => {
+      return k === baseLabel ? m : baseLabel;
+    });
+
+    /* ─── المرحلة 2: إزالة "بندق" ─── */
+
+    /* "(بندق 24K)" أو "(بندق 18K)" → "(24K)" أو "(18K)" */
+    out = out.replace(/\(\s*بندق\s+(24K|21K|18K)\s*\)/g, (m, k) => {
+      return k === baseLabel ? `(${k})` : `(${baseLabel})`;
+    });
+
+    /* "(بندق 24)" → "(24K)" */
+    out = out.replace(/\(\s*بندق\s+(\d{2,3})\s*\)/g, () => `(${baseLabel})`);
+
+    /* "بندق 24K" أو "بندق 18K" → "24K" أو "18K" */
+    out = out.replace(/بندق\s+(24K|21K|18K)/g, (m, k) => {
+      return k === baseLabel ? k : baseLabel;
+    });
+
+    /* "بندق 24" → "24K" */
+    out = out.replace(/بندق\s+(\d{2,3})\b/g, () => baseLabel);
+
+    /* "البندق X" → "العيار X" */
+    out = out.replace(/البندق\s+(24K|21K|18K)/g, (m, k) => {
+      const lbl = k === baseLabel ? k : baseLabel;
+      return `العيار ${lbl}`;
+    });
+
+    /* أنماط مركّبة */
+    out = out.replace(/بندق\s+جملة\s+مُباع/gi, 'ذهب جملة مُباع');
+    out = out.replace(/بندق\s+جملة/gi, 'ذهب جملة');
+    out = out.replace(/جم\s+بندق\s+(24K|21K|18K)/g, (m, k) => {
+      return `جم ${k === baseLabel ? k : baseLabel}`;
+    });
+    out = out.replace(/جم\s+بندق/gi, 'جم');
+    out = out.replace(/البندق\s+المُفلتر/gi, 'العيار المُفلتر');
+    out = out.replace(/البندق\s+الفلتر/gi, 'العيار المفلتر');
+
+    /* "البندق" بدون سياق → "العيار" */
+    out = out.replace(/البندق\b/g, 'العيار');
+
+    /* "بندق" متبقية → حذف نظيف */
+    out = out.replace(/\s+بندق\s+/g, ' ');
+    out = out.replace(/^بندق\s+/g, '');
+    out = out.replace(/\s+بندق$/g, '');
+
+    /* ─── المرحلة 3: تنظيف المسافات والأقواس ─── */
+    out = out.replace(/\(\s*\)/g, '');
+    out = out.replace(/\s{2,}/g, ' ');
+    out = out.replace(/\s+\(/g, ' (');
+    out = out.replace(/\)\s+/g, ') ');
+    out = out.replace(/\(\s+/g, '(');
+    out = out.replace(/\s+\)/g, ')');
+
+    /* ─── المرحلة 4: إزالة التكرار ─── */
+    out = out.replace(new RegExp(`\\b(${baseLabel})\\s*\\(\\s*\\1\\s*\\)`, 'g'), '$1');
+    out = out.replace(/(24K|21K|18K)\s*\(\s*\1\s*\)/g, '$1');
+    out = out.replace(/(24K|21K|18K)\s+(24K|21K|18K)/g, (m, a, b) => {
+      return a === b ? a : m;
+    });
+
+    return out.trim();
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -199,116 +223,167 @@
     return isFinite(n) ? n : 0;
   }
 
-  function formatLike(value, originalText) {
+  function formatLike(value, template) {
     const v = Number(value);
-    if (!isFinite(v)) return String(originalText);
+    if (!isFinite(v)) return String(template);
 
-    const hasThousands = /,/.test(originalText);
-    const match = String(originalText).match(/\.(\d+)/);
+    const hasComma = /,/.test(template);
+    const match = String(template).match(/\.(\d+)/);
     const decimals = match ? match[1].length : 0;
 
-    let formatted = v.toFixed(decimals);
-    if (hasThousands) {
-      const parts = formatted.split('.');
+    let s = v.toFixed(decimals);
+    if (hasComma) {
+      const parts = s.split('.');
       parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-      formatted = parts.join('.');
+      s = parts.join('.');
     }
-    return formatted;
+    return s;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · CONVERT NUMBERS
+     §8 · CONVERT KPI NUMBERS
+     ═════════════════════════════════════════════════════════════════════
+     يستهدف: .kpi-value داخل .kpi (لكن ليس داخل Settings)
      ═════════════════════════════════════════════════════════════════════ */
-  function convertNumbersInDOM(root) {
+  function convertNumbers(root) {
     if (!root) return 0;
-    if (isSkippedRoute()) return 0;
+
     let changed = 0;
+    const baseLabel = getLabel();
 
-    root.querySelectorAll('[data-karat-value]').forEach(el => {
-      try {
-        if (isProtected(el)) return;
+    root.querySelectorAll('.kpi').forEach(kpi => {
+      /* تخطي بطاقات settings */
+      if (kpi.closest('[data-no-karat-ui]')) return;
+      if (kpi.closest('#set-base-karat-card')) return;
 
-        let origValue = parseFloat(el.dataset.karatValue);
-        if (!isFinite(origValue)) {
-          origValue = parseNumber(el.textContent);
-          el.dataset.karatValue = String(origValue);
-        }
+      const labelEl = kpi.querySelector('.kpi-label');
+      const valueEl = kpi.querySelector('.kpi-value');
+      if (!labelEl || !valueEl) return;
 
-        const converted = toBase(origValue);
-        const newText = formatLike(converted, el.textContent);
+      const labelText = labelEl.textContent || '';
 
-        if (el.textContent.trim() !== newText) {
-          el.textContent = newText;
-          changed++;
-        }
-      } catch (_) {}
-    });
+      /* هل KPI هذا عن ذهب؟ */
+      const isGoldKPI = /ذهب|خزنة|بندق|جم/i.test(labelText);
+      if (!isGoldKPI) return;
 
-    root.querySelectorAll('.kpi-value').forEach(el => {
-      try {
-        if (isProtected(el)) return;
+      /* تجاهل لو KPI سعر */
+      const isPriceKPI = /ج\.م|جنيه/i.test(labelText);
+      if (isPriceKPI) return;
 
-        const origText = el.textContent;
-        const value = parseNumber(origText);
-        if (value === 0) return;
+      /* استخراج القيمة العددية */
+      const currentText = valueEl.textContent;
+      const currentValue = parseNumber(currentText);
+      if (currentValue === 0) return;
 
-        const parent = el.closest('.kpi');
-        if (!parent) return;
+      /* القيمة الأصلية (بندق 24K) مخزنة */
+      let originalValue = parseFloat(valueEl.dataset.karatOriginal);
 
-        const labelEl = parent.querySelector('.kpi-label');
-        if (!labelEl) return;
+      /* لو ما فيش → نخزّن الحالية (بافتراض أنها بندق 24K من state) */
+      if (!isFinite(originalValue)) {
+        originalValue = currentValue;
+        valueEl.dataset.karatOriginal = String(originalValue);
+        valueEl.dataset.karatProcessed = '1';
+      }
 
-        const labelText = labelEl.textContent || '';
-        const isGoldKPI = /ذهب|خزنة|جم/i.test(labelText);
+      /* نحوّل من الأصلية */
+      const converted = convert(originalValue);
 
-        if (!isGoldKPI) return;
+      /* نحافظ على الـ small tag */
+      const innerHTML = valueEl.innerHTML;
+      const smallMatch = innerHTML.match(/<small[^>]*>[\s\S]*?<\/small>/i);
+      const smallHTML = smallMatch ? smallMatch[0] : '';
 
-        let origValue = parseFloat(el.dataset.karatOriginal);
-        if (!isFinite(origValue)) {
-          origValue = value;
-          el.dataset.karatOriginal = String(origValue);
-        }
+      const formatted = formatLike(converted, currentText);
+      const newHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
 
-        const converted = toBase(origValue);
-
-        const innerHTML = el.innerHTML;
-        const smallMatch = innerHTML.match(/<small[^>]*>.*?<\/small>/i);
-        const smallHTML = smallMatch ? smallMatch[0] : '';
-
-        const formatted = formatLike(converted, origText);
-        el.innerHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
-
+      if (valueEl.innerHTML !== newHTML) {
+        valueEl.innerHTML = newHTML;
         changed++;
-      } catch (_) {}
+      }
     });
 
     return changed;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · CHARTS — مع حماية النصوص
+     §9 · CLEAN TEXT NODES
+     ═════════════════════════════════════════════════════════════════════
+     يستخدم TreeWalker — يزور كل النصوص مرة واحدة
      ═════════════════════════════════════════════════════════════════════ */
-  function convertChartData() {
-    try {
-      if (isSkippedRoute()) return 0;
+  function cleanTextNodes(root) {
+    if (!root) return 0;
 
+    let changed = 0;
+
+    try {
+      const walker = document.createTreeWalker(
+        root,
+        NodeFilter.SHOW_TEXT,
+        {
+          acceptNode: (node) => {
+            if (!node.nodeValue || !node.nodeValue.trim()) {
+              return NodeFilter.FILTER_REJECT;
+            }
+
+            const parent = node.parentNode;
+            if (!parent) return NodeFilter.FILTER_REJECT;
+
+            const tag = parent.tagName;
+            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
+              return NodeFilter.FILTER_REJECT;
+            }
+
+            if (isProtected(parent)) return NodeFilter.FILTER_REJECT;
+            if (isProtectedText(node.nodeValue)) return NodeFilter.FILTER_REJECT;
+
+            return NodeFilter.FILTER_ACCEPT;
+          },
+        }
+      );
+
+      let node;
+      const nodesToUpdate = [];
+
+      while ((node = walker.nextNode())) {
+        const original = node.nodeValue;
+        const cleaned = cleanText(original);
+
+        if (cleaned !== original) {
+          nodesToUpdate.push({ node, cleaned });
+        }
+      }
+
+      nodesToUpdate.forEach(({ node, cleaned }) => {
+        node.nodeValue = cleaned;
+        changed++;
+      });
+
+    } catch (e) {
+      console.warn('[BaseKaratUI.cleanTextNodes]', e);
+    }
+
+    return changed;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §10 · CHART LABELS
+     ═════════════════════════════════════════════════════════════════════ */
+  function updateChartLabels() {
+    try {
       const charts = GMS.Views?.dashboard?.state?.charts;
       if (!charts) return 0;
 
       let changed = 0;
 
-      Object.entries(charts).forEach(([key, chart]) => {
+      Object.values(charts).forEach(chart => {
         if (!chart || !chart.data || !chart.data.datasets) return;
 
         let chartChanged = false;
 
         chart.data.datasets.forEach(ds => {
-          if (ds.label) {
-            /* ✅ حماية صارمة */
-            if (isProtectedText(ds.label)) return;
-
+          if (ds.label && !isProtectedText(ds.label)) {
             const cleaned = cleanText(ds.label);
-            if (ds.label !== cleaned) {
+            if (cleaned !== ds.label) {
               ds.label = cleaned;
               chartChanged = true;
             }
@@ -328,273 +403,217 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · TEXT PROCESSING
+     §11 · MAIN PROCESS PAGE
      ═════════════════════════════════════════════════════════════════════ */
-  function processTextNode(node) {
-    if (!node || !node.nodeValue) return false;
-    if (isSkippedRoute()) return false;
-
-    const parent = node.parentNode;
-    if (!parent) return false;
-
-    if (isProtected(parent)) return false;
-
-    const original = node.nodeValue;
-    if (isProtectedText(original)) return false;
-
-    const cleaned = cleanText(original);
-
-    if (cleaned !== original) {
-      node.nodeValue = cleaned;
-      return true;
-    }
-    return false;
-  }
-
-  function processElement(root) {
-    if (!root) return 0;
-    if (isSkippedRoute()) return 0;
-    if (root.nodeType === 3) return processTextNode(root) ? 1 : 0;
-    if (root.nodeType === 1 && isProtected(root)) return 0;
-
-    let count = 0;
-
-    try {
-      const walker = document.createTreeWalker(
-        root,
-        NodeFilter.SHOW_TEXT,
-        {
-          acceptNode: (node) => {
-            if (!node.nodeValue || !node.nodeValue.trim()) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            const parent = node.parentNode;
-            if (!parent) return NodeFilter.FILTER_REJECT;
-
-            const tag = parent.tagName;
-            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
-              return NodeFilter.FILTER_REJECT;
-            }
-
-            if (isProtected(parent)) return NodeFilter.FILTER_REJECT;
-
-            if (isProtectedText(node.nodeValue)) return NodeFilter.FILTER_REJECT;
-
-            return NodeFilter.FILTER_ACCEPT;
-          },
-        }
-      );
-
-      let n;
-      while ((n = walker.nextNode())) {
-        if (processTextNode(n)) count++;
-      }
-    } catch (_) {}
-
-    return count;
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §11 · MAIN REFRESH
-     ═════════════════════════════════════════════════════════════════════ */
-  function refresh(opts = {}) {
-    const { force = false } = opts;
-
-    /* ✅ حماية إضافية */
-    if (isSkippedRoute()) {
-      State._lastKarat = getBaseKarat();
-      State._lastRoute = GMS.Router?.currentId?.() || 'settings';
-      return 0;
+  function processPage() {
+    /* استثناء Settings و Audit */
+    if (isSkipRoute()) {
+      return {
+        skipped: true,
+        reason: 'route_skipped',
+        route: GMS.Router?.currentId?.(),
+      };
     }
 
-    const current = getBaseKarat();
-    const route = GMS.Router?.currentId?.() || 'unknown';
-
-    if (!force && State._lastKarat === current && State._lastRoute === route) {
-      return 0;
+    const page = document.getElementById('page');
+    if (!page) {
+      return { skipped: true, reason: 'no_page' };
     }
 
-    State._lastKarat = current;
-    State._lastRoute = route;
-    State._refreshCount++;
-    State.processedNodes = new WeakSet();
+    const t0 = performance.now();
 
-    const page = document.getElementById('page') || document.body;
+    /* 1 · تنظيف النصوص */
+    const textsCleaned = cleanTextNodes(page);
 
-    const textCount = processElement(page);
-    const numCount = convertNumbersInDOM(page);
-    const chartCount = convertChartData();
+    /* 2 · تحويل الأرقام */
+    const numbersConverted = convertNumbers(page);
 
-    const total = textCount + numCount + chartCount;
+    /* 3 · تحديث Charts */
+    const chartsUpdated = updateChartLabels();
+
+    /* 4 · تحديث الإحصائيات */
+    const total = textsCleaned + numbersConverted + chartsUpdated;
+    State._stats.totalProcessed += total;
+    State._stats.textsCleaned += textsCleaned;
+    State._stats.numbersConverted += numbersConverted;
+    State._stats.chartsUpdated += chartsUpdated;
+    State._stats.lastRun = new Date().toISOString();
+
+    const elapsed = Math.round((performance.now() - t0) * 100) / 100;
 
     if (total > 0) {
       console.log(
-        `%c✨ BaseKarat UI v2.4: ${textCount} texts, ${numCount} numbers, ${chartCount} charts (route: ${route})`,
+        `%c🏷️ BaseKaratUI: ${textsCleaned} texts, ${numbersConverted} numbers, ${chartsUpdated} charts (${elapsed}ms) → ${getLabel()}`,
         'color:#0f7a43;font-weight:700;font-size:11px;'
       );
     }
 
-    return total;
+    return {
+      success: true,
+      route: GMS.Router?.currentId?.(),
+      karat: getKarat(),
+      label: getLabel(),
+      textsCleaned,
+      numbersConverted,
+      chartsUpdated,
+      total,
+      elapsed,
+    };
   }
 
-  function scheduleRefresh(delay = 300) {
-    if (isSkippedRoute()) return;
-    if (State.pendingRefresh) clearTimeout(State.pendingRefresh);
-    State.pendingRefresh = setTimeout(() => {
-      State.pendingRefresh = null;
-      refresh({ force: true });
-    }, delay);
-  }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §12 · OBSERVER — مع فحص skip كامل
-     ═════════════════════════════════════════════════════════════════════ */
-  function startObserver() {
-    if (State.observer) return;
-
-    const target = document.getElementById('page');
-    if (!target) {
-      setTimeout(startObserver, 300);
-      return;
-    }
-
-    State.observer = new MutationObserver((mutations) => {
-      /* ✅ تجاهل كامل في الصفحات المحظورة */
-      if (isSkippedRoute()) return;
-
-      let hasNewContent = false;
-
-      for (const m of mutations) {
-        if (m.type === 'childList' && m.addedNodes.length > 0) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === 1) {
-              const tag = node.tagName;
-              if (tag !== 'SCRIPT' && tag !== 'STYLE') {
-                hasNewContent = true;
-                break;
-              }
-            } else if (node.nodeType === 3 && node.nodeValue.trim()) {
-              hasNewContent = true;
-              break;
-            }
-          }
-        }
-        if (hasNewContent) break;
-      }
-
-      if (hasNewContent) {
-        scheduleRefresh(300);
-      }
-    });
-
-    State.observer.observe(target, { childList: true, subtree: true });
-
-    console.log('[BaseKaratUI v2.4] 👁️  Observer started (FINAL SAFE MODE)');
-  }
-
-  function stopObserver() {
-    if (State.observer) {
-      State.observer.disconnect();
-      State.observer = null;
-    }
+  /* alias */
+  function refresh(opts = {}) {
+    return processPage();
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · HOOKS
+     §12 · HOOKS
      ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * Hook Router — يعمل بعد كل render
+   */
   function hookRouter() {
     if (!GMS.Router) {
       setTimeout(hookRouter, 300);
       return;
     }
-    if (GMS.Router._baseKaratUIHookedV24) return;
-    GMS.Router._baseKaratUIHookedV24 = true;
+
+    if (GMS.Router._baseKaratUIHookedV3) return;
+    GMS.Router._baseKaratUIHookedV3 = true;
 
     try {
       const unsub = GMS.Router.on('afterNavigate', (data) => {
-        const route = data?.to || GMS.Router.currentId?.();
-        console.log(`[BaseKaratUI v2.4] 🧭 Navigated to: ${route}`);
+        const route = data?.to || GMS.Router?.currentId?.();
+        State._currentRoute = route;
 
-        /* ✅ لا نعمل refresh في الصفحات المحظورة */
+        console.log(`[BaseKaratUI v3] 🧭 Navigated to: ${route}`);
+
         if (SKIP_ROUTES.includes(route)) {
-          State._lastRoute = route;
           return;
         }
 
-        setTimeout(() => refresh({ force: true }), 500);
+        /* استدعاء مرة واحدة بعد اكتمال الرسم */
+        setTimeout(() => {
+          processPage();
+        }, 250);
+
+        /* استدعاء تأكيدي بعد 800ms (لو الرسم تأخر) */
+        setTimeout(() => {
+          processPage();
+        }, 800);
       });
-      State.unsubscribers.push(unsub);
-    } catch (_) {}
+
+      State._unsubscribers.push(unsub);
+
+      console.log('[BaseKaratUI v3] ✅ Hooked to Router');
+    } catch (e) {
+      console.warn('[BaseKaratUI v3] hookRouter failed:', e);
+    }
   }
 
+  /**
+   * Hook BaseKarat — يعمل عند تغيير العيار
+   */
   function hookBaseKarat() {
-    if (!GMS.BaseKarat) {
+    if (!GMS.BaseKarat?.on) {
       setTimeout(hookBaseKarat, 300);
       return;
     }
-    if (State.unsubscribers.some(fn => fn._bkUIV24)) return;
+
+    if (State._unsubscribers.some(fn => fn._karatHook)) return;
 
     try {
       const unsub = GMS.BaseKarat.on((payload) => {
-        console.log(`[BaseKaratUI v2.4] 🔄 Karat → ${payload.current}K`);
-        if (isSkippedRoute()) return;
-        setTimeout(() => refresh({ force: true }), 500);
-      });
-      unsub._bkUIV24 = true;
-      State.unsubscribers.push(unsub);
-    } catch (_) {}
+        console.log(`[BaseKaratUI v3] 🔄 Karat → ${payload.current}K`);
 
-    window.addEventListener('gms:baseKaratChanged', () => {
-      if (isSkippedRoute()) return;
-      scheduleRefresh(400);
-    });
+        if (isSkipRoute()) return;
+
+        /* معالجة فورية */
+        processPage();
+
+        /* معالجة تأكيدية بعد لحظات */
+        setTimeout(() => {
+          if (!isSkipRoute()) processPage();
+        }, 400);
+      });
+
+      unsub._karatHook = true;
+      State._unsubscribers.push(unsub);
+
+      console.log('[BaseKaratUI v3] ✅ Hooked to BaseKarat');
+    } catch (e) {
+      console.warn('[BaseKaratUI v3] hookBaseKarat failed:', e);
+    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · INIT / DESTROY
+     §13 · INIT / DESTROY
      ═════════════════════════════════════════════════════════════════════ */
   function init() {
     if (State.installed) return;
 
     console.log(
-      '%c🏷️  BaseKarat UI v2.4 (FINAL SAFE) initializing…',
+      '%c🏷️  BaseKarat UI v3.0 initializing…',
       'color:#a55a00;font-weight:800;font-size:12px;'
     );
 
+    /* 1 · Hook Router */
     hookRouter();
+
+    /* 2 · Hook BaseKarat */
     hookBaseKarat();
-    startObserver();
 
-    setTimeout(() => refresh({ force: true }), 1000);
-    setTimeout(() => refresh({ force: true }), 3000);
+    /* 3 · معالجة أولية للصفحة الحالية (لو مش settings) */
+    setTimeout(() => {
+      if (!isSkipRoute()) {
+        processPage();
+      }
+    }, 1000);
 
-    setInterval(() => {
-      try {
-        if (isSkippedRoute()) return;
-        const current = getBaseKarat();
-        if (State._lastKarat !== current) {
-          refresh({ force: true });
-        }
-      } catch (_) {}
-    }, 10000);
+    /* 4 · معالجة تأكيدية بعد اكتمال boot */
+    setTimeout(() => {
+      if (!isSkipRoute()) {
+        processPage();
+      }
+    }, 2500);
 
     State.installed = true;
 
     console.log(
-      `%c✅ BaseKarat UI v2.4 ready — Skipped: [${SKIP_ROUTES.join(', ')}]`,
+      `%c✅ BaseKarat UI v3.0 ready (Skipped: [${SKIP_ROUTES.join(', ')}])`,
       'color:#0f7a43;font-weight:800;font-size:12px;'
     );
   }
 
   function destroy() {
-    stopObserver();
-    State.unsubscribers.forEach(fn => { try { fn(); } catch (_) {} });
-    State.unsubscribers = [];
-    if (State.pendingRefresh) {
-      clearTimeout(State.pendingRefresh);
-      State.pendingRefresh = null;
-    }
+    State._unsubscribers.forEach(fn => {
+      try { fn(); } catch (_) {}
+    });
+    State._unsubscribers = [];
     State.installed = false;
+    console.log('[BaseKaratUI v3] 🛑 Destroyed');
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §14 · DIAGNOSTICS
+     ═════════════════════════════════════════════════════════════════════ */
+  function diagnostics() {
+    return {
+      installed: State.installed,
+      currentRoute: GMS.Router?.currentId?.(),
+      skipRoute: isSkipRoute(),
+      karat: getKarat(),
+      label: getLabel(),
+      stats: { ...State._stats },
+      stats_human: {
+        totalProcessed: State._stats.totalProcessed,
+        textsCleaned: State._stats.textsCleaned,
+        numbersConverted: State._stats.numbersConverted,
+        chartsUpdated: State._stats.chartsUpdated,
+      },
+      skipRoutes: SKIP_ROUTES,
+    };
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -604,13 +623,12 @@
     init,
     destroy,
     refresh,
-    scheduleRefresh,
-    state: State,
+    processPage,
     cleanText,
-    isProtected,
-    isProtectedText,
-    isSkippedRoute,
+    isSkipRoute,
+    diagnostics,
     SKIP_ROUTES,
+    get state() { return State; },
   };
 
   window.BaseKaratUI = GMS.BaseKaratUI;
@@ -619,13 +637,13 @@
      §16 · AUTO-INIT
      ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1500));
+    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 800));
   } else {
-    setTimeout(init, 1500);
+    setTimeout(init, 800);
   }
 
   console.log(
-    '%c🏷️  BaseKarat UI v2.4 loaded · FINAL SAFE · Settings untouched',
+    '%c🏷️  BaseKarat UI v3.0 loaded · Router-driven · No Observer',
     'color:#a55a00;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
