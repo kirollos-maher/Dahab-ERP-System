@@ -484,9 +484,9 @@
         // تحميل من Supabase (بالدفعات)
         all = await fetchAllFromSupabase(onProgress);
       } else {
-        // وضع تجريبي
-        all = DemoData.getInventory();
-        if (onProgress) onProgress(0, all.length);
+        // ✅ v6: Demo disabled — النظام يبدأ فاضي
+        all = [];
+        if (onProgress) onProgress(0, 0);
       }
 
       meta.total = all.length;
