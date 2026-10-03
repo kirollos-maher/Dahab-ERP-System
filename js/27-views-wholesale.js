@@ -18,6 +18,13 @@
        - اختيار البياع المسؤول
        - اختيار عميل الجملة المرتبط بالبياع
        - ربط الفاتورة بدفتر وخزينة البياع تلقائياً
+     • ✅ v3: نظام SCAN + بحث يدوي inline (مثل POS)
+       - حقل باركود مباشر داخل المودال
+       - إضافة تلقائية للقطعة بعد المسح
+       - بحث يدوي فوري (اسم/ماركة/تصنيف) بدون مودالات
+       - F2 للتركيز السريع على المسح
+       - Feedback فوري (نجاح/فشل/تحذير)
+       - Auto-focus عند فتح المودال
 
    التخزين (CacheDB):
      • wholesale_invoices
@@ -293,10 +300,17 @@
     /* Draft state للمودالات */
     draft: null,
 
+    /* ✅ v3: حالة البحث اليدوي inline */
+    inlineSearch: {
+      query: '',
+      results: [],
+      visible: false,
+    },
+
     loading: false,
     initialized: false,
     unsubscribers: [],
-    timers: { search: null },
+    timers: { search: null, inlineSearch: null },
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -407,13 +421,13 @@
     });
     State.unsubscribers = [];
     clearTimeout(State.timers.search);
+    clearTimeout(State.timers.inlineSearch);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
      §5.1 · B2B HELPERS — تكامل بياعي الجملة
      ═════════════════════════════════════════════════════════════════════ */
 
-  /** قراءة البياعين المتاحين من وحدة B2B */
   function getB2BReps() {
     try {
       if (GMS.B2B && typeof GMS.B2B.getReps === 'function') {
@@ -423,7 +437,6 @@
     return [];
   }
 
-  /** قراءة عملاء الجملة حسب البياع */
   function getB2BCustomers(repId) {
     try {
       if (GMS.B2B && typeof GMS.B2B.getCustomers === 'function') {
@@ -433,12 +446,10 @@
     return [];
   }
 
-  /** هل وحدة B2B متاحة؟ */
   function isB2BAvailable() {
     return Boolean(GMS.B2B && typeof GMS.B2B.getReps === 'function');
   }
 
-  /** هل المستخدم الحالي بياع جملة؟ */
   function isCurrentUserRep() {
     try {
       if (GMS.B2B && typeof GMS.B2B.isRepRole === 'function') {
@@ -448,7 +459,6 @@
     return false;
   }
 
-  /** البياع الافتراضي */
   function getDefaultRepId() {
     try {
       if (GMS.B2B && typeof GMS.B2B.getDefaultRepId === 'function') {
@@ -1391,7 +1401,7 @@
 
     State.draft = {
       mode: supplyMode.key,
-      rep_id: defaultRepId,   /* ✅ حقل جديد: البياع المسؤول */
+      rep_id: defaultRepId,
       recipient: {
         type: 'shop',
         id: '',
@@ -1419,6 +1429,13 @@
       notes: '',
       branch_id: getActiveBranchId(),
       _branches: branches,
+    };
+
+    /* ✅ v3: تصفير البحث اليدوي */
+    State.inlineSearch = {
+      query: '',
+      results: [],
+      visible: false,
     };
   }
 
@@ -1672,6 +1689,110 @@
         </div>
       ` : ''}
 
+      <!-- ═══════════════════════════════════════════════════════════════
+           ✅ v3: SECTION — SCAN (نفس POS)
+           ═══════════════════════════════════════════════════════════════ -->
+      <div class="scan-hero" id="wsl-scan-hero"
+           style="margin-bottom:16px;
+                  background:linear-gradient(135deg,
+                    color-mix(in srgb,var(--primary) 12%,var(--surface)) 0%,
+                    color-mix(in srgb,var(--primary) 3%,var(--surface)) 100%);
+                  border:1.5px dashed color-mix(in srgb,var(--primary) 45%,var(--border));
+                  border-radius:16px;padding:18px 22px;
+                  position:relative;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px">
+          <div style="width:48px;height:48px;border-radius:14px;
+                      background:var(--gold-grad);display:grid;place-items:center;
+                      color:#2a1f05;flex-shrink:0;
+                      box-shadow:0 12px 30px -12px rgba(184,145,47,.9)">
+            <i data-lucide="scan-line" style="width:22px;height:22px"></i>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <div style="font-size:14px;font-weight:900;letter-spacing:-.3px">
+              امسح باركود القطعة
+            </div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;margin-top:2px">
+              استخدم قارئ الباركود أو اكتب الكود يدوياً ثم اضغط Enter
+            </div>
+          </div>
+          <span class="chip" style="font-size:10px">
+            <i data-lucide="zap" style="width:10px;height:10px"></i>
+            بحث فوري
+          </span>
+        </div>
+
+        <input id="wsl-scan-input"
+               placeholder="SKU-XXXX-XXXX-XXXX"
+               autocomplete="off"
+               spellcheck="false"
+               autocapitalize="off"
+               autocorrect="off"
+               dir="ltr"
+               style="width:100%;padding:14px 18px;
+                      border-radius:12px;
+                      border:1.5px solid var(--border);
+                      background:var(--surface);
+                      font-size:17px;font-weight:800;
+                      text-align:center;letter-spacing:1px;
+                      font-family:var(--font-mono);
+                      transition:all .2s">
+
+        <div style="font-size:10.5px;color:var(--muted);font-weight:700;
+                    text-align:center;margin-top:10px;
+                    display:flex;justify-content:center;gap:14px;flex-wrap:wrap">
+          <span><kbd>Enter</kbd> بحث وإضافة</span>
+          <span><kbd>Esc</kbd> مسح</span>
+          <span><kbd>F2</kbd> تركيز</span>
+        </div>
+      </div>
+
+      <!-- Scan result feedback -->
+      <div id="wsl-scan-result"></div>
+
+      <!-- ═══════════════════════════════════════════════════════════════
+           ✅ v3: SECTION — INLINE SEARCH (يدوي فوري بدون مودالات)
+           ═══════════════════════════════════════════════════════════════ -->
+      <div style="padding:14px 18px;background:var(--info-bg);
+                  border-radius:12px;
+                  border:1px solid color-mix(in srgb,var(--info) 30%,var(--border));
+                  margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <div style="width:32px;height:32px;border-radius:9px;
+                      background:var(--info);color:#fff;
+                      display:grid;place-items:center;flex-shrink:0">
+            <i data-lucide="search" style="width:16px;height:16px"></i>
+          </div>
+          <div style="flex:1;min-width:180px">
+            <div style="font-size:12.5px;font-weight:900;color:var(--info)">
+              بحث يدوي
+            </div>
+            <div style="font-size:10.5px;color:var(--muted);
+                        font-weight:600;margin-top:2px">
+              اكتب اسم / ماركة / تصنيف — النتائج تظهر فوراً
+            </div>
+          </div>
+          <span class="chip info" style="font-size:10px">
+            <i data-lucide="zap" style="width:10px;height:10px"></i>
+            Live
+          </span>
+        </div>
+
+        <div class="search-wrap" style="max-width:100%">
+          <i data-lucide="search"></i>
+          <input id="wsl-inline-search-input"
+                 placeholder="اكتب SKU، الماركة، أو التصنيف…"
+                 autocomplete="off">
+          <button class="search-clear" id="wsl-inline-search-clear" type="button"
+                  style="display:none">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+
+        <div id="wsl-inline-search-results"
+             style="margin-top:12px;display:none">
+        </div>
+      </div>
+
       <!-- Section 3: Item Picker -->
       <div style="padding:16px 18px;background:var(--gold-soft);border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
@@ -1688,7 +1809,7 @@
               المشغولات (${d.items.length} قطعة)
             </div>
             <div style="font-size:10.5px;color:var(--muted);font-weight:600">
-              امسح الباركود أو اختر من المخزون
+              امسح الباركود، ابحث، أو اختر من المخزون
             </div>
           </div>
 
@@ -1838,7 +1959,7 @@
           </div>
           <div style="font-size:11px;color:var(--muted);font-weight:600;
                       margin-top:4px">
-            اضغط "إضافة قطعة" لاختيار من المخزون
+            امسح باركود أو ابحث للبدء
           </div>
         </div>
       `;
@@ -2140,6 +2261,371 @@
     bindInvoiceForm(document);
   }
 
+  /* ═════════════════════════════════════════════════════════════════════
+     §15.1 · ✅ v3 — SCAN + INLINE SEARCH (مثل POS)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * عرض feedback نتيجة المسح (نجاح/فشل)
+   */
+  function renderScanFeedback(result) {
+    if (!result) return '';
+
+    if (!result.ok) {
+      return `
+        <div style="margin-bottom:14px;padding:12px 14px;border-radius:11px;
+                    background:var(--danger-bg);
+                    border:1.5px solid color-mix(in srgb,var(--danger) 40%,var(--border));
+                    display:flex;align-items:center;gap:10px">
+          <i data-lucide="x-circle"
+             style="width:22px;height:22px;color:var(--danger);flex-shrink:0"></i>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12.5px;font-weight:900;color:var(--danger)">
+              ${esc(result.message || 'لم يتم العثور على الصنف')}
+            </div>
+            <div class="mono" style="font-size:11px;color:var(--muted);
+                        font-weight:700;margin-top:2px">
+              ${esc(result.sku || '')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const item = result.item;
+    const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+
+    return `
+      <div style="margin-bottom:14px;padding:12px 14px;border-radius:11px;
+                  background:var(--success-bg);
+                  border:1.5px solid color-mix(in srgb,var(--success) 40%,var(--border));
+                  display:flex;align-items:center;gap:10px">
+        <i data-lucide="check-circle-2"
+           style="width:22px;height:22px;color:var(--success);flex-shrink:0"></i>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12.5px;font-weight:900;color:var(--success)">
+            ✅ تمت الإضافة — ${esc(item.category || 'قطعة')}
+          </div>
+          <div class="mono" style="font-size:11px;color:var(--text-2);
+                      font-weight:700;margin-top:2px">
+            ${esc(item.sku)}
+            ${isCustom
+              ? ` · عيار ${item.custom_karat} مخصص`
+              : ` · ${item.karat}K`}
+            · ${gramFmt(item.net_weight)} جم
+          </div>
+        </div>
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:900;
+                     color:var(--primary);white-space:nowrap">
+          ${moneyFmt(item.total_cost || 0)} ج.م
+        </span>
+      </div>
+    `;
+  }
+
+  /**
+   * معالجة عملية المسح — إضافة القطعة للفاتورة
+   */
+  async function handleInvoiceScan(rawSku, scanInput) {
+    const key = String(rawSku || '').trim().toUpperCase();
+    if (!key) return;
+
+    const resultHost = document.getElementById('wsl-scan-result');
+
+    try {
+      GMS.Beep?.info?.();
+
+      /* 1 · البحث في المخزون المحلي */
+      let item = State.inventory.find(i =>
+        String(i.sku || '').toUpperCase() === key
+      );
+
+      /* 2 · IDB fallback */
+      if (!item && GMS.IDB?.isOpen) {
+        try {
+          item = await GMS.IDB.getBySku(key);
+          if (item && !State.inventory.find(x => x.id === item.id)) {
+            State.inventory.push(item);
+          }
+        } catch (_) {}
+      }
+
+      /* 3 · مش موجود */
+      if (!item) {
+        GMS.Beep?.error?.();
+        if (resultHost) {
+          resultHost.innerHTML = renderScanFeedback({
+            ok: false,
+            sku: key,
+            message: 'الصنف غير موجود في المخزون',
+          });
+          window.lucide?.createIcons();
+        }
+        if (GMS.Toast) GMS.Toast.warn('الصنف غير موجود', key);
+        return;
+      }
+
+      /* 4 · الحالة */
+      if (item.status && item.status !== 'IN_STOCK') {
+        GMS.Beep?.error?.();
+        const statusLabel = GMS.getStatus?.(item.status)?.label || item.status;
+        if (resultHost) {
+          resultHost.innerHTML = renderScanFeedback({
+            ok: false,
+            sku: key,
+            message: `الصنف غير متوفر — الحالة: ${statusLabel}`,
+          });
+          window.lucide?.createIcons();
+        }
+        return;
+      }
+
+      /* 5 · مكرر */
+      if (State.draft.items.find(i => i.sku === item.sku)) {
+        GMS.Beep?.warning?.();
+        if (resultHost) {
+          resultHost.innerHTML = renderScanFeedback({
+            ok: false,
+            sku: key,
+            message: 'الصنف مُضاف مسبقاً في الفاتورة',
+          });
+          window.lucide?.createIcons();
+        }
+        return;
+      }
+
+      /* 6 · الإضافة */
+      addItemToInvoice(item.sku);
+      GMS.Beep?.success?.();
+
+      if (resultHost) {
+        resultHost.innerHTML = renderScanFeedback({ ok: true, item });
+        window.lucide?.createIcons();
+      }
+
+      /* 7 · تحديث القطع + الملخص */
+      recalcInvoiceTotals();
+
+      const itemsHost = document.getElementById('wsl-items-host');
+      if (itemsHost) itemsHost.innerHTML = renderInvoiceItemsList();
+
+      updateSummaryOnly();
+      bindItemActionsInForm(document);
+      window.lucide?.createIcons();
+
+      /* 8 · تفريغ الحقل */
+      if (scanInput) {
+        scanInput.value = '';
+        try { scanInput.focus({ preventScroll: true }); } catch (_) { scanInput.focus(); }
+      }
+
+      /* 9 · مسح النتيجة */
+      setTimeout(() => {
+        const h = document.getElementById('wsl-scan-result');
+        if (h) h.innerHTML = '';
+      }, 3000);
+
+    } catch (e) {
+      console.error('[WSL.handleInvoiceScan]', e);
+      GMS.Beep?.error?.();
+      GMS.Toast?.err?.('خطأ في المسح', e.message);
+    }
+  }
+
+  /**
+   * ✅ v3: البحث اليدوي inline (فوري بدون مودالات)
+   */
+  function performInlineSearch(query) {
+    const q = String(query || '').trim().toLowerCase();
+    const host = document.getElementById('wsl-inline-search-results');
+
+    if (!host) return;
+
+    if (q.length < 2) {
+      host.style.display = 'none';
+      host.innerHTML = '';
+      State.inlineSearch.visible = false;
+      return;
+    }
+
+    /* البحث في المخزون */
+    const selectedSkus = new Set(State.draft.items.map(i => i.sku));
+
+    const results = State.inventory
+      .filter(i => i.status === 'IN_STOCK')
+      .filter(i => {
+        const hay = [
+          i.sku || '',
+          i.manufacturer_name || '',
+          i.manufacturer_code || '',
+          i.category || '',
+        ].join(' ').toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 10);
+
+    State.inlineSearch.query = q;
+    State.inlineSearch.results = results;
+    State.inlineSearch.visible = true;
+
+    if (!results.length) {
+      host.style.display = '';
+      host.innerHTML = `
+        <div style="padding:14px;text-align:center;font-size:12px;
+                    color:var(--muted);font-weight:700">
+          لا توجد نتائج مطابقة
+        </div>
+      `;
+      window.lucide?.createIcons();
+      return;
+    }
+
+    host.style.display = '';
+    host.innerHTML = `
+      <div style="font-size:10.5px;font-weight:800;color:var(--muted);
+                  text-transform:uppercase;letter-spacing:.3px;
+                  margin-bottom:8px">
+        نتائج (${results.length})
+      </div>
+      <div style="max-height:280px;overflow-y:auto;border-radius:10px;
+                  border:1px solid var(--border);background:var(--surface)">
+        ${results.map(item => {
+          const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+          const already = selectedSkus.has(item.sku);
+
+          return `
+            <div data-inline-result="${esc(item.sku)}"
+                 style="display:grid;grid-template-columns:auto 1fr auto;
+                        gap:11px;align-items:center;padding:10px 13px;
+                        border-bottom:1px solid var(--border);
+                        cursor:${already ? 'not-allowed' : 'pointer'};
+                        opacity:${already ? '0.5' : '1'};
+                        transition:background .15s">
+              <div style="width:32px;height:32px;border-radius:9px;
+                          background:var(--gold-soft);display:grid;
+                          place-items:center;color:var(--warn);flex-shrink:0">
+                <i data-lucide="gem" style="width:14px;height:14px"></i>
+              </div>
+              <div style="min-width:0">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+                            margin-bottom:2px">
+                  <span class="mono" style="font-weight:800;font-size:12px">
+                    ${esc(item.sku)}
+                  </span>
+                  ${isCustom
+                    ? `<span class="karat-badge custom-karat-badge" style="font-size:9.5px">
+                         ${item.custom_karat}
+                       </span>`
+                    : `<span class="karat-badge" data-k="${item.karat}" style="font-size:9.5px">
+                         ${item.karat}K
+                       </span>`}
+                  ${already ? `
+                    <span class="pill pill-gray" style="font-size:9.5px">
+                      <i data-lucide="check" style="width:9px;height:9px"></i>
+                      مُضاف
+                    </span>
+                  ` : ''}
+                </div>
+                <div style="font-size:10.5px;color:var(--muted);font-weight:700">
+                  ${esc(item.category || '—')} ·
+                  ${gramFmt(item.net_weight)} جم ·
+                  بندق ${gramFmt(item.pure_weight)} جم
+                </div>
+              </div>
+              <div style="text-align:end">
+                <div class="mono" style="font-size:12px;font-weight:900;
+                            color:var(--primary)">
+                  ${moneyFmt(item.total_cost || 0)}
+                </div>
+                <div style="font-size:9px;color:var(--muted);font-weight:700">
+                  ج.م
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    window.lucide?.createIcons();
+
+    /* ربط النقر على نتائج البحث */
+    host.querySelectorAll('[data-inline-result]').forEach(row => {
+      row.onclick = () => {
+        const sku = row.dataset.inlineResult;
+        if (selectedSkus.has(sku)) {
+          GMS.Beep?.warning?.();
+          return;
+        }
+        addItemToInvoice(sku);
+        GMS.Beep?.success?.();
+
+        /* تحديث القطع */
+        recalcInvoiceTotals();
+        const itemsHost = document.getElementById('wsl-items-host');
+        if (itemsHost) itemsHost.innerHTML = renderInvoiceItemsList();
+        updateSummaryOnly();
+        bindItemActionsInForm(document);
+        window.lucide?.createIcons();
+
+        /* تحديث نتائج البحث (لإظهار "مُضاف") */
+        performInlineSearch(State.inlineSearch.query);
+
+        /* تفريغ الحقل + إخفاء */
+        const input = document.getElementById('wsl-inline-search-input');
+        if (input) {
+          input.value = '';
+          input.focus();
+        }
+        const clearBtn = document.getElementById('wsl-inline-search-clear');
+        if (clearBtn) clearBtn.style.display = 'none';
+
+        const resultsHost = document.getElementById('wsl-inline-search-results');
+        if (resultsHost) {
+          resultsHost.style.display = 'none';
+          resultsHost.innerHTML = '';
+        }
+      };
+    });
+  }
+
+  /**
+   * ربط أزرار القطع (تُستخدم بعد إعادة بناء قائمة القطع)
+   */
+  function bindItemActionsInForm(root) {
+    if (!root || !State.draft) return;
+
+    /* Fee inputs */
+    root.querySelectorAll('[data-wsl-item-fee]').forEach(input => {
+      input.oninput = () => {
+        const idx = Number(input.dataset.wslItemFee);
+        const item = State.draft.items[idx];
+        if (item) {
+          item.workmanship_per_gram = numOr(input.value, 0);
+          recalcInvoiceTotals();
+          updateSummaryOnly();
+          const row = input.closest('tr');
+          if (row) {
+            const cells = row.querySelectorAll('td');
+            if (cells[5]) cells[5].innerHTML = moneyFmt(item.total_value);
+          }
+        }
+      };
+    });
+
+    /* Remove buttons */
+    root.querySelectorAll('[data-wsl-item-rm]').forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.dataset.wslItemRm);
+        State.draft.items.splice(idx, 1);
+        refreshInvoiceForm();
+      };
+    });
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §15.2 · bindInvoiceForm
+     ═════════════════════════════════════════════════════════════════════ */
+
   function bindInvoiceForm(root) {
     const $ = (id) => root.querySelector('#' + id);
 
@@ -2257,10 +2743,131 @@
       };
     }
 
-    /* Add item */
+    /* Add item (يدوي) */
     const addBtn = $('wsl-add-item-btn');
     if (addBtn) {
       addBtn.onclick = () => openItemPicker();
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       ✅ v3: SCAN INPUT — نفس POS
+       ═══════════════════════════════════════════════════════════════════ */
+    const scanInput = $('wsl-scan-input');
+    if (scanInput) {
+      /* Auto-focus أول ما يفتح المودال */
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body ||
+            active.tagName === 'SELECT' ||
+            (active.tagName === 'INPUT' && active.id !== 'wsl-scan-input')
+        ) {
+          try { scanInput.focus({ preventScroll: true }); } catch (_) { scanInput.focus(); }
+        }
+      }, 300);
+
+      scanInput.onfocus = () => {
+        const hero = $('wsl-scan-hero');
+        if (hero) hero.style.borderStyle = 'solid';
+      };
+      scanInput.onblur = () => {
+        const hero = $('wsl-scan-hero');
+        if (hero) hero.style.borderStyle = 'dashed';
+      };
+
+      scanInput.onkeydown = async (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const sku = scanInput.value.trim();
+          if (!sku) return;
+          await handleInvoiceScan(sku, scanInput);
+        } else if (e.key === 'Escape') {
+          scanInput.value = '';
+          const resultHost = $('wsl-scan-result');
+          if (resultHost) resultHost.innerHTML = '';
+        }
+      };
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       ✅ v3: INLINE SEARCH — بحث يدوي فوري
+       ═══════════════════════════════════════════════════════════════════ */
+    const inlineSearchInput = $('wsl-inline-search-input');
+    const inlineSearchClear = $('wsl-inline-search-clear');
+
+    if (inlineSearchInput) {
+      inlineSearchInput.oninput = (e) => {
+        const val = e.target.value;
+
+        if (inlineSearchClear) {
+          inlineSearchClear.style.display = val.trim() ? '' : 'none';
+        }
+
+        clearTimeout(State.timers.inlineSearch);
+        State.timers.inlineSearch = setTimeout(() => {
+          performInlineSearch(val);
+        }, 200);
+      };
+
+      inlineSearchInput.onkeydown = (e) => {
+        if (e.key === 'Escape') {
+          inlineSearchInput.value = '';
+          const host = $('wsl-inline-search-results');
+          if (host) {
+            host.style.display = 'none';
+            host.innerHTML = '';
+          }
+          if (inlineSearchClear) inlineSearchClear.style.display = 'none';
+        }
+      };
+    }
+
+    if (inlineSearchClear) {
+      inlineSearchClear.onclick = () => {
+        if (inlineSearchInput) {
+          inlineSearchInput.value = '';
+          inlineSearchInput.focus();
+        }
+        const host = $('wsl-inline-search-results');
+        if (host) {
+          host.style.display = 'none';
+          host.innerHTML = '';
+        }
+        inlineSearchClear.style.display = 'none';
+      };
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       ✅ v3: F2 shortcut (تركيز على input المسح)
+       ═══════════════════════════════════════════════════════════════════ */
+    const f2Handler = (e) => {
+      if (e.key !== 'F2') return;
+      const formHost = document.getElementById('wsl-form-host');
+      if (!formHost) return;
+
+      const active = document.activeElement;
+      if (active?.tagName === 'TEXTAREA') return;
+
+      e.preventDefault();
+      const si = document.getElementById('wsl-scan-input');
+      if (si) {
+        try { si.focus({ preventScroll: true }); } catch (_) { si.focus(); }
+        si.select();
+      }
+    };
+
+    document.addEventListener('keydown', f2Handler);
+
+    /* تنظيف المستمع عند إغلاق المودال */
+    const formHostEl = document.getElementById('wsl-form-host');
+    if (formHostEl && !formHostEl._f2Bound) {
+      formHostEl._f2Bound = true;
+      const observer = new MutationObserver(() => {
+        if (!document.getElementById('wsl-form-host')) {
+          document.removeEventListener('keydown', f2Handler);
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
     }
 
     /* Payment mode */
@@ -2311,34 +2918,8 @@
       notesInput.oninput = (e) => { State.draft.notes = e.target.value; };
     }
 
-    /* Item actions */
-    root.querySelectorAll('[data-wsl-item-fee]').forEach(input => {
-      input.oninput = () => {
-        const idx = Number(input.dataset.wslItemFee);
-        const item = State.draft.items[idx];
-        if (item) {
-          item.workmanship_per_gram = numOr(input.value, 0);
-          recalcInvoiceTotals();
-          updateSummaryOnly();
-          /* Update row total display */
-          const row = input.closest('tr');
-          if (row) {
-            const cells = row.querySelectorAll('td');
-            if (cells[5]) {
-              cells[5].innerHTML = moneyFmt(item.total_value);
-            }
-          }
-        }
-      };
-    });
-
-    root.querySelectorAll('[data-wsl-item-rm]').forEach(btn => {
-      btn.onclick = () => {
-        const idx = Number(btn.dataset.wslItemRm);
-        State.draft.items.splice(idx, 1);
-        refreshInvoiceForm();
-      };
-    });
+    /* Item actions (fee + remove) */
+    bindItemActionsInForm(root);
 
     /* Initial recalcs */
     updateGoldRecalc();
@@ -2554,6 +3135,76 @@
      §16 · SAVE INVOICE
      ═════════════════════════════════════════════════════════════════════ */
 
+  function previewInvoice(root) {
+    const d = State.draft;
+    if (!d || !d.items.length) {
+      return GMS.Toast.warn('لا توجد قطع للمعاينة');
+    }
+
+    const totals = computeInvoiceTotals();
+    const mode = getSupplyMode(d.mode);
+
+    GMS.Modal.open({
+      title: `معاينة — ${mode.label}`,
+      icon: 'eye',
+      size: 'lg',
+      body: `
+        <div style="padding:14px 16px;background:var(--surface-2);
+                    border-radius:12px;margin-bottom:14px">
+          <div style="font-size:12px;font-weight:900;margin-bottom:6px">
+            ${esc(mode.label)}
+          </div>
+          <div style="font-size:11.5px;color:var(--muted);font-weight:700">
+            الطرف: <b style="color:var(--text-2)">${esc(d.recipient.name || '—')}</b>
+            ${d.recipient.phone ? ` · ${esc(d.recipient.phone)}` : ''}
+          </div>
+          ${d.rep_id && isB2BAvailable() ? `
+            <div style="font-size:11px;color:var(--violet);font-weight:700;
+                        margin-top:4px">
+              البياع: <b>${esc(getB2BReps().find(r => r.id === d.rep_id)?.name || '—')}</b>
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="calc-list">
+          <div class="cl-row">
+            <span class="k">عدد القطع</span>
+            <span class="v">${totals.item_count}</span>
+          </div>
+          <div class="cl-row">
+            <span class="k">الوزن الصافي</span>
+            <span class="v">${gramFmt(totals.total_net)} جم</span>
+          </div>
+          <div class="cl-row hi">
+            <span class="k">البندق 24K</span>
+            <span class="v">${gramFmt(totals.total_pure)} جم</span>
+          </div>
+          <div class="cl-row">
+            <span class="k">قيمة الذهب</span>
+            <span class="v">${moneyFmt(totals.total_gold_value)} ج.م</span>
+          </div>
+          <div class="cl-row">
+            <span class="k">المصنعية</span>
+            <span class="v">${moneyFmt(totals.total_workmanship)} ج.م</span>
+          </div>
+          ${totals.discount_amount > 0 ? `
+            <div class="cl-row">
+              <span class="k" style="color:var(--warn)">خصم ${d.discountPct}%</span>
+              <span class="v" style="color:var(--warn)">
+                − ${moneyFmt(totals.discount_amount)} ج.م
+              </span>
+            </div>
+          ` : ''}
+          <div class="cl-row hi">
+            <span class="k">الإجمالي النهائي</span>
+            <span class="v">${moneyFmt(totals.grand_total)} ج.م</span>
+          </div>
+        </div>
+      `,
+      footer: `<button class="btn" data-close>إغلاق</button>`,
+    });
+  }
+
   async function saveInvoice(root, closeFn) {
     const d = State.draft;
 
@@ -2709,7 +3360,6 @@
           });
         } catch (e) {
           console.warn('[WSL.saveInvoice] Supabase failed:', e);
-          /* Queue for later */
           if (GMS.IDB?.queueAdd) {
             try {
               await GMS.IDB.queueAdd({
@@ -4736,7 +5386,7 @@
      §28 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏭 Wholesale & Transfers View v2 loaded · B2B Integration',
+    '%c🏭 Wholesale & Transfers View v3 loaded · B2B + SCAN + Inline Search',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#e0d4f5,#6b3fa0);border-radius:4px;'
   );
@@ -4747,7 +5397,7 @@
   );
 
   console.log(
-    `%c🆕 v2: Rep selector · B2B customer selector · Auto-attach to rep ledger`,
+    `%c🆕 v3: Scan Hero (like POS) · Inline manual search · F2 shortcut · Auto-focus`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
