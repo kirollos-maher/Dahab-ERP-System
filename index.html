@@ -153,18 +153,60 @@
 
 <!-- ═══════════════════════════════════════════════════════════════════
      APPLICATION MODULES — Order Matters!
+     ─────────────────────────────────────────────────────────────────
+     🎯 الترتيب حرج — لا تُغيّر ترتيب السكربتات
+     
+     المستويات:
+       Level 0 · Multi-Tenant SaaS Layer  (جديد — يجب أن يكون أولاً)
+       Level 1 · Foundation              (Config, Utils, I18n)
+       Level 2 · Storage & Network       (Cache, Sync, Auth, UI)
+       Level 3 · Feature Modules         (QR, Excel, Realtime)
+       Level 4 · Views                   (كل شاشات النظام)
+       Level 5 · B2B Sellers
+       Level 6 · Utilities               (Inventory Summary, Base Karat)
+       Level 7 · Router + Boot + PWA
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 0 · 🆕 Multi-Tenant SaaS Layer
+     ─────────────────────────────────────────────────────────────────
+     يجب أن تُحمَّل قبل أي ملف آخر لأن باقي الوحدات تعتمد عليها:
+       • bcryptjs  → تشفير/مقارنة كلمات المرور في المتصفح
+       • 00c-rls-wrapper → GMS.DB + GMS.Biz (Business Context)
+       • 00a-tenant-auth → Wizard تسجيل الدخول (4 خطوات)
+     ═══════════════════════════════════════════════════════════════════ -->
+<script defer src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js"></script>
+<script defer src="js/00c-rls-wrapper.js"></script>
+<script defer src="js/00a-tenant-auth.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 1 · Foundation — الأساسيات
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/01-config.js"></script>
 <script defer src="js/02-utils.js"></script>
 <script defer src="js/03-i18n.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 2 · Storage & Network — التخزين والمزامنة والمصادقة
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/04-cache.js"></script>
 <script defer src="js/05-sync.js"></script>
 <script defer src="js/06-auth.js"></script>
 <script defer src="js/07-ui.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 3 · Feature Modules — الوحدات المساعدة
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/08-demo.js"></script>
 <script defer src="js/09-qr.js"></script>
 <script defer src="js/10-excel.js"></script>
 <script defer src="js/11-realtime.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 4 · Views — شاشات النظام
+     ─────────────────────────────────────────────────────────────────
+     كل شاشة تُسجّل نفسها في GMS.Views.xxx
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/12-views-dashboard.js"></script>
 <script defer src="js/13-views-pos.js"></script>
 <script defer src="js/14-views-inventory.js"></script>
@@ -178,12 +220,35 @@
 <script defer src="js/24-views-repair.js"></script>
 <script defer src="js/26-views-accounting.js"></script>
 <script defer src="js/27-views-wholesale.js"></script>
-<script defer src="js/28-price-manager.js"></script>
-<!-- ✅ وحدة بياعي الجملة المستقلين -->
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 5 · B2B Sellers — وحدة بياعي الجملة المستقلين
+     ─────────────────────────────────────────────────────────────────
+     تُسجّل GMS.B2B + GMS.Views.b2b
+     يجب أن تُحمَّل قبل base-karat لأنها تستخدمها في العرض
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/29-b2b-sellers.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 6 · Utilities — أدوات مساعدة
+     ─────────────────────────────────────────────────────────────────
+     • PriceManager   → الأسعار اللحظية (API)
+     • InventorySummary → ملخّص الجرد حسب التصنيف
+     • BaseKarat      → عيار الأساس (يحتاج أن يُحمَّل بدون defer
+                        لأنه يجب أن يكون جاهزاً قبل أي view)
+     ═══════════════════════════════════════════════════════════════════ -->
+<script defer src="js/28-price-manager.js"></script>
 <script defer src="js/30-inventory-count-summary.js"></script>
 <script src="js/31-base-karat.js"></script>
 <script src="js/32-base-karat-ui.js"></script>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     Level 7 · Router + Boot + PWA
+     ─────────────────────────────────────────────────────────────────
+     • Router  → يجب أن يكون آخر ملف JS (يبدأ التنقل)
+     • Boot    → نقطة التشغيل النهائية
+     • PWA     → Service Worker + Install Prompt
+     ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/22-router.js"></script>
 <script defer src="js/23-boot.js"></script>
 <script defer src="js/25-pwa.js"></script>
