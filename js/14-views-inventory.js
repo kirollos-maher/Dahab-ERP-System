@@ -1,16 +1,21 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة — النسخة v6.0
+   صفحة المخزون الشاملة — النسخة v6.1
    ─────────────────────────────────────────────────────────────────────
-   ✅ v6.0 الجديد:
-     • 🆕 عزل العهدة حسب الدور (Role-Based Holder Filtering)
-     • 🆕 شريط تابات للتنقل بين (الكل | المحل القطاعي | عهد البياعين)
-     • 🆕 عمود "العهدة / الموقع" في جدول المنتجات
-     • 🆕 كروت تجميع لكل كيان (صافي + عدد + قيمة)
-     • 🆕 أمر نقل بضاعة داخلي (Internal Stock Voucher)
-     • 🆕 دعم backward-compat للعناصر القديمة (بدون holder)
+   ✅ v6.1 التحديثات:
+     • 🆕 دعم BaseKarat — تحويل القيم الرياضية + تسميات ديناميكية
+     • 🆕 إخفاء التبويبات الفارغة تلقائياً (خزنة بدون قطع)
+     • 🆕 عرض "الكل" فقط عند وجود أكثر من كيان به بضاعة
+     • 🆕 الافتراضي = أول كيان فيه بضاعة فعلاً
+     • 🆕 Auto-refresh عند تغيير عيار الأساس
+     • 🆕 ربط event 'gms:baseKaratChanged' لإعادة الحسابات
    ─────────────────────────────────────────────────────────────────────
-   المزايا المحفوظة من v5.0:
+   المزايا المحفوظة من v6.0:
+     • عزل العهدة حسب الدور (Role-Based Holder Filtering)
+     • شريط تابات للتنقل بين (الكل | المحل القطاعي | عهد البياعين)
+     • عمود "العهدة / الموقع" في جدول المنتجات
+     • كروت تجميع لكل كيان (صافي + عدد + قيمة)
+     • أمر نقل بضاعة داخلي (Internal Stock Voucher)
      • PriceManager لحظي · CRUD · QR · Bulk · Excel · Custom Karat
      • Interaction Lock (10s) لمنع إغلاق القوائم أثناء التفاعل
    ═══════════════════════════════════════════════════════════════════════ */
@@ -99,10 +104,10 @@
     pageSize: 50,
     totalPages: 1,
 
-    /* 🆕 v6: فلتر العهدة */
-    entityFilter: 'all',        /* 'all' | 'retail_shop' | 'rep-1' | 'vault' ... */
+    /* فلتر العهدة */
+    entityFilter: 'all',
 
-    entities: [],                /* قائمة الكيانات المتاحة [{key, id, name, type, icon, color}] */
+    entities: [],
     entitiesLoaded: false,
 
     filters: {
@@ -121,7 +126,7 @@
     sortDir: 'desc',
 
     columns: {
-      holder: true,              /* 🆕 v6 */
+      holder: true,
       sku: true,
       category: true,
       karat: true,
@@ -143,13 +148,13 @@
       sold: 0,
       reserved: 0,
       totalPure: 0,
+      totalNet: 0,
       totalValue: 0,
       totalStoredCost: 0,
       customKaratCount: 0,
       price24: 0,
     },
 
-    /* 🆕 v6: ملخّص لكل كيان (للعرض في التابات وكروت التجميع) */
     entitySummary: {},
 
     loading: false,
@@ -163,7 +168,6 @@
   };
 
   const COLUMNS = [
-    /* 🆕 v6: عمود العهدة أول عمود بعد الـ checkbox */
     { key: 'holder', label: 'العهدة / الموقع', width: 140, sortable: true, align: 'start' },
     { key: 'sku', label: 'كود التاج', width: 175, sortable: true, align: 'start' },
     { key: 'category', label: 'التصنيف', width: 100, sortable: true, align: 'start' },
@@ -234,38 +238,55 @@
     return Number(GMS.APP_CONFIG?.DEFAULT_PRICE_24) || 4500;
   }
 
-  function computeLiveValue(item, price24) {
-    if (!item) return 0;
-    const p24 = price24 || getCurrentPrice24();
-    const pure = Number(item.pure_weight || 0);
-    const net = Number(item.net_weight || 0);
-    const saleMake = Number(item.workmanship_per_gram || 0);
-    return GMS.round((pure * p24) + (net * saleMake), 2);
+  /* ═════════════════════════════════════════════════════════════════════
+     §2.1 · BASE KARAT HELPERS — ✅ جديد
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /** تسمية العيار النشط (مثلاً "18K") */
+  function getBaseLabel() {
+    try {
+      if (GMS.BaseKarat?.labelShort) return GMS.BaseKarat.labelShort;
+    } catch (_) {}
+    return '24K';
   }
 
-  function computeAggregateValues(items, price24) {
-    const p24 = price24 || getCurrentPrice24();
-    let total = 0;
-    let stored = 0;
-    (items || []).forEach(item => {
-      total += computeLiveValue(item, p24);
-      stored += Number(item.total_cost || 0);
-    });
-    return {
-      total: GMS.round(total, 2),
-      stored: GMS.round(stored, 2),
-      diff: GMS.round(total - stored, 2),
-    };
+  /** العيار النشط رقمياً */
+  function getBaseKarat() {
+    try {
+      if (GMS.BaseKarat?.current) return GMS.BaseKarat.current;
+    } catch (_) {}
+    return 24;
+  }
+
+  /**
+   * تحويل قيمة بندق 24K إلى العيار النشط
+   * @param {number} pure24 — القيمة ببندق 24K
+   * @returns {number}
+   */
+  function convertFromPure24(pure24) {
+    const v = Number(pure24) || 0;
+    if (v === 0) return 0;
+    try {
+      if (GMS.BaseKarat?.fromPure) {
+        return GMS.BaseKarat.fromPure(v, getBaseKarat());
+      }
+      /* Fallback: pure24 × (24 / base) */
+      const ratio = getBaseKarat() / 24;
+      return ratio > 0 ? v / ratio : v;
+    } catch (_) {
+      return v;
+    }
+  }
+
+  /** label موحّد: "بندق 18K" أو "بندق 24K" */
+  function bondokLabel() {
+    return `بندق ${getBaseLabel()}`;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2.5 · 🆕 v6 · ENTITY / HOLDER HELPERS
+     §2.5 · ENTITY / HOLDER HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * إرجاع بيانات العهدة لعنصر (مع backward-compat للعناصر القديمة)
-   * أي عنصر قديم بدون holder_type يُعامَل كـ "محل قطاعي"
-   */
   function getItemHolder(item) {
     if (!item) {
       return {
@@ -286,9 +307,6 @@
     return { type, id, name };
   }
 
-  /**
-   * تحديث حقول العهدة على عنصر
-   */
   function setItemHolder(item, holder) {
     if (!item || !holder) return item;
     item.holder_type = holder.type || ENTITY_TYPES.RETAIL_SHOP.key;
@@ -297,9 +315,6 @@
     return item;
   }
 
-  /**
-   * هل المستخدم الحالي بياع جملة؟
-   */
   function isCurrentUserRep() {
     try {
       const role = GMS.Auth?.profile?.role;
@@ -307,9 +322,6 @@
     } catch (_) { return false; }
   }
 
-  /**
-   * هل المستخدم الحالي مدير (يشوف الكل)؟
-   */
   function isCurrentUserManager() {
     try {
       const role = GMS.Auth?.profile?.role;
@@ -319,92 +331,140 @@
     } catch (_) { return false; }
   }
 
-  /**
-   * rep_id الخاص بالمستخدم الحالي (لو بياع)
-   */
   function getCurrentRepId() {
     try {
       return GMS.Auth?.profile?.rep_id || null;
     } catch (_) { return null; }
   }
 
-  /**
-   * بناء قائمة الكيانات المتاحة للمستخدم الحالي
-   * @returns {Array<{key, id, name, type, icon, color, isAll}>}
-   */
+  /* ═════════════════════════════════════════════════════════════════════
+     §2.6 · LOAD ENTITIES — ✅ v6.1 (إخفاء الفارغة + عدّاد لكل كيان)
+     ═════════════════════════════════════════════════════════════════════
+     - فقط الكيانات التي فيها بضاعة فعلية تظهر
+     - "الكل" يظهر فقط لو فيه أكثر من كيان غير فارغ
+     - الافتراضي = أول كيان فيه بضاعة
+     ═════════════════════════════════════════════════════════════════════ */
   async function loadEntities() {
     const list = [];
+    const visibleItems = (InvState.items || []).filter(itemVisibleToUser);
 
-    /* كيان "الكل" — يظهر للمدير فقط */
+    /* ─── عدّ العناصر في كل كيان ─── */
+    const counts = {
+      retail_shop: 0,
+      main_vault: 0,
+      reps: {},
+    };
+
+    visibleItems.forEach(item => {
+      const holder = getItemHolder(item);
+
+      if (holder.type === ENTITY_TYPES.RETAIL_SHOP.key) {
+        counts.retail_shop++;
+      } else if (holder.type === ENTITY_TYPES.MAIN_VAULT.key) {
+        counts.main_vault++;
+      } else if (holder.type === ENTITY_TYPES.B2B_REP.key && holder.id) {
+        counts.reps[holder.id] = (counts.reps[holder.id] || 0) + 1;
+      } else {
+        /* fallback: عنصر بدون holder صحيح → يُحسب في retail */
+        counts.retail_shop++;
+      }
+    });
+
     if (isCurrentUserManager()) {
-      list.push({
-        key: 'all',
-        id: 'all',
-        name: 'كل المخزون',
-        shortLabel: 'الكل',
-        type: 'all',
-        icon: 'layers',
-        color: 'gold',
-        isAll: true,
-      });
+      /* عدد الكيانات غير الفارغة */
+      const nonEmptyCount =
+        (counts.retail_shop > 0 ? 1 : 0) +
+        (counts.main_vault > 0 ? 1 : 0) +
+        Object.values(counts.reps).filter(c => c > 0).length;
 
-      /* المحل القطاعي */
-      list.push({
-        key: ENTITY_TYPES.RETAIL_SHOP.key,
-        id: ENTITY_TYPES.RETAIL_SHOP.defaultId,
-        name: ENTITY_TYPES.RETAIL_SHOP.label,
-        shortLabel: ENTITY_TYPES.RETAIL_SHOP.shortLabel,
-        type: ENTITY_TYPES.RETAIL_SHOP.key,
-        icon: ENTITY_TYPES.RETAIL_SHOP.icon,
-        color: ENTITY_TYPES.RETAIL_SHOP.color,
-      });
+      /* "الكل" فقط لو فيه أكثر من كيان به بضاعة */
+      if (nonEmptyCount > 1) {
+        list.push({
+          key: 'all',
+          id: 'all',
+          name: 'كل المخزون',
+          shortLabel: 'الكل',
+          type: 'all',
+          icon: 'layers',
+          color: 'gold',
+          isAll: true,
+          count: visibleItems.length,
+        });
+      }
 
-      /* الخزنة الرئيسية */
-      list.push({
-        key: ENTITY_TYPES.MAIN_VAULT.key,
-        id: ENTITY_TYPES.MAIN_VAULT.defaultId,
-        name: ENTITY_TYPES.MAIN_VAULT.label,
-        shortLabel: ENTITY_TYPES.MAIN_VAULT.shortLabel,
-        type: ENTITY_TYPES.MAIN_VAULT.key,
-        icon: ENTITY_TYPES.MAIN_VAULT.icon,
-        color: ENTITY_TYPES.MAIN_VAULT.color,
-      });
+      /* المحل القطاعي — فقط لو فيه عناصر */
+      if (counts.retail_shop > 0) {
+        list.push({
+          key: ENTITY_TYPES.RETAIL_SHOP.key,
+          id: ENTITY_TYPES.RETAIL_SHOP.defaultId,
+          name: ENTITY_TYPES.RETAIL_SHOP.label,
+          shortLabel: ENTITY_TYPES.RETAIL_SHOP.shortLabel,
+          type: ENTITY_TYPES.RETAIL_SHOP.key,
+          icon: ENTITY_TYPES.RETAIL_SHOP.icon,
+          color: ENTITY_TYPES.RETAIL_SHOP.color,
+          count: counts.retail_shop,
+        });
+      }
 
-      /* كل بياعي الجملة */
+      /* الخزنة الرئيسية — فقط لو فيها عناصر */
+      if (counts.main_vault > 0) {
+        list.push({
+          key: ENTITY_TYPES.MAIN_VAULT.key,
+          id: ENTITY_TYPES.MAIN_VAULT.defaultId,
+          name: ENTITY_TYPES.MAIN_VAULT.label,
+          shortLabel: ENTITY_TYPES.MAIN_VAULT.shortLabel,
+          type: ENTITY_TYPES.MAIN_VAULT.key,
+          icon: ENTITY_TYPES.MAIN_VAULT.icon,
+          color: ENTITY_TYPES.MAIN_VAULT.color,
+          count: counts.main_vault,
+        });
+      }
+
+      /* بياعي الجملة — فقط اللي عندهم بضاعة */
       try {
         const reps = GMS.B2B?.getReps?.() || [];
         reps.forEach(rep => {
-          list.push({
-            key: `rep:${rep.id}`,
-            id: rep.id,
-            name: rep.name,
-            shortLabel: rep.code || rep.name,
-            type: ENTITY_TYPES.B2B_REP.key,
-            icon: ENTITY_TYPES.B2B_REP.icon,
-            color: ENTITY_TYPES.B2B_REP.color,
-            rep_code: rep.code,
-            rep_phone: rep.phone,
-          });
+          const repCount = counts.reps[rep.id] || 0;
+          if (repCount > 0) {
+            list.push({
+              key: `rep:${rep.id}`,
+              id: rep.id,
+              name: rep.name,
+              shortLabel: rep.code || rep.name,
+              type: ENTITY_TYPES.B2B_REP.key,
+              icon: ENTITY_TYPES.B2B_REP.icon,
+              color: ENTITY_TYPES.B2B_REP.color,
+              rep_code: rep.code,
+              rep_phone: rep.phone,
+              count: repCount,
+            });
+          }
         });
       } catch (e) {
         console.warn('[Inventory] Failed to load reps:', e);
       }
     } else if (isCurrentUserRep()) {
-      /* بياع جملة → يرى نفسه فقط */
+      /* بياع الجملة → يرى نفسه فقط */
       const myRepId = getCurrentRepId();
       if (myRepId) {
         try {
           const reps = GMS.B2B?.getReps?.() || [];
           const me = reps.find(r => r.id === myRepId);
-          list.push({
-            key: `rep:${myRepId}`,
-            id: myRepId,
-            name: me?.name || 'عهدتي',
-            shortLabel: me?.code || 'عهدتي',
-            type: ENTITY_TYPES.B2B_REP.key,
-            icon: ENTITY_TYPES.B2B_REP.icon,
-            color: ENTITY_TYPES.B2B_REP.color,
-          });
+          const repCount = counts.reps[myRepId] || 0;
+
+          if (repCount > 0 || true) {
+            /* نعرض نفسه حتى لو فارغ */
+            list.push({
+              key: `rep:${myRepId}`,
+              id: myRepId,
+              name: me?.name || 'عهدتي',
+              shortLabel: me?.code || 'عهدتي',
+              type: ENTITY_TYPES.B2B_REP.key,
+              icon: ENTITY_TYPES.B2B_REP.icon,
+              color: ENTITY_TYPES.B2B_REP.color,
+              count: repCount,
+            });
+          }
         } catch (_) {
           list.push({
             key: `rep:${myRepId}`,
@@ -414,12 +474,13 @@
             type: ENTITY_TYPES.B2B_REP.key,
             icon: ENTITY_TYPES.B2B_REP.icon,
             color: ENTITY_TYPES.B2B_REP.color,
+            count: counts.reps[myRepId] || 0,
           });
         }
       }
     }
 
-    /* بائع قطاعي أو محاسب فرع → المحل القطاعي فقط */
+    /* بائع قطاعي أو أي دور آخر → المحل القطاعي فقط */
     if (!list.length) {
       list.push({
         key: ENTITY_TYPES.RETAIL_SHOP.key,
@@ -429,36 +490,41 @@
         type: ENTITY_TYPES.RETAIL_SHOP.key,
         icon: ENTITY_TYPES.RETAIL_SHOP.icon,
         color: ENTITY_TYPES.RETAIL_SHOP.color,
+        count: counts.retail_shop,
       });
     }
 
     InvState.entities = list;
     InvState.entitiesLoaded = true;
 
-    /* تعيين الفلتر الافتراضي */
+    /* ─── تعيين الفلتر الافتراضي ─── */
     if (isCurrentUserRep()) {
+      /* بياع → عهدته */
       InvState.entityFilter = list[0]?.key || 'all';
     } else if (isCurrentUserManager()) {
-      InvState.entityFilter = 'all';
+      /* مدير → "الكل" لو موجود، وإلا أول كيان */
+      const allEntity = list.find(e => e.isAll);
+      InvState.entityFilter = allEntity ? 'all' : (list[0]?.key || 'all');
     } else {
+      /* أدوار أخرى → أول كيان */
       InvState.entityFilter = list[0]?.key || 'all';
     }
+
+    console.log('[Inventory] ✅ Entities loaded:', {
+      total: list.length,
+      filter: InvState.entityFilter,
+      counts,
+    });
 
     return list;
   }
 
-  /**
-   * معرّف الكيان النشط حالياً
-   */
   function getActiveEntityId() {
     if (!InvState.entityFilter || InvState.entityFilter === 'all') return null;
     const ent = InvState.entities.find(e => e.key === InvState.entityFilter);
     return ent ? ent.id : null;
   }
 
-  /**
-   * فلترة عنصر حسب الكيان المختار
-   */
   function itemMatchesEntity(item) {
     if (InvState.entityFilter === 'all') return true;
 
@@ -466,7 +532,6 @@
     const ent = InvState.entities.find(e => e.key === InvState.entityFilter);
     if (!ent) return true;
 
-    /* مطابقة حسب نوع + id */
     if (ent.type === 'all') return true;
 
     if (ent.type === ENTITY_TYPES.B2B_REP.key) {
@@ -476,10 +541,6 @@
     return holder.type === ent.type;
   }
 
-  /**
-   * هل العنصر مرئي للمستخدم الحالي (عزل الأمان)؟
-   * بياع الجملة لا يرى إلا عهدته فقط
-   */
   function itemVisibleToUser(item) {
     if (isCurrentUserManager()) return true;
 
@@ -508,7 +569,6 @@
         try {
           const items = await GMS.IDB.getAll();
           if (items.length) {
-            /* ⚠️ BACKWARD-COMPAT: نضيف holder_type افتراضي للعناصر القديمة */
             items.forEach(it => {
               if (!it.holder_type) {
                 it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
@@ -547,10 +607,9 @@
   function applyFilters() {
     const f = InvState.filters;
 
-    /* ✅ عزل الأمان حسب الدور (لا يرى البياع إلا بضاعته) */
     let rows = InvState.items.filter(itemVisibleToUser);
 
-    /* 🆕 v6: فلتر الكيان/العهدة */
+    /* فلتر الكيان */
     if (InvState.entityFilter && InvState.entityFilter !== 'all') {
       rows = rows.filter(itemMatchesEntity);
     }
@@ -593,7 +652,6 @@
     const key = InvState.sortBy;
 
     rows.sort((a, b) => {
-      /* 🆕 فرز حسب العهدة */
       if (key === 'holder') {
         const ha = getItemHolder(a).name || '';
         const hb = getItemHolder(b).name || '';
@@ -635,19 +693,46 @@
     return rows;
   }
 
+  function computeLiveValue(item, price24) {
+    if (!item) return 0;
+    const p24 = price24 || getCurrentPrice24();
+    const pure = Number(item.pure_weight || 0);
+    const net = Number(item.net_weight || 0);
+    const saleMake = Number(item.workmanship_per_gram || 0);
+    return GMS.round((pure * p24) + (net * saleMake), 2);
+  }
+
+  function computeAggregateValues(items, price24) {
+    const p24 = price24 || getCurrentPrice24();
+    let total = 0;
+    let stored = 0;
+    (items || []).forEach(item => {
+      total += computeLiveValue(item, p24);
+      stored += Number(item.total_cost || 0);
+    });
+    return {
+      total: GMS.round(total, 2),
+      stored: GMS.round(stored, 2),
+      diff: GMS.round(total - stored, 2),
+    };
+  }
+
   function updateStats() {
     const all = InvState.items.filter(itemVisibleToUser);
     const filtered = InvState.filtered;
     const price24 = getCurrentPrice24();
 
     let totalPure = 0;
+    let totalNet = 0;
     let totalValue = 0;
     let totalStoredCost = 0;
     let customKaratCount = 0;
 
     filtered.forEach(i => {
       const pure = Number(i.pure_weight || 0);
+      const net = Number(i.net_weight || 0);
       totalPure += pure;
+      totalNet += net;
       totalValue += computeLiveValue(i, price24);
       totalStoredCost += Number(i.total_cost || 0);
       if (i.is_custom_karat === true || i.custom_karat != null) customKaratCount++;
@@ -660,6 +745,7 @@
       sold: all.filter(i => i.status === 'SOLD').length,
       reserved: all.filter(i => i.status === 'RESERVED').length,
       totalPure: GMS.round(totalPure, 4),
+      totalNet: GMS.round(totalNet, 3),
       totalValue: GMS.round(totalValue, 2),
       totalStoredCost: GMS.round(totalStoredCost, 2),
       customKaratCount,
@@ -667,9 +753,6 @@
     };
   }
 
-  /**
-   * 🆕 v6: حساب ملخّص لكل كيان (للتابات)
-   */
   function computeEntitySummary() {
     const summary = {};
     const price24 = getCurrentPrice24();
@@ -684,7 +767,6 @@
       };
     });
 
-    /* "الكل" يُجمع من الجميع */
     if (summary['all']) {
       visible.forEach(item => {
         const net = Number(item.net_weight || 0);
@@ -699,7 +781,6 @@
       summary['all'].value = GMS.round(summary['all'].value, 2);
     }
 
-    /* كل كيان على حدة */
     visible.forEach(item => {
       const holder = getItemHolder(item);
       const key = holder.type === ENTITY_TYPES.B2B_REP.key
@@ -752,13 +833,13 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4.5 · 🆕 v6 · ENTITY TABS (Segmented Filter)
+     §4.5 · ENTITY TABS
      ═════════════════════════════════════════════════════════════════════ */
 
   function renderEntityTabs() {
     if (!InvState.entities.length) return '';
-    /* لا نُظهر التابات لو هناك كيان واحد فقط */
-    if (InvState.entities.length <= 1 && !isCurrentUserManager()) return '';
+    /* لا نُظهر التابات لو هناك كيان واحد فقط ولا يوجد "الكل" */
+    if (InvState.entities.length <= 1) return '';
 
     return `
       <div class="card" style="margin-bottom:14px;padding:14px 18px">
@@ -795,7 +876,6 @@
             const isActive = InvState.entityFilter === ent.key;
             const sm = InvState.entitySummary[ent.key] || { count: 0, pure: 0 };
 
-            /* أيقونات وألوان ديناميكية */
             const colorMap = {
               'gold': 'var(--primary)',
               'success': 'var(--success)',
@@ -838,15 +918,13 @@
     `;
   }
 
-  /**
-   * 🆕 v6: كروت تجميع حسب العهدة (للمدير فقط)
-   */
   function renderEntitySummaryCards() {
     if (!isCurrentUserManager()) return '';
     if (!InvState.entities.length) return '';
-    if (InvState.entityFilter === 'all' && InvState.entities.length <= 1) return '';
-
     const entities = InvState.entities.filter(e => !e.isAll);
+    if (entities.length <= 0) return '';
+
+    const baseLabel = getBaseLabel();
 
     return `
       <div style="display:grid;
@@ -861,6 +939,9 @@
             'info': 'var(--info)',
           };
           const clr = colorMap[ent.color] || 'var(--primary)';
+
+          /* ✅ تحويل القيمة للعيار النشط */
+          const displayPure = convertFromPure24(sm.pure);
 
           return `
             <div style="padding:12px 14px;
@@ -896,10 +977,12 @@
                           align-items:baseline;gap:6px">
                 <div>
                   <div style="font-size:9.5px;color:var(--muted);
-                              font-weight:800">الصافي</div>
+                              font-weight:800">
+                    الصافي ${baseLabel}
+                  </div>
                   <div class="mono" style="font-size:13px;font-weight:900;
                               color:${clr}">
-                    ${GMS.gramFmt(sm.pure)} جم
+                    ${GMS.gramFmt(displayPure)} جم
                   </div>
                 </div>
                 <div style="text-align:end">
@@ -925,6 +1008,12 @@
   function renderHeader(col) {
     if (!InvState.columns[col.key]) return '';
 
+    /* ✅ v6.1: عمود البندق يعرض العيار النشط */
+    let label = col.label;
+    if (col.key === 'pure_weight') {
+      label = `بندق ${getBaseLabel()}`;
+    }
+
     const isSorted = InvState.sortBy === col.key;
     const sortIcon = !col.sortable
       ? ''
@@ -941,7 +1030,7 @@
           style="width:${col.width}px;cursor:${col.sortable ? 'pointer' : 'default'}">
         <div style="display:flex;align-items:center;gap:5px;
                     justify-content:${col.align === 'end' ? 'flex-end' : col.align === 'center' ? 'center' : 'flex-start'}">
-          <span>${GMS.esc(col.label)}</span>
+          <span>${GMS.esc(label)}</span>
           ${col.sortable ? `
             <i data-lucide="${sortIcon}"
                style="width:11px;height:11px;opacity:${isSorted ? '1' : '0.35'};
@@ -974,9 +1063,6 @@
     return `<span class="karat-badge" data-k="${info.karat}">${info.karat}K</span>`;
   }
 
-  /**
-   * 🆕 v6: عرض العهدة كـ badge
-   */
   function renderHolderBadge(item) {
     const holder = getItemHolder(item);
 
@@ -1009,14 +1095,12 @@
   function renderRow(item, idx, globalIdx) {
     const isSelected = InvState.selected.has(item.sku);
     const status = GMS.getStatus(item.status);
-    const karatInfo = getItemKaratInfo(item);
 
     const branchName = item.branch_name
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
 
     const cells = [];
 
-    /* 🆕 v6: عمود العهدة */
     if (InvState.columns.holder) {
       cells.push(`<td>${renderHolderBadge(item)}</td>`);
     }
@@ -1049,8 +1133,10 @@
     }
 
     if (InvState.columns.pure_weight) {
+      /* ✅ v6.1: تحويل القيمة للعيار النشط */
+      const displayPure = convertFromPure24(item.pure_weight);
       cells.push(`<td class="col-num" style="color:var(--primary);font-weight:900">
-        ${GMS.gramFmt(item.pure_weight)}</td>`);
+        ${GMS.gramFmt(displayPure)}</td>`);
     }
 
     if (InvState.columns.workmanship_per_gram) {
@@ -1357,9 +1443,12 @@
       : 0;
     const valueDiff = InvState.stats.totalValue - InvState.stats.totalStoredCost;
 
-    /* 🆕 v6: العنوان يتغير حسب الكيان المُختار */
     const activeEntity = InvState.entities.find(e => e.key === InvState.entityFilter);
     const entityLabel = activeEntity ? activeEntity.name : 'كل المخزون';
+
+    /* ✅ v6.1: تحويل القيم للعيار النشط */
+    const baseLabel = getBaseLabel();
+    const displayTotalPure = convertFromPure24(InvState.stats.totalPure);
 
     root.innerHTML = `
       <div class="page-header">
@@ -1378,15 +1467,15 @@
         <p>${GMS.t('inv.subtitle')}
           <span class="chip success" style="font-size:10px;margin-inline-start:6px">
             <i data-lucide="zap" style="width:10px;height:10px"></i>
-            سعر 24K لحظي: ${GMS.moneyFmt(price24)} ج.م
+            سعر ${baseLabel} لحظي: ${GMS.moneyFmt(price24)} ج.م
           </span>
         </p>
       </div>
 
-      <!-- 🆕 v6: كروت تجميع الكيانات -->
+      <!-- كروت تجميع الكيانات -->
       ${renderEntitySummaryCards()}
 
-      <!-- 🆕 v6: تابات الكيانات -->
+      <!-- تابات الكيانات -->
       ${renderEntityTabs()}
 
       <div class="kpi-row cols-4">
@@ -1402,8 +1491,8 @@
             `من إجمالي <b>${GMS.intFmt(InvState.items.filter(itemVisibleToUser).length)}</b> صنف` +
             (InvState.entityFilter !== 'all' ? ` · <b>${GMS.esc(entityLabel)}</b>` : ''))}
 
-        ${renderKPI('success', 'scale', 'إجمالي البندق المُفلتر',
-            GMS.gramFmt(InvState.stats.totalPure), 'جم',
+        ${renderKPI('success', 'scale', `إجمالي البندق ${baseLabel} المُفلتر`,
+            GMS.gramFmt(displayTotalPure), 'جم',
             `القيمة السوقية: <b>${GMS.moneyFmt(InvState.stats.totalValue)}</b> ج.م` +
             (Math.abs(valueDiff) > 0.5
               ? ` · <span style="color:${valueDiff > 0 ? 'var(--success)' : 'var(--danger)'}">${valueDiff > 0 ? '+' : ''}${GMS.moneyFmt(valueDiff)}</span>`
@@ -1412,7 +1501,7 @@
         ${renderKPI('violet', 'trending-up', 'متوسط القيمة',
             InvState.filtered.length ? GMS.moneyFmt(avgLive) : '0.00',
             'ج.م',
-            `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`)}
+            `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر ${baseLabel}: <b>${GMS.moneyFmt(price24)}</b>`)}
       </div>
 
       <div class="card" style="margin-bottom:16px">
@@ -1600,6 +1689,9 @@
     const valueDiff = InvState.stats.totalValue - InvState.stats.totalStoredCost;
     const visibleItems = InvState.items.filter(itemVisibleToUser);
 
+    const baseLabel = getBaseLabel();
+    const displayTotalPure = convertFromPure24(InvState.stats.totalPure);
+
     const kpis = kpiHost.querySelectorAll('.kpi');
     if (kpis[0]) {
       const val = kpis[0].querySelector('.kpi-value');
@@ -1626,9 +1718,16 @@
       }
     }
     if (kpis[2]) {
+      const label = kpis[2].querySelector('.kpi-label');
       const val = kpis[2].querySelector('.kpi-value');
       const meta = kpis[2].querySelector('.kpi-meta');
-      if (val) val.innerHTML = `${GMS.gramFmt(InvState.stats.totalPure)} <small>جم</small>`;
+      if (label) {
+        label.innerHTML = `
+          <i data-lucide="scale" style="width:12px;height:12px"></i>
+          إجمالي البندق ${baseLabel} المُفلتر
+        `;
+      }
+      if (val) val.innerHTML = `${GMS.gramFmt(displayTotalPure)} <small>جم</small>`;
       if (meta) {
         meta.innerHTML = `القيمة السوقية: <b>${GMS.moneyFmt(InvState.stats.totalValue)}</b> ج.م` +
           (Math.abs(valueDiff) > 0.5
@@ -1641,7 +1740,7 @@
       const meta = kpis[3].querySelector('.kpi-meta');
       if (val) val.innerHTML = `${InvState.filtered.length ? GMS.moneyFmt(avgLive) : '0.00'} <small>ج.م</small>`;
       if (meta) {
-        meta.innerHTML = `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر 24K: <b>${GMS.moneyFmt(price24)}</b>`;
+        meta.innerHTML = `على <b>${GMS.intFmt(InvState.filtered.length)}</b> صنف · سعر ${baseLabel}: <b>${GMS.moneyFmt(price24)}</b>`;
       }
     }
 
@@ -1649,7 +1748,7 @@
     if (headerChip) {
       headerChip.innerHTML = `
         <i data-lucide="zap" style="width:10px;height:10px"></i>
-        سعر 24K لحظي: ${GMS.moneyFmt(price24)} ج.م
+        سعر ${baseLabel} لحظي: ${GMS.moneyFmt(price24)} ج.م
       `;
       window.lucide?.createIcons();
     }
@@ -1670,7 +1769,6 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindControls() {
-    /* 🆕 v6: تابات الكيانات */
     document.querySelectorAll('[data-entity-tab]').forEach(tab => {
       tab.onclick = () => {
         InvState.entityFilter = tab.dataset.entityTab;
@@ -1680,7 +1778,6 @@
       };
     });
 
-    /* 🆕 v6: كروت تجميع الكيانات */
     document.querySelectorAll('[data-entity-card]').forEach(card => {
       card.onclick = () => {
         InvState.entityFilter = card.dataset.entityCard;
@@ -1690,11 +1787,9 @@
       };
     });
 
-    /* 🆕 v6: زر أمر النقل */
     const transferBtn = document.getElementById('inv-internal-transfer-btn');
     if (transferBtn) transferBtn.onclick = () => openTransferModal();
 
-    /* البحث */
     const searchInput = document.getElementById('inv-search-input');
     if (searchInput) {
       searchInput.value = InvState.filters.search;
@@ -1884,7 +1979,7 @@
     const price24 = getCurrentPrice24();
     const status = GMS.getStatus(item.status);
     const karatInfo = getItemKaratInfo(item);
-    const holder = getItemHolder(item);
+    const baseLabel = getBaseLabel();
 
     const branchName = item.branch_name
       || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
@@ -1895,6 +1990,9 @@
     const liveValue = computeLiveValue(item, price24);
     const storedCost = Number(item.total_cost || 0);
     const diff = GMS.round(liveValue - storedCost, 2);
+
+    /* تحويل القيم للعيار النشط */
+    const displayPure = convertFromPure24(item.pure_weight);
 
     GMS.Modal.open({
       title: `تفاصيل الصنف — ${item.sku}`,
@@ -1963,8 +2061,8 @@
             <span class="v">${GMS.gramFmt(item.net_weight)} جم</span>
           </div>
           <div class="cl-row hi">
-            <span class="k"><i data-lucide="sparkles"></i> البندق 24K</span>
-            <span class="v">${GMS.gramFmt(item.pure_weight)} جم</span>
+            <span class="k"><i data-lucide="sparkles"></i> البندق ${baseLabel}</span>
+            <span class="v">${GMS.gramFmt(displayPure)} جم</span>
           </div>
         </div>
 
@@ -1974,7 +2072,7 @@
             <span class="v">${GMS.moneyFmt(item.workmanship_value)} ج.م</span>
           </div>
           <div class="cl-row">
-            <span class="k"><i data-lucide="trending-up"></i> سعر 24K الحالي</span>
+            <span class="k"><i data-lucide="trending-up"></i> سعر ${baseLabel} الحالي</span>
             <span class="v" style="color:var(--primary)">${GMS.moneyFmt(price24)} ج.م</span>
           </div>
           <div class="cl-row hi">
@@ -2019,7 +2117,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · 🆕 v6 · INTERNAL STOCK TRANSFER MODAL
+     §10 · INTERNAL STOCK TRANSFER MODAL
      ═════════════════════════════════════════════════════════════════════ */
 
   function openTransferModal(preselectedSkus = null) {
@@ -2031,7 +2129,6 @@
       return GMS.Toast?.warn?.('لا توجد كيانات');
     }
 
-    /* العناصر المرشّحة للنقل */
     let items;
     if (preselectedSkus && preselectedSkus.length) {
       items = InvState.items.filter(i => preselectedSkus.includes(i.sku));
@@ -2047,7 +2144,6 @@
       return GMS.Toast?.warn?.('لا توجد كيانات للنقل');
     }
 
-    /* آخر كيان تم النقل إليه (للاختيار الافتراضي) */
     const defaultTo = entities.length > 1 ? entities[1].key : entities[0].key;
 
     GMS.Modal.open({
@@ -2066,7 +2162,6 @@
           بدون تغيير ملكية المحل. تُسجَّل العملية في دفتر الأستاذ للسجلات.
         </div>
 
-        <!-- من كيان / إلى كيان -->
         <div style="display:grid;grid-template-columns:1fr auto 1fr;
                     gap:14px;align-items:end;margin-bottom:16px">
           <div class="field">
@@ -2099,7 +2194,6 @@
           </div>
         </div>
 
-        <!-- قائمة القطع -->
         <div style="font-size:11px;font-weight:800;color:var(--muted);
                     text-transform:uppercase;letter-spacing:.4px;
                     margin-bottom:10px;display:flex;align-items:center;
@@ -2140,12 +2234,10 @@
 
         const $ = (id) => el.querySelector('#' + id);
 
-        /* ربط أزرار الإغلاق */
         el.querySelectorAll('[data-close]').forEach(b => {
           b.onclick = () => close();
         });
 
-        /* Picker: إضافة قطع */
         $('trf-picker-btn').onclick = () => {
           openItemPicker({
             excludeSkus: selectedItems.map(i => i.sku),
@@ -2166,7 +2258,6 @@
           window.lucide?.createIcons();
           bindItemsRemove();
 
-          /* من يمنع النقل لو ما فيش قطع */
           const btn = $('trf-confirm');
           if (btn) btn.disabled = selectedItems.length === 0;
         }
@@ -2184,7 +2275,6 @@
         bindItemsRemove();
         updateItemsList();
 
-        /* معاينة عند تغيير From/To */
         function updatePreview() {
           const fromKey = $('trf-from').value;
           const toKey = $('trf-to').value;
@@ -2214,6 +2304,9 @@
             return;
           }
 
+          const baseLabel = getBaseLabel();
+          const displayTotalPure = convertFromPure24(totalPure);
+
           preview.innerHTML = `
             <div style="padding:14px 16px;background:var(--gold-soft);
                         border-radius:11px;
@@ -2233,8 +2326,8 @@
                 <div>من: <b>${GMS.esc(fromEnt.name)}</b></div>
                 <div>إلى: <b>${GMS.esc(toEnt.name)}</b></div>
                 <div>عدد القطع: <b>${selectedItems.length}</b></div>
-                <div>إجمالي البندق: <b style="color:var(--primary)">
-                  ${GMS.gramFmt(totalPure)} جم
+                <div>إجمالي البندق ${baseLabel}: <b style="color:var(--primary)">
+                  ${GMS.gramFmt(displayTotalPure)} جم
                 </b></div>
               </div>
             </div>
@@ -2246,7 +2339,6 @@
         $('trf-from').onchange = updatePreview;
         $('trf-to').onchange = updatePreview;
 
-        /* تأكيد النقل */
         $('trf-confirm').onclick = async () => {
           const fromKey = $('trf-from').value;
           const toKey = $('trf-to').value;
@@ -2291,8 +2383,8 @@
               `من ${fromEnt.name} → ${toEnt.name}`
             );
 
-            /* إعادة تحميل */
             await loadInventory();
+            await loadEntities();
             applyFilters();
             render(document.getElementById('page'));
           } catch (e) {
@@ -2305,7 +2397,6 @@
           }
         };
 
-        /* شغّل المعاينة الأولية */
         setTimeout(updatePreview, 100);
       },
     });
@@ -2322,6 +2413,8 @@
       `;
     }
 
+    const baseLabel = getBaseLabel();
+
     return `
       <table class="tbl" style="font-size:11.5px">
         <thead>
@@ -2329,7 +2422,7 @@
             <th>كود التاج</th>
             <th style="width:60px" class="col-c">عيار</th>
             <th style="width:90px" class="col-num">صافي (جم)</th>
-            <th style="width:100px" class="col-num">بندق 24K</th>
+            <th style="width:100px" class="col-num">بندق ${baseLabel}</th>
             <th style="width:120px" class="col-num">القيمة</th>
             <th style="width:50px" class="col-c">—</th>
           </tr>
@@ -2338,6 +2431,8 @@
           ${items.map(it => {
             const info = getItemKaratInfo(it);
             const val = computeLiveValue(it);
+            const displayPure = convertFromPure24(it.pure_weight);
+
             return `
               <tr>
                 <td class="mono" style="font-weight:800">${GMS.esc(it.sku)}</td>
@@ -2348,7 +2443,7 @@
                 </td>
                 <td class="col-num">${GMS.gramFmt(it.net_weight)}</td>
                 <td class="col-num" style="color:var(--primary);font-weight:800">
-                  ${GMS.gramFmt(it.pure_weight)}
+                  ${GMS.gramFmt(displayPure)}
                 </td>
                 <td class="col-num" style="font-weight:800">
                   ${GMS.moneyFmt(val)}
@@ -2367,9 +2462,6 @@
     `;
   }
 
-  /**
-   * 🆕 v6: تنفيذ النقل الداخلي — يحدّث العهدة على العناصر
-   */
   async function executeInternalTransfer({ fromEntity, toEntity, items, notes }) {
     const now = new Date().toISOString();
     const voucherNo = `TRF-${Date.now().toString(36).toUpperCase().slice(-8)}`;
@@ -2380,19 +2472,16 @@
       name: toEntity.name,
     };
 
-    /* 1) تحديث كل عنصر */
     for (const item of items) {
       try {
         const fresh = await GMS.IDB?.get?.(item.id) || item;
         setItemHolder(fresh, newHolder);
         fresh.updated_at = now;
 
-        /* حفظ في IDB */
         if (GMS.IDB) {
           await GMS.IDB.put(fresh);
         }
 
-        /* تحديث المصفوفة المحلية */
         const idx = InvState.items.findIndex(x => x.sku === item.sku);
         if (idx >= 0) InvState.items[idx] = fresh;
       } catch (e) {
@@ -2400,7 +2489,6 @@
       }
     }
 
-    /* 2) تحديث Supabase لو متصل */
     if (GMS.Supabase?.isReady?.()) {
       try {
         const client = GMS.Supabase.get();
@@ -2421,7 +2509,6 @@
       }
     }
 
-    /* 3) سجل حركة (Audit) */
     if (GMS.Audit) {
       try {
         const totalPure = items.reduce(
@@ -2445,7 +2532,6 @@
       } catch (_) {}
     }
 
-    /* 4) Realtime emit */
     if (GMS.Realtime) {
       try {
         GMS.Realtime.emit('inventory', 'UPDATE', {
@@ -2458,7 +2544,6 @@
       } catch (_) {}
     }
 
-    /* 5) Toast نهائي */
     console.log(
       `[Inventory] ✅ Transfer ${voucherNo}: ${items.length} items`,
       { from: fromEntity.key, to: toEntity.key }
@@ -2468,7 +2553,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · ITEM PICKER (نافذة فرعية لاختيار عناصر)
+     §11 · ITEM PICKER
      ═════════════════════════════════════════════════════════════════════ */
 
   function openItemPicker(opts = {}) {
@@ -2561,10 +2646,12 @@
       return `<div class="empty" style="padding:40px"><i data-lucide="package-x"></i><p>لا توجد قطع</p></div>`;
     }
 
+    const baseLabel = getBaseLabel();
+
     return items.slice(0, 500).map(it => {
       const info = getItemKaratInfo(it);
-      const holder = getItemHolder(it);
       const checked = picked.has(it.sku) ? 'checked' : '';
+      const displayPure = convertFromPure24(it.pure_weight);
 
       return `
         <div data-pick-sku="${GMS.esc(it.sku)}"
@@ -2592,10 +2679,10 @@
           <div style="text-align:end">
             <div class="mono" style="font-size:12px;font-weight:900;
                         color:var(--primary)">
-              ${GMS.gramFmt(it.pure_weight)} جم
+              ${GMS.gramFmt(displayPure)} جم
             </div>
             <div style="font-size:9.5px;color:var(--muted);font-weight:700">
-              بندق 24K
+              بندق ${baseLabel}
             </div>
           </div>
         </div>
@@ -2604,7 +2691,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · ITEM MODAL (ADD / EDIT) — محفوظ من v5
+     §12 · ITEM MODAL (ADD / EDIT)
      ═════════════════════════════════════════════════════════════════════ */
 
   function openItemModal(item = null) {
@@ -2633,7 +2720,6 @@
       sameWeight: true,
       individualWeights: [],
 
-      /* 🆕 v6: العهدة */
       holderKey: item_
         ? (getItemHolder(item_).type === ENTITY_TYPES.B2B_REP.key
             ? `rep:${getItemHolder(item_).id}`
@@ -2675,8 +2761,8 @@
 
   function renderItemForm(isEdit, item_, manufacturers, branches, categories, mstate) {
     const price24 = getCurrentPrice24();
+    const baseLabel = getBaseLabel();
 
-    /* خيارات العهدة */
     const holderOptions = InvState.entities.filter(e => !e.isAll).map(e => `
       <option value="${GMS.esc(e.key)}" ${mstate.holderKey === e.key ? 'selected' : ''}>
         ${GMS.esc(e.name)}${e.rep_code ? ` (${e.rep_code})` : ''}
@@ -2684,7 +2770,6 @@
     `).join('');
 
     return `
-      <!-- 🆕 v6: العهدة -->
       <div style="padding:14px 16px;background:var(--violet-bg);border-radius:12px;
                   border:1.5px solid color-mix(in srgb,var(--violet) 30%,var(--border));
                   margin-bottom:16px">
@@ -2705,7 +2790,6 @@
         </div>
       </div>
 
-      <!-- Section 1: SKU + Manufacturer + Category -->
       <div class="grid-form three">
         <div class="field">
           <label>كود التاج الأساسي <span class="req">*</span>
@@ -2757,7 +2841,6 @@
         </div>
       </div>
 
-      <!-- Karat section (محفوظ من v5) -->
       <div style="margin-top:18px">
         <div style="font-size:11px;font-weight:800;color:var(--muted);
                     text-transform:uppercase;letter-spacing:.5px;
@@ -2841,13 +2924,12 @@
               <b class="mono" id="f-purity-display" style="color:var(--warn);font-size:13px">
                 ${mstate.customPurity.toFixed(4)}
               </b>
-              لحساب البندق 24K والقيمة السوقية.
+              لحساب البندق ${baseLabel} والقيمة السوقية.
             </span>
           </div>
         </div>
       </div>
 
-      <!-- Section 3: Branch + Status -->
       <div class="grid-form" style="margin-top:18px;grid-template-columns:1fr 1fr">
         <div class="field">
           <label>الفرع</label>
@@ -2870,15 +2952,12 @@
         </div>
       </div>
 
-      <!-- Pricing section -->
       <div id="f-pricing-section" style="margin-top:18px">
         ${renderPricingSection(mstate)}
       </div>
 
-      <!-- Quantity / Single weight -->
       ${!isEdit ? renderQuantitySection(mstate) : renderSingleWeightSection(item_, mstate)}
 
-      <!-- Notes -->
       <div class="field" style="margin-top:13px">
         <label>ملاحظات</label>
         <input id="f-notes" value="${GMS.esc(item_.notes || '')}"
@@ -2998,7 +3077,7 @@
                    style="text-align:center;font-weight:800;background:var(--surface-3)">
           </div>
           <div class="field">
-            <label>البندق 24K (للوحدة)</label>
+            <label>البندق ${getBaseLabel()} (للوحدة)</label>
             <input id="f-pure" readonly class="mono"
                    style="text-align:center;color:var(--primary);
                           font-weight:900;background:var(--surface-3)">
@@ -3014,6 +3093,9 @@
   }
 
   function renderSingleWeightSection(item_, mstate) {
+    const baseLabel = getBaseLabel();
+    const displayPure = convertFromPure24(item_.pure_weight);
+
     return `
       <div class="divider" style="margin:18px 0 14px"></div>
       <div style="font-size:11px;font-weight:800;color:var(--muted);
@@ -3046,9 +3128,9 @@
 
       <div class="grid-form three" style="margin-top:13px">
         <div class="field">
-          <label>البندق 24K (جم)</label>
+          <label>البندق ${baseLabel} (جم)</label>
           <input id="f-pure" readonly class="mono"
-                 value="${item_.pure_weight || ''}"
+                 value="${displayPure.toFixed(3)}"
                  style="text-align:center;color:var(--primary);
                         font-weight:900;background:var(--surface-3)">
         </div>
@@ -3059,7 +3141,7 @@
                  style="text-align:center;font-weight:800;background:var(--surface-3)">
         </div>
         <div class="field">
-          <label>سعر 24K الحالي</label>
+          <label>سعر ${baseLabel} الحالي</label>
           <input readonly class="mono"
                  value="${GMS.moneyFmt(getCurrentPrice24())} ج.م"
                  style="text-align:center;font-weight:700;background:var(--surface-3)">
@@ -3249,7 +3331,6 @@
       };
     };
 
-    /* Recalc */
     const recalc = () => {
       const karatInfo = getCurrentKarat();
       const purityRatio = karatInfo.purity_ratio;
@@ -3278,7 +3359,11 @@
       const profitUnit = GMS.round(saleMakeUnit - purchaseMakeUnit, 2);
 
       if ($id('f-net')) $id('f-net').value = netUnit.toFixed(3);
-      if ($id('f-pure')) $id('f-pure').value = pureUnit.toFixed(3);
+      if ($id('f-pure')) {
+        /* ✅ v6.1: عرض القيمة بالعيار النشط */
+        const displayPure = convertFromPure24(pureUnit);
+        $id('f-pure').value = displayPure.toFixed(3);
+      }
       if ($id('f-total')) $id('f-total').value = GMS.moneyFmt(totalUnit);
 
       if ($id('f-total-weight')) {
@@ -3301,7 +3386,6 @@
       });
     };
 
-    /* Karat standard buttons */
     el.querySelectorAll('[data-karat-std]').forEach(btn => {
       btn.onclick = () => {
         mstate.karatMode = 'standard';
@@ -3390,7 +3474,6 @@
       };
     });
 
-    /* Manufacturer change */
     const manuSelect = $id('f-manufacturer');
     if (manuSelect) {
       manuSelect.onfocus = () => lockInteraction();
@@ -3427,13 +3510,11 @@
       };
     }
 
-    /* Weight inputs */
     ['f-weight', 'f-stone'].forEach(id => {
       const inp = $id(id);
       if (inp) inp.oninput = () => { lockInteraction(); recalc(); };
     });
 
-    /* Quantity */
     const qtyInput = $id('f-quantity');
     if (qtyInput) {
       qtyInput.oninput = () => {
@@ -3446,7 +3527,6 @@
       };
     }
 
-    /* Mode toggle */
     const sameModeBtn = $id('f-mode-same');
     const diffModeBtn = $id('f-mode-diff');
 
@@ -3486,7 +3566,6 @@
       };
     }
 
-    /* Category change */
     const categorySelect = $id('f-category');
     if (categorySelect) {
       categorySelect.onfocus = () => lockInteraction();
@@ -3500,7 +3579,6 @@
 
     bindPricingInputs(el, mstate, manufacturers, recalc);
 
-    /* SKU generator */
     const genBtn = $id('f-gen-sku');
     if (genBtn) {
       genBtn.onclick = () => {
@@ -3520,7 +3598,6 @@
       };
     }
 
-    /* Save */
     $id('f-save').onclick = async () => {
       await handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat);
     };
@@ -3569,6 +3646,9 @@
 
     const qty = d.qty || 1;
     const isCustom = d.karatInfo?.is_custom;
+    const baseLabel = getBaseLabel();
+
+    const displayPure = convertFromPure24(d.pureUnit);
 
     preview.innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(5,1fr);
@@ -3601,10 +3681,10 @@
         </div>
         <div>
           <div style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase">
-            البندق${qty > 1 ? '/وحدة' : ''}
+            البندق ${baseLabel}${qty > 1 ? '/وحدة' : ''}
           </div>
           <div class="mono" style="font-size:13px;font-weight:900;margin-top:3px;color:var(--primary)">
-            ${d.pureUnit.toFixed(3)} جم
+            ${displayPure.toFixed(3)} جم
           </div>
           ${isCustom ? `<div class="mono" style="font-size:9.5px;color:var(--warn);font-weight:800;margin-top:2px">
             نقاء ${Number(d.purityRatio).toFixed(4)}
@@ -3706,10 +3786,6 @@
     }
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §13 · SAVE ITEM (with holder support)
-     ═════════════════════════════════════════════════════════════════════ */
-
   async function handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat) {
     const $id = (id) => el.querySelector('#' + id);
 
@@ -3723,7 +3799,6 @@
 
     const karatInfo = getCurrentKarat();
 
-    /* 🆕 v6: العهدة */
     const holderKey = $id('f-holder')?.value || 'retail_shop';
     const holderEnt = InvState.entities.find(e => e.key === holderKey);
     const holder = holderEnt
@@ -3812,7 +3887,6 @@
         letter_code: letterCode || null,
         color_code: colorCode || null,
 
-        /* 🆕 v6: العهدة */
         holder_type: holder.type,
         holder_id: holder.id,
         holder_name: holder.name,
@@ -3876,6 +3950,7 @@
 
       GMS.Beep?.success?.();
       closeFn();
+      await loadEntities();
       applyFilters();
       render(document.getElementById('page'));
     } catch (e) {
@@ -3890,10 +3965,6 @@
       }
     }
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §14 · DELETE ITEM
-     ═════════════════════════════════════════════════════════════════════ */
 
   async function deleteItem(item) {
     const ok = await GMS.Confirm.delete(`سيتم حذف الصنف "${item.sku}" نهائياً. لا يمكن التراجع.`);
@@ -3914,6 +3985,7 @@
       }
       GMS.Toast.ok('تم الحذف', item.sku);
       GMS.Beep?.delete?.();
+      await loadEntities();
       applyFilters();
       render(document.getElementById('page'));
     } catch (e) {
@@ -3921,10 +3993,6 @@
       GMS.Toast.err('فشل الحذف', e.message);
     }
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §15 · BULK ACTIONS
-     ═════════════════════════════════════════════════════════════════════ */
 
   async function handleBulkAction(action) {
     const selected = Array.from(InvState.selected);
@@ -3986,14 +4054,11 @@
       }
       if (failed) GMS.Toast.warn('اكتمل الحذف مع أخطاء', `${deleted} نجح · ${failed} فشل`);
       else GMS.Toast.ok('تم الحذف', `${deleted} صنف`);
+      await loadEntities();
       applyFilters();
       render(document.getElementById('page'));
     } finally { GMS.Loading.hide(); }
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §16 · EXPORT & PRINT
-     ═════════════════════════════════════════════════════════════════════ */
 
   function exportFiltered() {
     if (!InvState.filtered.length) return GMS.Toast.warn('لا توجد بيانات للتصدير');
@@ -4013,10 +4078,6 @@
     try { await GMS.QR.Printer.printOne(item); }
     catch (e) { GMS.Toast.err('فشلت الطباعة', e.message); }
   }
-
-  /* ═════════════════════════════════════════════════════════════════════
-     §17 · COLUMNS MANAGER
-     ═════════════════════════════════════════════════════════════════════ */
 
   function openColumnsMenu(anchorEl) {
     document.querySelector('.col-mgr')?.remove();
@@ -4094,10 +4155,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · PRICE LISTENER
+     §18 · ✅ v6.1: PRICE LISTENER + BASEKARAT LISTENER
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindPriceListener() {
+    /* 1 · PriceManager */
     if (GMS.PriceManager?.on) {
       const unsub = GMS.PriceManager.on((newPrice, oldPrice) => {
         if (GMS.Router?.currentId?.() !== 'inventory') return;
@@ -4107,16 +4169,28 @@
       InvState.unsubscribers.push(unsub);
     }
 
-    const priceEventHandler = (e) => {
+    /* 2 · Custom event */
+    const priceHandler = (e) => {
       if (GMS.Router?.currentId?.() !== 'inventory') return;
       if (!e.detail?.prices?.price24) return;
       applyFilters();
       refreshTable();
     };
-    window.addEventListener('goldPriceUpdated', priceEventHandler);
+    window.addEventListener('goldPriceUpdated', priceHandler);
     InvState.unsubscribers.push(() => {
-      window.removeEventListener('goldPriceUpdated', priceEventHandler);
+      window.removeEventListener('goldPriceUpdated', priceHandler);
     });
+
+    /* 3 · ✅ v6.1: BaseKarat listener */
+    if (GMS.BaseKarat?.on) {
+      const unsub = GMS.BaseKarat.on(() => {
+        console.log('[Inventory] 🔄 Base Karat changed — refreshing view');
+        if (GMS.Router?.currentId?.() !== 'inventory') return;
+        applyFilters();
+        render(document.getElementById('page'));
+      });
+      InvState.unsubscribers.push(unsub);
+    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -4126,7 +4200,7 @@
   async function init() {
     try {
       await loadInventory();
-      await loadEntities();      /* 🆕 v6 */
+      await loadEntities();
       applyFilters();
       bindPriceListener();
     } catch (e) {
@@ -4162,7 +4236,7 @@
     deleteItem,
     printTag,
     export: exportFiltered,
-    openTransferModal,          /* 🆕 v6 */
+    openTransferModal,
 
     bulkPrintTags,
     bulkExport,
@@ -4170,7 +4244,6 @@
 
     columns: COLUMNS,
 
-    /* API */
     buildUniqueSku,
     lockInteraction,
     isInteractionLocked,
@@ -4179,30 +4252,34 @@
     computeLiveValue,
     computeAggregateValues,
 
-    /* 🆕 v6 */
     getItemHolder,
     setItemHolder,
     isCurrentUserRep,
     isCurrentUserManager,
     ENTITY_TYPES,
+
+    /* ✅ v6.1: Base Karat helpers */
+    getBaseLabel,
+    getBaseKarat,
+    convertFromPure24,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
      §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Inventory View v6.0 loaded · Holder Isolation + Internal Transfer',
+    '%c📦 Inventory View v6.1 loaded · Base Karat + Hide Empty Tabs',
     'color:#b8912f;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
 
   console.log(
-    `%c🔒 Role-Based Isolation · Entity Tabs · Transfer Voucher · Live Values`,
+    `%c🔒 Role-Based Isolation · Auto-Hide Empty Entities · Live Karat Conversion`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🆕 v6: getItemHolder / setItemHolder / openTransferModal / executeInternalTransfer`,
+    `%c🆕 v6.1: getBaseLabel / getBaseKarat / convertFromPure24 — العيار النشط يظهر في كل الصفحة`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
