@@ -7,6 +7,15 @@
      • Inter-Branch    — تحويل مشغولات بين الفروع (Transfer Manifest)
      • Retail B2C      — البيع العادي (يُعالج من POS)
 
+   ✅ v4: إصلاح جوهري — عزل مخزون البياعين
+     • عند عدم وجود بياعين → الكيان واحد (المحل القطاعي + الجملة)
+     • عند وجود بياعين → اختيارين لكل بياع:
+         - "مخزون مشترك" (shared) → يستخدم مخزون المحل الرئيسي
+         • "مخزون معزول" (isolated) → خزنة خاصة بالبياع
+     • الفلترة التلقائية للـ picker / scan / inline search
+     • إصلاح عرض "undefinedK" — استخدام getItemKaratDisplay
+     • حماية البيانات: التحقق من ملكية القطعة قبل الإضافة
+
    المكونات:
      • شاشة إنشاء فاتورة توريد / جملة (Wholesale Invoice Builder)
      • شاشة إدارة حركة الفروع (Branch Transfers Management)
@@ -15,16 +24,7 @@
      • Excel Export
      • Realtime Integration
      • ✅ v2: تكامل كامل مع نظام بياعي الجملة المستقلين (B2B Reps)
-       - اختيار البياع المسؤول
-       - اختيار عميل الجملة المرتبط بالبياع
-       - ربط الفاتورة بدفتر وخزينة البياع تلقائياً
      • ✅ v3: نظام SCAN + بحث يدوي inline (مثل POS)
-       - حقل باركود مباشر داخل المودال
-       - إضافة تلقائية للقطعة بعد المسح
-       - بحث يدوي فوري (اسم/ماركة/تصنيف) بدون مودالات
-       - F2 للتركيز السريع على المسح
-       - Feedback فوري (نجاح/فشل/تحذير)
-       - Auto-focus عند فتح المودال
 
    التخزين (CacheDB):
      • wholesale_invoices
@@ -51,7 +51,7 @@
       label: 'بيع جملة (B2B)',
       icon: 'factory',
       color: 'violet',
-      defaultDiscount: 15,   /* % خصم على المصنعية */
+      defaultDiscount: 15,
       description: 'بيع للمحلات والورش بأسعار جملة',
     },
     inter_branch: {
@@ -130,6 +130,51 @@
     { key: 'customer', label: 'عميل جملة', icon: 'user' },
   ]);
 
+  /* ✅ v4: أنماط المخزون */
+  const INVENTORY_MODES = Object.freeze({
+    shared: {
+      key: 'shared',
+      label: 'مخزون مشترك',
+      shortLabel: 'مشترك',
+      icon: 'layers',
+      color: 'info',
+      description: 'يستخدم مخزون المحل / الكيان الرئيسي',
+    },
+    isolated: {
+      key: 'isolated',
+      label: 'مخزون معزول',
+      shortLabel: 'معزول',
+      icon: 'vault',
+      color: 'violet',
+      description: 'خزنة خاصة بالبياع (مخزون + ذهب + نقد منفصل)',
+    },
+  });
+
+  /* ✅ v4: أنواع حيازة المخزون */
+  const HOLDER_TYPES = Object.freeze({
+    RETAIL_SHOP: {
+      key: 'retail_shop',
+      label: 'المحل القطاعي',
+      icon: 'store',
+      color: 'success',
+      defaultId: 'retail-main',
+    },
+    MAIN_VAULT: {
+      key: 'main_vault',
+      label: 'الخزنة الرئيسية',
+      icon: 'vault',
+      color: 'gold',
+      defaultId: 'vault-main',
+    },
+    B2B_REP: {
+      key: 'b2b_rep',
+      label: 'عهدة بياع جملة',
+      icon: 'user-check',
+      color: 'violet',
+      defaultId: null,
+    },
+  });
+
   /* المفاتيح */
   const STORE_INVOICES   = 'wholesale_invoices';
   const STORE_TRANSFERS  = 'branch_transfers';
@@ -146,7 +191,6 @@
         if (!store) return [];
         const key = this._prefix + store;
 
-        /* 1 · LocalStorage */
         try {
           const raw = localStorage.getItem(key);
           if (raw) {
@@ -155,7 +199,6 @@
           }
         } catch (_) {}
 
-        /* 2 · IndexedDB fallback */
         if (GMS.IDB && GMS.IDB.isOpen) {
           try {
             const row = await GMS.IDB.metaGet(key);
@@ -257,32 +300,28 @@
      §4 · STATE
      ═════════════════════════════════════════════════════════════════════ */
   const State = {
-    activeTab: 'wholesale',   /* 'wholesale' | 'transfers' */
+    activeTab: 'wholesale',
 
     invoices: [],
     transfers: [],
 
     inventory: [],
 
-    /* Pagination — Invoices */
     invPage: 1,
     invPageSize: 25,
 
-    /* Pagination — Transfers */
     trfPage: 1,
     trfPageSize: 25,
 
-    /* Filters */
     filters: {
       invSearch: '',
       invStatus: '',
       invMode: '',
       trfSearch: '',
       trfStatus: '',
-      trfDirection: '',    /* 'outgoing' | 'incoming' */
+      trfDirection: '',
     },
 
-    /* KPI */
     kpis: {
       totalInvoices: 0,
       totalWholesaleValue: 0,
@@ -297,10 +336,8 @@
       transfersDelivered: 0,
     },
 
-    /* Draft state للمودالات */
     draft: null,
 
-    /* ✅ v3: حالة البحث اليدوي inline */
     inlineSearch: {
       query: '',
       results: [],
@@ -402,6 +439,9 @@
   function getRecipientType(key) {
     return RECIPIENT_TYPES.find(t => t.key === key) || RECIPIENT_TYPES[0];
   }
+  function getInventoryMode(key) {
+    return INVENTORY_MODES[key] || INVENTORY_MODES.shared;
+  }
 
   function generateInvoiceNo(mode = 'WS') {
     const d = new Date();
@@ -469,6 +509,214 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
+     §5.2 · ✅ v4: INVENTORY OWNERSHIP + FILTERING
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * هل الكيان الحالي يستخدم وضع "بلا بياعين" (كيان واحد)؟
+   */
+  function isSingleEntityMode() {
+    const reps = getB2BReps();
+    return reps.length === 0;
+  }
+
+  /**
+   * نمط مخزون البياع (shared / isolated)
+   */
+  function getRepInventoryMode(repId) {
+    if (!repId) return 'shared';
+    const rep = getB2BReps().find(r => r.id === repId);
+    return rep?.inventory_mode || 'shared';
+  }
+
+  /**
+   * تحديث نمط مخزون البياع + حفظ
+   */
+  function setRepInventoryMode(repId, mode) {
+    if (!repId) return false;
+    if (!['shared', 'isolated'].includes(mode)) return false;
+
+    const rep = getB2BReps().find(r => r.id === repId);
+    if (!rep) return false;
+
+    rep.inventory_mode = mode;
+
+    try {
+      if (GMS.Views?.b2b?.saveRep) {
+        GMS.Views.b2b.saveRep(rep);
+      } else if (GMS.Views?.b2b?.CacheDB?.save) {
+        GMS.Views.b2b.CacheDB.save('sales_reps', rep);
+      }
+    } catch (e) {
+      console.warn('[WSL.setRepInventoryMode]', e);
+    }
+
+    return true;
+  }
+
+  /**
+   * مخزون المحل / الكيان الرئيسي
+   */
+  function getMainShopInventory() {
+    return State.inventory.filter(i => {
+      const ht = i.holder_type;
+      return !ht || ht === HOLDER_TYPES.RETAIL_SHOP.key || ht === HOLDER_TYPES.MAIN_VAULT.key;
+    });
+  }
+
+  /**
+   * مخزون بياع معين (isolated)
+   */
+  function getRepInventory(repId) {
+    if (!repId) return [];
+    return State.inventory.filter(i =>
+      i.holder_type === HOLDER_TYPES.B2B_REP.key && i.holder_id === repId
+    );
+  }
+
+  /**
+   * ✅ v4: المخزون المتاح للفاتورة الحالية (بناءً على وضع المخزون + البياع)
+   */
+  function getAvailableInventoryForInvoice() {
+    const d = State.draft;
+    const reps = getB2BReps();
+
+    /* 1 · لا يوجد بياعين → كيان واحد (المحل الرئيسي) */
+    if (reps.length === 0) {
+      return getMainShopInventory();
+    }
+
+    /* 2 · فيه بياعين + بياع محدد */
+    if (d && d.rep_id) {
+      const mode = getRepInventoryMode(d.rep_id);
+      if (mode === 'isolated') {
+        return getRepInventory(d.rep_id);
+      }
+    }
+
+    /* 3 · افتراضي → مخزون المحل الرئيسي */
+    return getMainShopInventory();
+  }
+
+  /**
+   * ✅ v4: هل هذه القطعة مؤهلة للفاتورة الحالية؟
+   */
+  function itemBelongsToCurrentInvoice(item) {
+    if (!item) return false;
+
+    const d = State.draft;
+    const reps = getB2BReps();
+    const holderType = item.holder_type || HOLDER_TYPES.RETAIL_SHOP.key;
+
+    /* 1 · كيان واحد (لا يوجد بياعين) */
+    if (reps.length === 0) {
+      return holderType === HOLDER_TYPES.RETAIL_SHOP.key ||
+             holderType === HOLDER_TYPES.MAIN_VAULT.key;
+    }
+
+    /* 2 · بياع محدد */
+    if (d && d.rep_id) {
+      const mode = getRepInventoryMode(d.rep_id);
+
+      if (mode === 'isolated') {
+        return holderType === HOLDER_TYPES.B2B_REP.key &&
+               item.holder_id === d.rep_id;
+      }
+    }
+
+    /* 3 · افتراضي → مخزون المحل */
+    return holderType === HOLDER_TYPES.RETAIL_SHOP.key ||
+           holderType === HOLDER_TYPES.MAIN_VAULT.key;
+  }
+
+  /**
+   * ✅ v4: عرض العيار بشكل آمن (يحل مشكلة undefinedK)
+   * @returns {{text:string, isCustom:boolean, karat:number|null, customKarat:number|null, purity:number}}
+   */
+  function getItemKaratDisplay(item) {
+    if (!item) {
+      return { text: '—', isCustom: false, karat: null, customKarat: null, purity: 0 };
+    }
+
+    /* عيار مخصص صريح */
+    if (item.is_custom_karat === true || item.custom_karat != null) {
+      const num = Number(item.custom_karat) ||
+        Math.round((Number(item.purity_ratio) || 0) * 1000);
+      const purity = Number(item.purity_ratio) || (num / 1000);
+      return {
+        text: String(num),
+        isCustom: true,
+        karat: null,
+        customKarat: num,
+        purity: round(purity, 4),
+      };
+    }
+
+    /* عيار قياسي */
+    if (item.karat != null && item.karat !== '') {
+      const k = Number(item.karat);
+      if (isFinite(k) && k > 0) {
+        return {
+          text: `${k}K`,
+          isCustom: false,
+          karat: k,
+          customKarat: null,
+          purity: GMS.karatRatio ? GMS.karatRatio(k) : (k / 24),
+        };
+      }
+    }
+
+    /* fallback → purity_ratio */
+    if (item.purity_ratio != null) {
+      const purity = Number(item.purity_ratio);
+      if (isFinite(purity) && purity > 0) {
+        const num = Math.round(purity * 1000);
+        const standard = [1000, 916, 875, 750, 583, 585].includes(num);
+        if (standard) {
+          const k = Math.round(purity * 24);
+          return {
+            text: `${k}K`,
+            isCustom: false,
+            karat: k,
+            customKarat: null,
+            purity: round(purity, 4),
+          };
+        }
+        return {
+          text: String(num),
+          isCustom: true,
+          karat: null,
+          customKarat: num,
+          purity: round(purity, 4),
+        };
+      }
+    }
+
+    return { text: '—', isCustom: false, karat: null, customKarat: null, purity: 0 };
+  }
+
+  /**
+   * ✅ v4: شارة العيار HTML (آمنة ضد undefined)
+   */
+  function renderKaratBadgeSafe(item, size = '10px') {
+    const info = getItemKaratDisplay(item);
+
+    if (info.text === '—') {
+      return `<span style="color:var(--muted);font-size:${size}">—</span>`;
+    }
+
+    if (info.isCustom) {
+      return `<span class="karat-badge custom-karat-badge" style="font-size:${size}">
+        ${esc(info.text)}
+      </span>`;
+    }
+
+    return `<span class="karat-badge" data-k="${info.karat}" style="font-size:${size}">
+      ${esc(info.text)}
+    </span>`;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
      §6 · DATA LOADING
      ═════════════════════════════════════════════════════════════════════ */
 
@@ -507,7 +755,18 @@
       if (!items.length && GMS.Demo?.getInventory) {
         items = GMS.Demo.getInventory();
       }
-      State.inventory = Array.isArray(items) ? items : [];
+
+      /* ✅ v4: ضمان وجود holder_type افتراضي */
+      items = (Array.isArray(items) ? items : []).map(it => {
+        if (!it.holder_type) {
+          it.holder_type = HOLDER_TYPES.RETAIL_SHOP.key;
+          it.holder_id = HOLDER_TYPES.RETAIL_SHOP.defaultId;
+          it.holder_name = HOLDER_TYPES.RETAIL_SHOP.label;
+        }
+        return it;
+      });
+
+      State.inventory = items;
       return State.inventory;
     } catch (e) {
       console.warn('[WSL.loadInventory]', e);
@@ -535,7 +794,6 @@
       totalPure += Number(inv.totals?.total_pure || 0);
       totalCash += Number(inv.payment?.cash_paid || 0);
 
-      /* المتبقي على الحساب */
       if (inv.status === 'CONFIRMED' || inv.status === 'PARTIAL') {
         outstandingCash += Number(inv.payment?.cash_due || 0);
         outstandingGold += Number(inv.payment?.gold_due_pure || 0);
@@ -567,7 +825,6 @@
     const f = State.filters;
     let rows = State.invoices.slice();
 
-    /* ✅ عزل بيانات البياع */
     if (isCurrentUserRep()) {
       const myRepId = getDefaultRepId();
       rows = rows.filter(r => r.rep_id === myRepId);
@@ -1226,7 +1483,6 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindEvents() {
-    /* Tabs */
     document.querySelectorAll('[data-wsl-tab]').forEach(tab => {
       tab.onclick = () => {
         State.activeTab = tab.dataset.wslTab;
@@ -1234,7 +1490,6 @@
       };
     });
 
-    /* Search — invoices */
     const invSearch = document.getElementById('wsl-inv-search');
     if (invSearch) {
       invSearch.oninput = (e) => {
@@ -1247,7 +1502,6 @@
       };
     }
 
-    /* Filters — invoices */
     const invStatus = document.getElementById('wsl-inv-status');
     if (invStatus) {
       invStatus.onchange = () => {
@@ -1266,7 +1520,6 @@
       };
     }
 
-    /* Search — transfers */
     const trfSearch = document.getElementById('wsl-trf-search');
     if (trfSearch) {
       trfSearch.oninput = (e) => {
@@ -1279,7 +1532,6 @@
       };
     }
 
-    /* Filters — transfers */
     const trfStatus = document.getElementById('wsl-trf-status');
     if (trfStatus) {
       trfStatus.onchange = () => {
@@ -1298,7 +1550,6 @@
       };
     }
 
-    /* Primary actions */
     const newInv = document.getElementById('wsl-inv-new');
     if (newInv) newInv.onclick = () => openWholesaleModal();
 
@@ -1311,14 +1562,12 @@
     const emptyTrf = document.getElementById('wsl-empty-trf');
     if (emptyTrf) emptyTrf.onclick = () => openTransferModal();
 
-    /* Export */
     const invExport = document.getElementById('wsl-inv-export');
     if (invExport) invExport.onclick = () => exportInvoices();
 
     const trfExport = document.getElementById('wsl-trf-export');
     if (trfExport) trfExport.onclick = () => exportTransfers();
 
-    /* Row + Pagination */
     bindInvoiceRowEvents();
     bindTransferRowEvents();
     bindPaginationEvents('inv');
@@ -1395,8 +1644,6 @@
   function initInvoiceDraft(mode = 'wholesale') {
     const supplyMode = getSupplyMode(mode);
     const branches = getBranches();
-
-    /* ✅ جلب البياع الافتراضي من B2B */
     const defaultRepId = getDefaultRepId();
 
     State.draft = {
@@ -1431,7 +1678,6 @@
       _branches: branches,
     };
 
-    /* ✅ v3: تصفير البحث اليدوي */
     State.inlineSearch = {
       query: '',
       results: [],
@@ -1465,6 +1711,109 @@
     });
   }
 
+  /**
+   * ✅ v4: عرض toggle نمط المخزون للبياع
+   */
+  function renderInventoryModeToggle() {
+    const d = State.draft;
+    if (!d || !d.rep_id) return '';
+
+    const currentMode = getRepInventoryMode(d.rep_id);
+    const mainCount = getMainShopInventory().filter(i => i.status === 'IN_STOCK').length;
+    const repCount = getRepInventory(d.rep_id).filter(i => i.status === 'IN_STOCK').length;
+
+    return `
+      <div style="margin-top:14px;padding:14px 16px;
+                  background:linear-gradient(135deg,
+                    color-mix(in srgb,var(--info) 8%,var(--surface)) 0%,
+                    var(--surface) 100%);
+                  border-radius:11px;
+                  border:1.5px solid color-mix(in srgb,var(--info) 30%,var(--border))">
+        <div style="font-size:11px;font-weight:900;color:var(--info);
+                    text-transform:uppercase;letter-spacing:.4px;
+                    margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <i data-lucide="package" style="width:12px;height:12px"></i>
+          نمط مخزون البياع
+          <span class="chip info" style="font-size:9.5px;margin-inline-start:auto">
+            يحدد مصدر القطع للفاتورة
+          </span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <button type="button" data-inv-mode="shared"
+                  style="padding:12px 10px;border-radius:10px;
+                         cursor:pointer;font-family:inherit;
+                         border:2px solid ${currentMode === 'shared' ? 'var(--info)' : 'var(--border)'};
+                         background:${currentMode === 'shared'
+                           ? 'color-mix(in srgb,var(--info) 15%,var(--surface))'
+                           : 'var(--surface)'};
+                         text-align:center;transition:all .2s">
+            <div style="width:34px;height:34px;border-radius:9px;
+                        display:grid;place-items:center;margin:0 auto 7px;
+                        background:${currentMode === 'shared' ? 'var(--info)' : 'var(--surface-3)'};
+                        color:${currentMode === 'shared' ? '#fff' : 'var(--text-2)'}">
+              <i data-lucide="layers" style="width:17px;height:17px"></i>
+            </div>
+            <div style="font-size:12px;font-weight:900;
+                        color:${currentMode === 'shared' ? 'var(--info)' : 'var(--text)'}">
+              مخزون مشترك
+            </div>
+            <div style="font-size:10px;color:var(--muted);
+                        font-weight:700;margin-top:3px">
+              مخزون المحل الرئيسي
+            </div>
+            <div class="mono" style="font-size:11px;font-weight:900;
+                        color:${currentMode === 'shared' ? 'var(--info)' : 'var(--muted)'};
+                        margin-top:5px">
+              ${intFmt(mainCount)} قطعة
+            </div>
+          </button>
+
+          <button type="button" data-inv-mode="isolated"
+                  style="padding:12px 10px;border-radius:10px;
+                         cursor:pointer;font-family:inherit;
+                         border:2px solid ${currentMode === 'isolated' ? 'var(--violet)' : 'var(--border)'};
+                         background:${currentMode === 'isolated'
+                           ? 'color-mix(in srgb,var(--violet) 15%,var(--surface))'
+                           : 'var(--surface)'};
+                         text-align:center;transition:all .2s">
+            <div style="width:34px;height:34px;border-radius:9px;
+                        display:grid;place-items:center;margin:0 auto 7px;
+                        background:${currentMode === 'isolated' ? 'var(--violet)' : 'var(--surface-3)'};
+                        color:${currentMode === 'isolated' ? '#fff' : 'var(--text-2)'}">
+              <i data-lucide="vault" style="width:17px;height:17px"></i>
+            </div>
+            <div style="font-size:12px;font-weight:900;
+                        color:${currentMode === 'isolated' ? 'var(--violet)' : 'var(--text)'}">
+              مخزون معزول
+            </div>
+            <div style="font-size:10px;color:var(--muted);
+                        font-weight:700;margin-top:3px">
+              خزنة البياع الخاصة
+            </div>
+            <div class="mono" style="font-size:11px;font-weight:900;
+                        color:${currentMode === 'isolated' ? 'var(--violet)' : 'var(--muted)'};
+                        margin-top:5px">
+              ${intFmt(repCount)} قطعة
+            </div>
+          </button>
+        </div>
+
+        ${currentMode === 'isolated' && repCount === 0 ? `
+          <div style="margin-top:10px;padding:10px 12px;
+                      background:var(--warn-bg);border-radius:9px;
+                      font-size:11px;font-weight:700;color:var(--warn);
+                      line-height:1.6">
+            <i data-lucide="alert-triangle"
+               style="width:12px;height:12px;display:inline;
+                      vertical-align:-2px"></i>
+            خزنة البياع فارغة — انقل قطعاً إليها من تبويب "المخزون" أو غيّر النمط.
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   function renderInvoiceForm() {
     const d = State.draft;
     if (!d) return '';
@@ -1473,19 +1822,50 @@
     const customers = getCustomers();
     const suppliers = getSuppliers();
 
-    /* ✅ قراءة البياعين وعملاء الجملة */
     const b2bReps = getB2BReps();
     const b2bCustomers = d.rep_id ? getB2BCustomers(d.rep_id) : [];
     const b2bAvailable = isB2BAvailable();
     const userIsRep = isCurrentUserRep();
+    const singleEntityMode = isSingleEntityMode();
+
+    /* ✅ v4: معلومات المخزون الحالي */
+    const availableInventory = getAvailableInventoryForInvoice();
+    const availableInStock = availableInventory.filter(i => i.status === 'IN_STOCK').length;
+
+    const currentMode = d.rep_id ? getRepInventoryMode(d.rep_id) : 'shared';
+    const modeMeta = getInventoryMode(currentMode);
 
     return `
       <!-- Section 1: Rep + Mode + Recipient -->
       <div style="padding:16px 18px;background:var(--surface-2);border-radius:12px;
                   border:1px solid var(--border);margin-bottom:16px">
 
-        <!-- ✅ اختيار البياع المسؤول (B2B) -->
-        ${b2bAvailable && !userIsRep ? `
+        <!-- ✅ v4: كيان واحد (لا يوجد بياعين) -->
+        ${singleEntityMode ? `
+          <div style="margin-bottom:16px;padding:12px 14px;
+                      background:linear-gradient(135deg,
+                        color-mix(in srgb,var(--success) 8%,var(--surface)) 0%,
+                        var(--surface) 100%);
+                      border-radius:10px;
+                      border:1.5px solid color-mix(in srgb,var(--success) 30%,var(--border))">
+            <div style="display:flex;align-items:center;gap:10px">
+              <i data-lucide="store"
+                 style="width:20px;height:20px;color:var(--success);flex-shrink:0"></i>
+              <div style="flex:1">
+                <div style="font-size:12px;font-weight:900;color:var(--success)">
+                  وضع الكيان الواحد (قطاعي + جملة)
+                </div>
+                <div style="font-size:10.5px;color:var(--muted);
+                            font-weight:600;margin-top:2px">
+                  لا يوجد بياعو جملة — الفاتورة تعمل من مخزون المحل الرئيسي
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- ✅ Rep Selector -->
+        ${b2bAvailable && !userIsRep && !singleEntityMode ? `
           <div style="margin-bottom:16px;padding:14px 16px;
                       background:linear-gradient(135deg,
                         color-mix(in srgb,var(--violet) 8%,var(--surface)) 0%,
@@ -1517,6 +1897,8 @@
               </span>
             </div>
           </div>
+
+          ${renderInventoryModeToggle()}
         ` : ''}
 
         <!-- ✅ بياع جملة مسجَّل → يعرض نفسه -->
@@ -1637,8 +2019,8 @@
         </div>
       </div>
 
-      <!-- ✅ Section 2: B2B Customer (لو البياع محدد) -->
-      ${d.rep_id && b2bAvailable ? `
+      <!-- ✅ Section 2: B2B Customer -->
+      ${d.rep_id && b2bAvailable && !singleEntityMode ? `
         <div style="padding:16px 18px;
                     background:linear-gradient(135deg,
                       color-mix(in srgb,var(--violet) 6%,var(--surface)) 0%,
@@ -1689,8 +2071,27 @@
         </div>
       ` : ''}
 
+      <!-- ✅ v4: معلومات مصدر المخزون -->
+      <div style="padding:10px 14px;background:var(--${modeMeta.color}-bg);
+                  border-radius:10px;margin-bottom:12px;
+                  border:1px solid color-mix(in srgb,var(--${modeMeta.color}) 30%,var(--border));
+                  display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <i data-lucide="${modeMeta.icon}"
+           style="width:16px;height:16px;color:var(--${modeMeta.color});
+                  flex-shrink:0"></i>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:11px;font-weight:900;color:var(--${modeMeta.color})">
+            مصدر المخزون: ${esc(modeMeta.label)}
+            ${d.rep_id ? ` · ${esc(getB2BReps().find(r => r.id === d.rep_id)?.name || '')}` : ''}
+          </div>
+          <div style="font-size:10.5px;color:var(--muted);font-weight:600;margin-top:2px">
+            ${esc(modeMeta.description)} · ${intFmt(availableInStock)} قطعة متوفرة
+          </div>
+        </div>
+      </div>
+
       <!-- ═══════════════════════════════════════════════════════════════
-           ✅ v3: SECTION — SCAN (نفس POS)
+           SCAN SECTION
            ═══════════════════════════════════════════════════════════════ -->
       <div class="scan-hero" id="wsl-scan-hero"
            style="margin-bottom:16px;
@@ -1746,11 +2147,10 @@
         </div>
       </div>
 
-      <!-- Scan result feedback -->
       <div id="wsl-scan-result"></div>
 
       <!-- ═══════════════════════════════════════════════════════════════
-           ✅ v3: SECTION — INLINE SEARCH (يدوي فوري بدون مودالات)
+           INLINE SEARCH
            ═══════════════════════════════════════════════════════════════ -->
       <div style="padding:14px 18px;background:var(--info-bg);
                   border-radius:12px;
@@ -1853,7 +2253,6 @@
           `).join('')}
         </div>
 
-        <!-- Cash Fields -->
         ${d.payment.mode === 'cash' || d.payment.mode === 'mixed' ? `
           <div class="field" style="margin-bottom:12px">
             <label>المبلغ المستلم نقداً (ج.م)</label>
@@ -1863,7 +2262,6 @@
           </div>
         ` : ''}
 
-        <!-- Gold Exchange Fields -->
         ${d.payment.mode === 'gold_exchange' || d.payment.mode === 'mixed' ? `
           <div style="padding:14px;background:var(--gold-soft);border-radius:10px;
                       border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
@@ -1937,7 +2335,6 @@
         </div>
       </div>
 
-      <!-- Live Summary -->
       <div id="wsl-summary-host">
         ${renderInvoiceSummary()}
       </div>
@@ -1972,7 +2369,7 @@
           <thead>
             <tr>
               <th>كود التاج</th>
-              <th style="width:60px" class="col-c">عيار</th>
+              <th style="width:70px" class="col-c">عيار</th>
               <th style="width:90px" class="col-num">صافي (جم)</th>
               <th style="width:100px" class="col-num">بندق (جم)</th>
               <th style="width:100px" class="col-num">مصنعية/جم</th>
@@ -1982,20 +2379,12 @@
           </thead>
           <tbody>
             ${d.items.map((item, idx) => {
-              const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+              const karatBadge = renderKaratBadgeSafe(item, '10px');
 
               return `
                 <tr data-wsl-item-idx="${idx}">
                   <td class="mono" style="font-weight:800">${esc(item.sku)}</td>
-                  <td class="col-c">
-                    ${isCustom
-                      ? `<span class="karat-badge custom-karat-badge" style="font-size:10px">
-                           ${item.custom_karat}
-                         </span>`
-                      : `<span class="karat-badge" data-k="${item.karat}" style="font-size:10px">
-                           ${item.karat}K
-                         </span>`}
-                  </td>
+                  <td class="col-c">${karatBadge}</td>
                   <td class="col-num">${gramFmt(item.net_weight)}</td>
                   <td class="col-num" style="color:var(--primary);font-weight:800">
                     ${gramFmt(item.pure_weight)}
@@ -2046,21 +2435,28 @@
 
     const payment = getPaymentMode(pay.mode);
 
-    /* ✅ معلومات البياع */
     let repInfoHTML = '';
     if (d.rep_id && isB2BAvailable()) {
       const rep = getB2BReps().find(r => r.id === d.rep_id);
       if (rep) {
+        const mode = getRepInventoryMode(d.rep_id);
+        const modeMeta = getInventoryMode(mode);
         repInfoHTML = `
           <div style="margin-top:12px;padding:10px 12px;
                       background:var(--violet-bg);border-radius:10px;
                       font-size:11px;font-weight:700;
                       color:var(--violet);display:flex;
-                      align-items:center;gap:8px">
+                      align-items:center;gap:8px;flex-wrap:wrap">
             <i data-lucide="user-check"
                style="width:14px;height:14px"></i>
             <span>سيُسجَّل في خزينة البياع: <b>${esc(rep.name)}</b>
               (${esc(rep.code)})</span>
+            <span class="chip" style="font-size:9.5px;margin-inline-start:auto;
+                        background:color-mix(in srgb,var(--${modeMeta.color}) 15%,transparent);
+                        color:var(--${modeMeta.color})">
+              <i data-lucide="${modeMeta.icon}" style="width:9px;height:9px"></i>
+              ${modeMeta.shortLabel}
+            </span>
           </div>
         `;
       }
@@ -2175,7 +2571,6 @@
     const d = State.draft;
     if (!d) return { item_count: 0, total_net: 0, total_pure: 0, total_gold_value: 0, total_workmanship: 0, discount_amount: 0, grand_total: 0 };
 
-    const price24 = getPrice24();
     let itemCount = 0;
     let totalNet = 0;
     let totalPure = 0;
@@ -2211,7 +2606,6 @@
     const price24 = getPrice24();
     const scrapPrice = getScrapBuyPrice();
 
-    /* Recalculate each item */
     d.items.forEach(item => {
       const purity = Number(item.purity_ratio) || GMS.karatRatio(item.karat);
       const net = Number(item.net_weight || 0);
@@ -2225,7 +2619,6 @@
       item.total_value = round(goldValue + makeValue, 2);
     });
 
-    /* Update gold payment */
     if (d.payment.mode === 'gold_exchange' || d.payment.mode === 'mixed') {
       const gr = d.payment.gold_received;
       const purity = gr.purity_ratio || GMS.karatRatio(gr.karat);
@@ -2238,7 +2631,6 @@
       gr.value_at_scrap = value;
     }
 
-    /* Update totals */
     const totals = computeInvoiceTotals();
     const remaining = Math.max(0,
       totals.grand_total
@@ -2262,12 +2654,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15.1 · ✅ v3 — SCAN + INLINE SEARCH (مثل POS)
+     §15.1 · SCAN + INLINE SEARCH
      ═════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * عرض feedback نتيجة المسح (نجاح/فشل)
-   */
   function renderScanFeedback(result) {
     if (!result) return '';
 
@@ -2293,7 +2682,7 @@
     }
 
     const item = result.item;
-    const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+    const karatBadge = renderKaratBadgeSafe(item, '10px');
 
     return `
       <div style="margin-bottom:14px;padding:12px 14px;border-radius:11px;
@@ -2303,16 +2692,14 @@
         <i data-lucide="check-circle-2"
            style="width:22px;height:22px;color:var(--success);flex-shrink:0"></i>
         <div style="flex:1;min-width:0">
-          <div style="font-size:12.5px;font-weight:900;color:var(--success)">
+          <div style="font-size:12.5px;font-weight:900;color:var(--success);
+                      display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             ✅ تمت الإضافة — ${esc(item.category || 'قطعة')}
+            ${karatBadge}
           </div>
           <div class="mono" style="font-size:11px;color:var(--text-2);
                       font-weight:700;margin-top:2px">
-            ${esc(item.sku)}
-            ${isCustom
-              ? ` · عيار ${item.custom_karat} مخصص`
-              : ` · ${item.karat}K`}
-            · ${gramFmt(item.net_weight)} جم
+            ${esc(item.sku)} · ${gramFmt(item.net_weight)} جم
           </div>
         </div>
         <span style="font-family:var(--font-mono);font-size:12px;font-weight:900;
@@ -2323,9 +2710,6 @@
     `;
   }
 
-  /**
-   * معالجة عملية المسح — إضافة القطعة للفاتورة
-   */
   async function handleInvoiceScan(rawSku, scanInput) {
     const key = String(rawSku || '').trim().toUpperCase();
     if (!key) return;
@@ -2335,37 +2719,60 @@
     try {
       GMS.Beep?.info?.();
 
-      /* 1 · البحث في المخزون المحلي */
-      let item = State.inventory.find(i =>
+      /* ✅ v4: البحث فقط في المخزون المتاح للفاتورة الحالية */
+      const availableInv = getAvailableInventoryForInvoice();
+
+      let item = availableInv.find(i =>
         String(i.sku || '').toUpperCase() === key
       );
 
-      /* 2 · IDB fallback */
+      /* fallback → IDB مع فلترة holder */
       if (!item && GMS.IDB?.isOpen) {
         try {
-          item = await GMS.IDB.getBySku(key);
-          if (item && !State.inventory.find(x => x.id === item.id)) {
-            State.inventory.push(item);
+          const idbItem = await GMS.IDB.getBySku(key);
+          if (idbItem && itemBelongsToCurrentInvoice(idbItem)) {
+            item = idbItem;
+            if (!State.inventory.find(x => x.id === idbItem.id)) {
+              State.inventory.push(idbItem);
+            }
           }
         } catch (_) {}
       }
 
-      /* 3 · مش موجود */
+      /* مش موجود */
       if (!item) {
         GMS.Beep?.error?.();
+
+        /* ✅ v4: تحقق هل موجود في مخزون آخر */
+        const globalMatch = State.inventory.find(i =>
+          String(i.sku || '').toUpperCase() === key
+        );
+
+        let message = 'الصنف غير موجود في المخزون';
+
+        if (globalMatch) {
+          const holderType = globalMatch.holder_type || 'retail_shop';
+          if (holderType === 'b2b_rep' && globalMatch.holder_id) {
+            const ownerRep = getB2BReps().find(r => r.id === globalMatch.holder_id);
+            message = `الصنف موجود في خزنة بياع آخر: ${ownerRep?.name || 'بياع'}`;
+          } else {
+            message = 'الصنف موجود في مخزون المحل الرئيسي — اختر "مخزون مشترك" أو غيّر البياع';
+          }
+        }
+
         if (resultHost) {
           resultHost.innerHTML = renderScanFeedback({
             ok: false,
             sku: key,
-            message: 'الصنف غير موجود في المخزون',
+            message,
           });
           window.lucide?.createIcons();
         }
-        if (GMS.Toast) GMS.Toast.warn('الصنف غير موجود', key);
+        if (GMS.Toast) GMS.Toast.warn('الصنف غير متاح', key);
         return;
       }
 
-      /* 4 · الحالة */
+      /* الحالة */
       if (item.status && item.status !== 'IN_STOCK') {
         GMS.Beep?.error?.();
         const statusLabel = GMS.getStatus?.(item.status)?.label || item.status;
@@ -2380,7 +2787,7 @@
         return;
       }
 
-      /* 5 · مكرر */
+      /* مكرر */
       if (State.draft.items.find(i => i.sku === item.sku)) {
         GMS.Beep?.warning?.();
         if (resultHost) {
@@ -2394,7 +2801,7 @@
         return;
       }
 
-      /* 6 · الإضافة */
+      /* الإضافة */
       addItemToInvoice(item.sku);
       GMS.Beep?.success?.();
 
@@ -2403,7 +2810,6 @@
         window.lucide?.createIcons();
       }
 
-      /* 7 · تحديث القطع + الملخص */
       recalcInvoiceTotals();
 
       const itemsHost = document.getElementById('wsl-items-host');
@@ -2413,13 +2819,11 @@
       bindItemActionsInForm(document);
       window.lucide?.createIcons();
 
-      /* 8 · تفريغ الحقل */
       if (scanInput) {
         scanInput.value = '';
         try { scanInput.focus({ preventScroll: true }); } catch (_) { scanInput.focus(); }
       }
 
-      /* 9 · مسح النتيجة */
       setTimeout(() => {
         const h = document.getElementById('wsl-scan-result');
         if (h) h.innerHTML = '';
@@ -2432,9 +2836,6 @@
     }
   }
 
-  /**
-   * ✅ v3: البحث اليدوي inline (فوري بدون مودالات)
-   */
   function performInlineSearch(query) {
     const q = String(query || '').trim().toLowerCase();
     const host = document.getElementById('wsl-inline-search-results');
@@ -2448,10 +2849,11 @@
       return;
     }
 
-    /* البحث في المخزون */
+    /* ✅ v4: البحث في المخزون المتاح فقط */
+    const availableInv = getAvailableInventoryForInvoice();
     const selectedSkus = new Set(State.draft.items.map(i => i.sku));
 
-    const results = State.inventory
+    const results = availableInv
       .filter(i => i.status === 'IN_STOCK')
       .filter(i => {
         const hay = [
@@ -2473,7 +2875,7 @@
       host.innerHTML = `
         <div style="padding:14px;text-align:center;font-size:12px;
                     color:var(--muted);font-weight:700">
-          لا توجد نتائج مطابقة
+          لا توجد نتائج مطابقة في المخزون المتاح
         </div>
       `;
       window.lucide?.createIcons();
@@ -2490,7 +2892,7 @@
       <div style="max-height:280px;overflow-y:auto;border-radius:10px;
                   border:1px solid var(--border);background:var(--surface)">
         ${results.map(item => {
-          const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+          const karatBadge = renderKaratBadgeSafe(item, '9.5px');
           const already = selectedSkus.has(item.sku);
 
           return `
@@ -2512,13 +2914,7 @@
                   <span class="mono" style="font-weight:800;font-size:12px">
                     ${esc(item.sku)}
                   </span>
-                  ${isCustom
-                    ? `<span class="karat-badge custom-karat-badge" style="font-size:9.5px">
-                         ${item.custom_karat}
-                       </span>`
-                    : `<span class="karat-badge" data-k="${item.karat}" style="font-size:9.5px">
-                         ${item.karat}K
-                       </span>`}
+                  ${karatBadge}
                   ${already ? `
                     <span class="pill pill-gray" style="font-size:9.5px">
                       <i data-lucide="check" style="width:9px;height:9px"></i>
@@ -2548,7 +2944,6 @@
     `;
     window.lucide?.createIcons();
 
-    /* ربط النقر على نتائج البحث */
     host.querySelectorAll('[data-inline-result]').forEach(row => {
       row.onclick = () => {
         const sku = row.dataset.inlineResult;
@@ -2559,7 +2954,6 @@
         addItemToInvoice(sku);
         GMS.Beep?.success?.();
 
-        /* تحديث القطع */
         recalcInvoiceTotals();
         const itemsHost = document.getElementById('wsl-items-host');
         if (itemsHost) itemsHost.innerHTML = renderInvoiceItemsList();
@@ -2567,10 +2961,8 @@
         bindItemActionsInForm(document);
         window.lucide?.createIcons();
 
-        /* تحديث نتائج البحث (لإظهار "مُضاف") */
         performInlineSearch(State.inlineSearch.query);
 
-        /* تفريغ الحقل + إخفاء */
         const input = document.getElementById('wsl-inline-search-input');
         if (input) {
           input.value = '';
@@ -2588,13 +2980,9 @@
     });
   }
 
-  /**
-   * ربط أزرار القطع (تُستخدم بعد إعادة بناء قائمة القطع)
-   */
   function bindItemActionsInForm(root) {
     if (!root || !State.draft) return;
 
-    /* Fee inputs */
     root.querySelectorAll('[data-wsl-item-fee]').forEach(input => {
       input.oninput = () => {
         const idx = Number(input.dataset.wslItemFee);
@@ -2612,7 +3000,6 @@
       };
     });
 
-    /* Remove buttons */
     root.querySelectorAll('[data-wsl-item-rm]').forEach(btn => {
       btn.onclick = () => {
         const idx = Number(btn.dataset.wslItemRm);
@@ -2629,13 +3016,37 @@
   function bindInvoiceForm(root) {
     const $ = (id) => root.querySelector('#' + id);
 
-    /* ✅ Rep selector (B2B) */
+    /* Rep selector */
     const repSel = $('wsl-rep-id');
     if (repSel) {
       repSel.onchange = (e) => {
-        State.draft.rep_id = e.target.value;
+        const newRepId = e.target.value;
+        State.draft.rep_id = newRepId;
 
-        /* إعادة تعيين الطرف المستلم */
+        /* ✅ v4: التحقق من القطع الحالية — لو البياع تغير ومخزونه معزول */
+        if (State.draft.items.length > 0) {
+          const newMode = getRepInventoryMode(newRepId);
+          const validItems = State.draft.items.filter(item => {
+            const holderType = item.holder_type || 'retail_shop';
+            if (newRepId && newMode === 'isolated') {
+              return holderType === 'b2b_rep' && item.holder_id === newRepId;
+            }
+            return holderType === 'retail_shop' || holderType === 'main_vault';
+          });
+
+          if (validItems.length !== State.draft.items.length) {
+            const removed = State.draft.items.length - validItems.length;
+
+            GMS.Toast.warn(
+              'تم إزالة ' + removed + ' قطعة',
+              'القطع المتبقية لا تنتمي لمخزون البياع الجديد'
+            );
+
+            State.draft.items = validItems;
+            recalcInvoiceTotals();
+          }
+        }
+
         State.draft.recipient.id = '';
         State.draft.recipient.name = '';
 
@@ -2643,7 +3054,44 @@
       };
     }
 
-    /* ✅ B2B Customer selector */
+    /* ✅ v4: Inventory mode toggle */
+    root.querySelectorAll('[data-inv-mode]').forEach(btn => {
+      btn.onclick = () => {
+        const mode = btn.dataset.invMode;
+        if (!State.draft.rep_id) return;
+
+        const currentMode = getRepInventoryMode(State.draft.rep_id);
+        if (currentMode === mode) return;
+
+        /* التحقق من القطع الحالية */
+        if (State.draft.items.length > 0) {
+          GMS.Confirm.ask(
+            `تغيير نمط المخزون إلى "${getInventoryMode(mode).label}" سيؤدي لإزالة ` +
+            `${State.draft.items.length} قطعة من الفاتورة. متابعة؟`,
+            { title: 'تغيير نمط المخزون', okText: 'تغيير', danger: true, icon: 'alert-triangle' }
+          ).then(ok => {
+            if (!ok) return;
+
+            setRepInventoryMode(State.draft.rep_id, mode);
+            State.draft.items = [];
+            recalcInvoiceTotals();
+            refreshInvoiceForm();
+
+            GMS.Beep?.info?.();
+            GMS.Toast.ok('تم تغيير نمط المخزون', getInventoryMode(mode).label);
+          });
+          return;
+        }
+
+        setRepInventoryMode(State.draft.rep_id, mode);
+        refreshInvoiceForm();
+
+        GMS.Beep?.info?.();
+        GMS.Toast.ok('تم تغيير نمط المخزون', getInventoryMode(mode).label);
+      };
+    });
+
+    /* B2B Customer selector */
     const b2bCustSel = $('wsl-b2b-customer');
     if (b2bCustSel) {
       b2bCustSel.onchange = (e) => {
@@ -2657,7 +3105,6 @@
           phone: opt?.dataset?.phone || '',
         };
 
-        /* حدّث حقول الطرف */
         const nameInput = $('wsl-recipient-name');
         if (nameInput) nameInput.value = State.draft.recipient.name;
 
@@ -2668,7 +3115,6 @@
       };
     }
 
-    /* ✅ B2B Customer name (يدوي) */
     const b2bCustName = $('wsl-b2b-customer-name');
     if (b2bCustName) {
       b2bCustName.oninput = (e) => {
@@ -2700,7 +3146,6 @@
       };
     }
 
-    /* Recipient select */
     const recipientSel = $('wsl-recipient-id');
     if (recipientSel) {
       recipientSel.onchange = (e) => {
@@ -2710,13 +3155,11 @@
         if (opt && opt.textContent) {
           State.draft.recipient.name = opt.textContent.trim();
         }
-        /* Auto-fill name field */
         const nameInput = $('wsl-recipient-name');
         if (nameInput) nameInput.value = State.draft.recipient.name;
       };
     }
 
-    /* Manual name/phone */
     const nameInput = $('wsl-recipient-name');
     if (nameInput) {
       nameInput.oninput = (e) => { State.draft.recipient.name = e.target.value; };
@@ -2732,7 +3175,6 @@
       sourceBranch.onchange = (e) => { State.draft.branch_id = e.target.value; };
     }
 
-    /* Discount */
     const discountInput = $('wsl-discount-pct');
     if (discountInput) {
       discountInput.oninput = (e) => {
@@ -2743,18 +3185,14 @@
       };
     }
 
-    /* Add item (يدوي) */
     const addBtn = $('wsl-add-item-btn');
     if (addBtn) {
       addBtn.onclick = () => openItemPicker();
     }
 
-    /* ═══════════════════════════════════════════════════════════════════
-       ✅ v3: SCAN INPUT — نفس POS
-       ═══════════════════════════════════════════════════════════════════ */
+    /* Scan input */
     const scanInput = $('wsl-scan-input');
     if (scanInput) {
-      /* Auto-focus أول ما يفتح المودال */
       setTimeout(() => {
         const active = document.activeElement;
         if (!active || active === document.body ||
@@ -2788,9 +3226,7 @@
       };
     }
 
-    /* ═══════════════════════════════════════════════════════════════════
-       ✅ v3: INLINE SEARCH — بحث يدوي فوري
-       ═══════════════════════════════════════════════════════════════════ */
+    /* Inline search */
     const inlineSearchInput = $('wsl-inline-search-input');
     const inlineSearchClear = $('wsl-inline-search-clear');
 
@@ -2836,9 +3272,7 @@
       };
     }
 
-    /* ═══════════════════════════════════════════════════════════════════
-       ✅ v3: F2 shortcut (تركيز على input المسح)
-       ═══════════════════════════════════════════════════════════════════ */
+    /* F2 shortcut */
     const f2Handler = (e) => {
       if (e.key !== 'F2') return;
       const formHost = document.getElementById('wsl-form-host');
@@ -2857,7 +3291,6 @@
 
     document.addEventListener('keydown', f2Handler);
 
-    /* تنظيف المستمع عند إغلاق المودال */
     const formHostEl = document.getElementById('wsl-form-host');
     if (formHostEl && !formHostEl._f2Bound) {
       formHostEl._f2Bound = true;
@@ -2870,7 +3303,7 @@
       observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    /* Payment mode */
+    /* Payment */
     root.querySelectorAll('[data-wsl-pay]').forEach(btn => {
       btn.onclick = () => {
         State.draft.payment.mode = btn.dataset.wslPay;
@@ -2878,7 +3311,6 @@
       };
     });
 
-    /* Cash paid */
     const cashPaid = $('wsl-cash-paid');
     if (cashPaid) {
       cashPaid.oninput = (e) => {
@@ -2887,7 +3319,6 @@
       };
     }
 
-    /* Gold received fields */
     const goldKarat = $('wsl-gold-karat');
     if (goldKarat) {
       goldKarat.onchange = (e) => {
@@ -2912,16 +3343,12 @@
       }
     });
 
-    /* Notes */
     const notesInput = $('wsl-invoice-notes');
     if (notesInput) {
       notesInput.oninput = (e) => { State.draft.notes = e.target.value; };
     }
 
-    /* Item actions (fee + remove) */
     bindItemActionsInForm(root);
-
-    /* Initial recalcs */
     updateGoldRecalc();
   }
 
@@ -2948,7 +3375,6 @@
     gr.weight_pure = pure;
     gr.value_at_scrap = value;
 
-    /* Update readonly displays */
     const netEl = document.getElementById('wsl-gold-net');
     if (netEl) netEl.value = net.toFixed(3);
 
@@ -2962,19 +3388,41 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────
-     Item Picker Modal
+     Item Picker Modal — ✅ v4: يستخدم getAvailableInventoryForInvoice
      ───────────────────────────────────────────────────────────────── */
   function openItemPicker() {
-    const inv = State.inventory.filter(i => i.status === 'IN_STOCK');
+    /* ✅ v4: استخدام المخزون المتاح للفاتورة */
+    const inv = getAvailableInventoryForInvoice().filter(i => i.status === 'IN_STOCK');
 
     const selectedSkus = new Set(State.draft.items.map(i => i.sku));
     const available = inv.filter(i => !selectedSkus.has(i.sku));
+
+    const currentMode = State.draft.rep_id
+      ? getRepInventoryMode(State.draft.rep_id)
+      : 'shared';
+    const modeMeta = getInventoryMode(currentMode);
 
     GMS.Modal.open({
       title: 'اختيار المشغولات من المخزون',
       icon: 'gem',
       size: 'xl',
       body: `
+        <div style="margin-bottom:14px;padding:10px 14px;
+                    background:var(--${modeMeta.color}-bg);
+                    border-radius:10px;
+                    border:1px solid color-mix(in srgb,var(--${modeMeta.color}) 30%,var(--border));
+                    font-size:11px;font-weight:700;
+                    color:var(--${modeMeta.color});
+                    display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <i data-lucide="${modeMeta.icon}" style="width:14px;height:14px"></i>
+          <span>المصدر: <b>${esc(modeMeta.label)}</b>
+            ${State.draft.rep_id ? ` · ${esc(getB2BReps().find(r => r.id === State.draft.rep_id)?.name || '')}` : ''}
+          </span>
+          <span class="chip" style="font-size:10px;margin-inline-start:auto">
+            ${intFmt(available.length)} قطعة متوفرة
+          </span>
+        </div>
+
         <div class="search-wrap" style="margin-bottom:14px">
           <i data-lucide="search"></i>
           <input id="wsl-picker-search"
@@ -3035,16 +3483,19 @@
         <div class="empty" style="padding:40px 20px">
           <i data-lucide="package-x"></i>
           <p>لا توجد قطع متوفرة</p>
+          <span style="font-size:11px">
+            تحقق من نمط المخزون أو أضف قطعاً للخزنة
+          </span>
         </div>
       `;
     }
 
     return items.slice(0, 500).map(item => {
-      const isCustom = item.is_custom_karat === true || item.custom_karat != null;
       const price24 = getPrice24();
       const pure = Number(item.pure_weight || 0);
       const goldValue = round(pure * price24, 2);
       const saleRate = Number(item.workmanship_per_gram || 0);
+      const karatBadge = renderKaratBadgeSafe(item, '9.5px');
 
       return `
         <div data-pick-sku="${esc(item.sku)}"
@@ -3058,17 +3509,12 @@
             <i data-lucide="gem" style="width:17px;height:17px"></i>
           </div>
           <div style="min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;
+                        flex-wrap:wrap">
               <span class="mono" style="font-weight:800;font-size:12.5px">
                 ${esc(item.sku)}
               </span>
-              ${isCustom
-                ? `<span class="karat-badge custom-karat-badge" style="font-size:9.5px">
-                     ${item.custom_karat}
-                   </span>`
-                : `<span class="karat-badge" data-k="${item.karat}" style="font-size:9.5px">
-                     ${item.karat}K
-                   </span>`}
+              ${karatBadge}
             </div>
             <div style="font-size:10.5px;color:var(--muted);font-weight:700">
               ${esc(item.category || '—')} ·
@@ -3100,6 +3546,11 @@
       return GMS.Toast.warn('الصنف مُضاف مسبقاً');
     }
 
+    /* ✅ v4: التحقق من الملكية */
+    if (!itemBelongsToCurrentInvoice(item)) {
+      return GMS.Toast.err('الصنف لا ينتمي لمخزون هذه الفاتورة');
+    }
+
     const purity = Number(item.purity_ratio) || GMS.karatRatio(item.karat);
     const net = Number(item.net_weight || 0);
     const pure = round(net * purity, 4);
@@ -3107,6 +3558,12 @@
     const goldValue = round(pure * price24, 2);
     const saleRate = Number(item.workmanship_per_gram || 0);
     const makeValue = round(net * saleRate, 2);
+
+    /* ✅ v4: حفظ معلومات الملكية */
+    const holderType = item.holder_type || HOLDER_TYPES.RETAIL_SHOP.key;
+    const holderId = item.holder_id || null;
+    const holderName = item.holder_name ||
+      (holderType === HOLDER_TYPES.B2B_REP.key ? 'بياع جملة' : HOLDER_TYPES.RETAIL_SHOP.label);
 
     d.items.push({
       sku: item.sku,
@@ -3125,6 +3582,10 @@
       gold_value: goldValue,
       total_value: round(goldValue + makeValue, 2),
       branch_id: item.branch_id,
+      /* ✅ v4 */
+      holder_type: holderType,
+      holder_id: holderId,
+      holder_name: holderName,
     });
 
     GMS.Beep?.info?.();
@@ -3208,7 +3669,6 @@
   async function saveInvoice(root, closeFn) {
     const d = State.draft;
 
-    /* Validation */
     if (!d.recipient.name && !d.recipient.id) {
       GMS.Beep?.error?.();
       return GMS.Toast.err('الطرف المستلم مطلوب');
@@ -3221,7 +3681,6 @@
 
     const totals = computeInvoiceTotals();
 
-    /* Determine status based on payment */
     const paidCash = Number(d.payment.cash_paid || 0);
     const paidGold = Number(d.payment.gold_received?.value_at_scrap || 0);
     const remaining = totals.grand_total - paidCash - paidGold;
@@ -3249,7 +3708,6 @@
       const sourceBranch = getBranches().find(b => b.id === d.branch_id);
       const recipientType = getRecipientType(d.recipient.type);
 
-      /* ✅ جلب بيانات البياع */
       let repInfo = null;
       if (d.rep_id && isB2BAvailable()) {
         const rep = getB2BReps().find(r => r.id === d.rep_id);
@@ -3258,6 +3716,7 @@
             rep_id: rep.id,
             rep_code: rep.code,
             rep_name: rep.name,
+            inventory_mode: rep.inventory_mode || 'shared',
           };
         }
       }
@@ -3268,10 +3727,10 @@
         mode: d.mode,
         status,
 
-        /* ✅ حقل البياع */
         rep_id: repInfo?.rep_id || null,
         rep_code: repInfo?.rep_code || null,
         rep_name: repInfo?.rep_name || null,
+        rep_inventory_mode: repInfo?.inventory_mode || null,
 
         recipient: {
           type: d.recipient.type,
@@ -3311,11 +3770,11 @@
         created_by_id: GMS.Auth?.user?.id || null,
       };
 
-      /* 1 · Save locally */
+      /* 1 · Save */
       const saved = await CacheDB.save(STORE_INVOICES, invoice);
       if (!saved) throw new Error('فشل الحفظ المحلي');
 
-      /* 2 · Update inventory — mark items as SOLD/TRANSFERRED */
+      /* 2 · Update inventory */
       const newStatus = d.mode === 'inter_branch' ? 'TRANSFERRED' : 'SOLD';
       for (const item of invoice.items) {
         if (!item.inventory_id) continue;
@@ -3325,9 +3784,13 @@
             if (existing) {
               existing.status = newStatus;
               existing.updated_at = now;
-              existing.current_branch_id = d.recipient.type === 'branch'
-                ? d.recipient.id
-                : existing.branch_id;
+
+              /* ✅ v4: نقل ملكية القطعة عند التحويل بين الفروع */
+              if (d.mode === 'inter_branch' && d.recipient.type === 'branch') {
+                existing.branch_id = d.recipient.id;
+                existing.branch_name = getBranches().find(b => b.id === d.recipient.id)?.name || '—';
+              }
+
               await GMS.IDB.put(existing);
             }
           }
@@ -3373,14 +3836,14 @@
         }
       }
 
-      /* 4 · Ledger entry — dual */
+      /* 4 · Ledger */
       try {
         await recordLedgerEntry(invoice);
       } catch (e) {
         console.warn('[WSL.saveInvoice] Ledger failed:', e);
       }
 
-      /* ✅ 5 · ربط الفاتورة بدفتر البياع (B2B) */
+      /* 5 · B2B rep ledger */
       if (invoice.rep_id && GMS.B2B?.attachInvoiceToRep) {
         try {
           await GMS.B2B.attachInvoiceToRep(invoice, invoice.rep_id);
@@ -3408,6 +3871,7 @@
               payment_mode: invoice.payment.mode,
               rep_id: invoice.rep_id,
               rep_code: invoice.rep_code,
+              rep_inventory_mode: invoice.rep_inventory_mode,
             }
           );
         } catch (_) {}
@@ -3435,7 +3899,6 @@
 
       if (typeof closeFn === 'function') closeFn();
 
-      /* 9 · Offer print */
       setTimeout(() => {
         GMS.Confirm.ask(
           'هل تريد طباعة الفاتورة؟',
@@ -3588,7 +4051,6 @@
     const branches = getBranches();
 
     return `
-      <!-- Section 1: Branches -->
       <div style="padding:16px 18px;background:var(--info-bg);border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--info) 30%,var(--border));
                   margin-bottom:16px">
@@ -3647,7 +4109,6 @@
         </div>
       </div>
 
-      <!-- Section 2: Items -->
       <div style="padding:16px 18px;background:var(--gold-soft);border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
                   margin-bottom:16px">
@@ -3675,7 +4136,6 @@
         </div>
       </div>
 
-      <!-- Section 3: Notes -->
       <div class="field">
         <label>ملاحظات الشحنة</label>
         <input id="wsl-trf-notes"
@@ -3683,7 +4143,6 @@
                value="${esc(d.notes)}">
       </div>
 
-      <!-- Summary -->
       <div id="wsl-trf-summary" style="margin-top:16px">
         ${renderTransferSummary()}
       </div>
@@ -3714,7 +4173,7 @@
           <thead>
             <tr>
               <th>كود التاج</th>
-              <th style="width:60px" class="col-c">عيار</th>
+              <th style="width:70px" class="col-c">عيار</th>
               <th style="width:90px" class="col-num">صافي (جم)</th>
               <th style="width:100px" class="col-num">بندق (جم)</th>
               <th style="width:110px" class="col-num">القيمة</th>
@@ -3723,19 +4182,11 @@
           </thead>
           <tbody>
             ${d.items.map((item, idx) => {
-              const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+              const karatBadge = renderKaratBadgeSafe(item, '10px');
               return `
                 <tr>
                   <td class="mono" style="font-weight:800">${esc(item.sku)}</td>
-                  <td class="col-c">
-                    ${isCustom
-                      ? `<span class="karat-badge custom-karat-badge" style="font-size:10px">
-                           ${item.custom_karat}
-                         </span>`
-                      : `<span class="karat-badge" data-k="${item.karat}" style="font-size:10px">
-                           ${item.karat}K
-                         </span>`}
-                  </td>
+                  <td class="col-c">${karatBadge}</td>
                   <td class="col-num">${gramFmt(item.net_weight)}</td>
                   <td class="col-num" style="color:var(--primary);font-weight:800">
                     ${gramFmt(item.pure_weight)}
@@ -3890,6 +4341,8 @@
 
   function openTransferItemPicker() {
     const sourceBranch = State.draft.from_branch_id;
+
+    /* ✅ v4: التحويلات بين الفروع — فقط مخزون الفرع المصدر */
     const inv = State.inventory.filter(i =>
       i.status === 'IN_STOCK' &&
       (!sourceBranch || i.branch_id === sourceBranch)
@@ -3983,6 +4436,9 @@
       gold_value: goldValue,
       total_value: goldValue,
       from_branch_id: d.from_branch_id,
+      holder_type: item.holder_type,
+      holder_id: item.holder_id,
+      holder_name: item.holder_name,
     });
   }
 
@@ -4057,11 +4513,9 @@
         created_by_id: GMS.Auth?.user?.id || null,
       };
 
-      /* 1 · Save */
       const saved = await CacheDB.save(STORE_TRANSFERS, transfer);
       if (!saved) throw new Error('فشل الحفظ المحلي');
 
-      /* 2 · Supabase */
       if (GMS.Supabase?.isReady?.()) {
         try {
           await GMS.Supabase.get().from('branch_transfers').insert({
@@ -4081,7 +4535,6 @@
         }
       }
 
-      /* 3 · Audit */
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
@@ -4100,7 +4553,6 @@
         } catch (_) {}
       }
 
-      /* 4 · Realtime */
       if (GMS.Realtime) {
         try { GMS.Realtime.emit('branch_transfers', 'INSERT', transfer); } catch (_) {}
       }
@@ -4116,7 +4568,6 @@
 
       if (typeof closeFn === 'function') closeFn();
 
-      /* 5 · Print manifest */
       setTimeout(() => {
         GMS.Confirm.ask(
           'هل تريد طباعة إذن التوريد (Transfer Manifest)؟',
@@ -4184,7 +4635,8 @@
           ${invoice.rep_name ? `
             <div style="padding:12px 14px;background:var(--violet-bg);
                         border-radius:10px;margin-bottom:14px;
-                        display:flex;align-items:center;gap:10px">
+                        display:flex;align-items:center;gap:10px;
+                        flex-wrap:wrap">
               <i data-lucide="user-check"
                  style="width:16px;height:16px;color:var(--violet)"></i>
               <div style="flex:1">
@@ -4197,6 +4649,13 @@
                   ${esc(invoice.rep_name)} (${esc(invoice.rep_code || '—')})
                 </div>
               </div>
+              ${invoice.rep_inventory_mode ? `
+                <span class="chip violet" style="font-size:10px">
+                  <i data-lucide="${getInventoryMode(invoice.rep_inventory_mode).icon}"
+                     style="width:10px;height:10px"></i>
+                  ${getInventoryMode(invoice.rep_inventory_mode).shortLabel}
+                </span>
+              ` : ''}
             </div>
           ` : ''}
 
@@ -4230,7 +4689,7 @@
               <thead>
                 <tr>
                   <th>كود التاج</th>
-                  <th style="width:60px" class="col-c">عيار</th>
+                  <th style="width:70px" class="col-c">عيار</th>
                   <th style="width:80px" class="col-num">صافي</th>
                   <th style="width:80px" class="col-num">بندق</th>
                   <th style="width:90px" class="col-num">مصنعية/جم</th>
@@ -4239,15 +4698,11 @@
               </thead>
               <tbody>
                 ${invoice.items.map(item => {
-                  const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+                  const karatBadge = renderKaratBadgeSafe(item, '10px');
                   return `
                     <tr>
                       <td class="mono" style="font-weight:800">${esc(item.sku)}</td>
-                      <td class="col-c">
-                        ${isCustom
-                          ? `<span class="karat-badge custom-karat-badge" style="font-size:10px">${item.custom_karat}</span>`
-                          : `<span class="karat-badge" data-k="${item.karat}" style="font-size:10px">${item.karat}K</span>`}
-                      </td>
+                      <td class="col-c">${karatBadge}</td>
                       <td class="col-num">${gramFmt(item.net_weight)}</td>
                       <td class="col-num" style="color:var(--primary)">${gramFmt(item.pure_weight)}</td>
                       <td class="col-num">${moneyFmt(item.workmanship_per_gram)}</td>
@@ -4405,7 +4860,7 @@
               <thead>
                 <tr>
                   <th>كود التاج</th>
-                  <th style="width:60px" class="col-c">عيار</th>
+                  <th style="width:70px" class="col-c">عيار</th>
                   <th style="width:90px" class="col-num">صافي</th>
                   <th style="width:100px" class="col-num">بندق</th>
                   <th style="width:120px" class="col-num">القيمة</th>
@@ -4413,15 +4868,11 @@
               </thead>
               <tbody>
                 ${trf.items.map(item => {
-                  const isCustom = item.is_custom_karat === true || item.custom_karat != null;
+                  const karatBadge = renderKaratBadgeSafe(item, '10px');
                   return `
                     <tr>
                       <td class="mono" style="font-weight:800">${esc(item.sku)}</td>
-                      <td class="col-c">
-                        ${isCustom
-                          ? `<span class="karat-badge custom-karat-badge" style="font-size:10px">${item.custom_karat}</span>`
-                          : `<span class="karat-badge" data-k="${item.karat}" style="font-size:10px">${item.karat}K</span>`}
-                      </td>
+                      <td class="col-c">${karatBadge}</td>
                       <td class="col-num">${gramFmt(item.net_weight)}</td>
                       <td class="col-num" style="color:var(--primary)">${gramFmt(item.pure_weight)}</td>
                       <td class="col-num" style="font-weight:800">${moneyFmt(item.total_value)}</td>
@@ -4572,7 +5023,6 @@
 
       const now = new Date().toISOString();
 
-      /* 1 · Update each item's branch */
       for (const item of trf.items) {
         if (!item.inventory_id) continue;
         try {
@@ -4591,13 +5041,11 @@
         }
       }
 
-      /* 2 · Update transfer status */
       trf.status = 'RECEIVED';
       trf.manifest.received_at = now;
       trf.manifest.received_by = getActiveUserName();
       await CacheDB.save(STORE_TRANSFERS, trf);
 
-      /* 3 · Supabase */
       if (GMS.Supabase?.isReady?.()) {
         try {
           const client = GMS.Supabase.get();
@@ -4621,7 +5069,6 @@
         }
       }
 
-      /* 4 · Audit */
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
@@ -4749,8 +5196,8 @@
             </thead>
             <tbody>
               ${invoice.items.map(item => {
-                const isCustom = item.is_custom_karat === true || item.custom_karat != null;
-                const karatLabel = isCustom ? `${item.custom_karat}` : `${item.karat}K`;
+                const info = getItemKaratDisplay(item);
+                const karatLabel = info.text;
                 return `
                   <tr>
                     <td style="padding:2mm;border:1px solid #666;
@@ -5003,8 +5450,7 @@
             </thead>
             <tbody>
               ${trf.items.map(item => {
-                const isCustom = item.is_custom_karat === true || item.custom_karat != null;
-                const karatLabel = isCustom ? `${item.custom_karat}` : `${item.karat}K`;
+                const info = getItemKaratDisplay(item);
                 return `
                   <tr>
                     <td style="padding:2mm;border:1px solid #666;
@@ -5012,7 +5458,7 @@
                       ${esc(item.sku)}
                     </td>
                     <td style="padding:2mm;border:1px solid #666;
-                               text-align:center">${karatLabel}</td>
+                               text-align:center">${info.text}</td>
                     <td style="padding:2mm;border:1px solid #666;
                                text-align:left;font-variant-numeric:tabular-nums">
                       ${gramFmt(item.net_weight)}
@@ -5145,6 +5591,9 @@
         'الحالة': getInvoiceStatus(inv.status).label,
         'البياع': inv.rep_name || '',
         'كود البياع': inv.rep_code || '',
+        'نمط المخزون': inv.rep_inventory_mode
+          ? getInventoryMode(inv.rep_inventory_mode).label
+          : '',
         'نوع الطرف': inv.recipient.type_label || inv.recipient.type,
         'الطرف': inv.recipient.name,
         'الهاتف': inv.recipient.phone,
@@ -5165,17 +5614,15 @@
       }));
 
       const ws = XLSX.utils.json_to_sheet(data);
-      ws['!cols'] = Array(23).fill({ wch: 16 });
+      ws['!cols'] = Array(24).fill({ wch: 16 });
       ws['!cols'][0] = { wch: 22 };
-      ws['!cols'][7] = { wch: 24 };
+      ws['!cols'][8] = { wch: 24 };
 
-      /* Summary sheet */
       const k = State.kpis;
       const summary = [
         ['ملخص فواتير الجملة'],
         ['تاريخ التصدير', new Date().toLocaleString('ar-EG')],
-        ['']
-        ,
+        [''],
         ['المؤشر', 'القيمة'],
         ['إجمالي الفواتير', k.totalInvoices],
         ['القيمة الإجمالية (ج.م)', k.totalWholesaleValue],
@@ -5336,12 +5783,22 @@
     exportInvoices,
     exportTransfers,
 
+    /* ✅ v4: Inventory ownership helpers */
+    getRepInventoryMode,
+    setRepInventoryMode,
+    getMainShopInventory,
+    getRepInventory,
+    getAvailableInventoryForInvoice,
+    isSingleEntityMode,
+
     /* Constants */
     SUPPLY_MODES,
     INVOICE_STATUS,
     TRANSFER_STATUS,
     PAYMENT_MODES,
     RECIPIENT_TYPES,
+    INVENTORY_MODES,
+    HOLDER_TYPES,
 
     CacheDB,
   };
@@ -5376,6 +5833,8 @@
     TRANSFER_STATUS,
     PAYMENT_MODES,
     RECIPIENT_TYPES,
+    INVENTORY_MODES,
+    HOLDER_TYPES,
 
     CacheDB,
   };
@@ -5386,19 +5845,24 @@
      §28 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏭 Wholesale & Transfers View v3 loaded · B2B + SCAN + Inline Search',
+    '%c🏭 Wholesale & Transfers View v4 loaded · B2B Inventory Isolation',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#e0d4f5,#6b3fa0);border-radius:4px;'
   );
 
   console.log(
-    `%c📦 B2B Wholesale · Inter-Branch Transfers · Gold Exchange · Dual Ledger · Rep Linking`,
+    '%c📦 B2B Wholesale · Inter-Branch Transfers · Gold Exchange · Dual Ledger',
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🆕 v3: Scan Hero (like POS) · Inline manual search · F2 shortcut · Auto-focus`,
+    '%c🆕 v4: Single-Entity Mode · Shared/Isolated Inventory · Karat Display Fix',
     'color:#a55a00;font-weight:900;font-size:11px;'
+  );
+
+  console.log(
+    '%c🛡️  Ownership enforcement on scan/picker/search · Auto-cleanup on rep change',
+    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
