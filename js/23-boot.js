@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
-   ✅ v5.0: ADAPTIVE + B2B Sellers Module Integration
+   ✅ v6.0: DEMO DISABLED + B2B Bootstrap Skipped
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -110,7 +110,7 @@
       router: false,
       ui: false,
       repair: false,
-      b2b: false,      /* ✅ جديد */
+      b2b: false,
       sw: false,
       pwa: false,
     },
@@ -803,103 +803,17 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · ✅ B2B BOOTSTRAP — تهيئة بيانات بياعي الجملة
+     §9 · B2B BOOTSTRAP — ✅ v6: معطّل
+     ─────────────────────────────────────────────────────────────────────
+     النظام يبدأ فاضي — لا يتم زرع بياعين أو عملاء تلقائيًا
      ═════════════════════════════════════════════════════════════════════ */
 
   async function bootstrapB2B() {
     try {
-      if (!GMS.B2B?.CacheDB) {
-        console.log('[Boot] B2B module not available — skipping bootstrap');
-        return;
-      }
-
-      console.log('[Boot] 🏪 Bootstrapping B2B data…');
-
-      /* 1 · فحص هل البيانات موجودة */
-      let existingReps = [];
-      try {
-        existingReps = await GMS.B2B.CacheDB.getAll('sales_reps');
-      } catch (e) {
-        console.warn('[Boot] Failed to read sales_reps:', e);
-      }
-
-      /* 2 · لو فاضي، ازرع البيانات التجريبية */
-      if (!existingReps || existingReps.length === 0) {
-        if (GMS.Demo?.getB2BReps && GMS.Demo?.getB2BCustomers) {
-          const demoReps = GMS.Demo.getB2BReps();
-          const demoCustomers = GMS.Demo.getB2BCustomers();
-          const demoLedgers = GMS.Demo.getRepLedgers?.() || [];
-
-          for (const rep of demoReps) {
-            await GMS.B2B.CacheDB.save('sales_reps', rep);
-          }
-          for (const cust of demoCustomers) {
-            await GMS.B2B.CacheDB.save('b2b_customers', cust);
-          }
-          for (const entry of demoLedgers) {
-            await GMS.B2B.CacheDB.save('rep_ledgers', entry);
-          }
-
-          console.log(
-            `[Boot] ✅ Seeded B2B: ${demoReps.length} reps, ` +
-            `${demoCustomers.length} customers, ${demoLedgers.length} ledger entries`
-          );
-        } else {
-          console.warn('[Boot] Demo B2B data not available');
-        }
-      } else {
-        console.log(`[Boot] B2B store already has ${existingReps.length} reps`);
-      }
-
-      /* 3 · فحص إذا المستخدم الحالي بياع جملة — التحقق من rep_id */
-      if (GMS.Auth?.profile?.role === 'B2B_REP') {
-        if (!GMS.Auth.profile.rep_id) {
-          console.warn('[Boot] ⚠️ B2B_REP بدون rep_id — عزل البيانات لن يعمل');
-
-          if (GMS.Toast) {
-            GMS.Toast.warn(
-              'تحذير: حسابك غير مرتبط ببياع',
-              'تواصل مع المدير لربط حسابك'
-            );
-          }
-        } else {
-          console.log(
-            `[Boot] ✅ B2B Rep logged in: ` +
-            `${GMS.Auth.profile.full_name} (rep_id: ${GMS.Auth.profile.rep_id})`
-          );
-
-          /* التحقق من وجود البياع في المخزن */
-          const reps = await GMS.B2B.CacheDB.getAll('sales_reps');
-          const myRep = reps.find(r => r.id === GMS.Auth.profile.rep_id);
-
-          if (!myRep) {
-            console.warn(`[Boot] ⚠️ Rep ${GMS.Auth.profile.rep_id} not found in store`);
-
-            /* إنشاء سجل بياع بسيط */
-            await GMS.B2B.CacheDB.save('sales_reps', {
-              id: GMS.Auth.profile.rep_id,
-              code: 'REP-' + GMS.Auth.profile.rep_id.slice(-3).toUpperCase(),
-              name: GMS.Auth.profile.full_name,
-              phone: GMS.Auth.profile.phone || '',
-              branch_id: GMS.Auth.profile.branch_id,
-              opening_cash: 0,
-              opening_gold_pure: 0,
-              is_active: true,
-              created_at: new Date().toISOString(),
-            });
-
-            console.log('[Boot] ✅ Auto-created rep record for user');
-          } else {
-            console.log(`[Boot] ✅ Rep record found: ${myRep.name}`);
-          }
-        }
-      }
-
+      console.log('[Boot] ⏭️  B2B bootstrap skipped (demo disabled — starting clean)');
       markSystem('b2b');
-
     } catch (e) {
       recordError('b2b', e);
-      console.warn('[Boot] B2B bootstrap failed:', e);
     }
   }
 
@@ -942,7 +856,7 @@
         }
       }
 
-      /* ✅ B2B Bootstrap (بعد Auth + Cache) */
+      /* ✅ B2B Bootstrap (معطّل) */
       updateBootProgress('تهيئة بياعي الجملة…', 78);
       await bootstrapB2B();
       updateBootProgress('بياعو الجملة جاهزون', 82);
@@ -1221,12 +1135,8 @@
     updateBootProgress('تحضير اللغة…', 10);
 
     if (GMS.I18n) {
-      try {
-        GMS.I18n.init?.();
-        markSystem('i18n');
-      } catch (e) {
-        recordError('i18n', e);
-      }
+      try { GMS.I18n.init?.(); markSystem('i18n'); }
+      catch (e) { recordError('i18n', e); }
     }
 
     updateBootProgress('تحميل المظهر…', 18);
@@ -1258,7 +1168,6 @@
       }
     }
 
-    /* عرض logs من جلسة سابقة */
     try {
       const prevLog = sessionStorage.getItem('gms.debug.bootLog');
       if (prevLog) {
@@ -1273,7 +1182,6 @@
       }
     } catch (_) {}
 
-    /* معلومات الـ adaptive layout */
     console.log(
       `%c📐 Adaptive Layout: ${window.GMS.DeviceLayout || 'unknown'} (${window.GMS.DeviceSize || 'unknown'}) | Touch: ${window.GMS.DeviceTouch ? 'yes' : 'no'}`,
       'color:#0f7a43;font-weight:900;font-size:12px;'
@@ -1349,7 +1257,7 @@
     bindLoginForm,
     switchLanguage,
     updateLangButtons,
-    bootstrapB2B,   /* ✅ معرّض للاختبار اليدوي */
+    bootstrapB2B,
 
     getState: () => ({ ...BootState }),
 
@@ -1391,7 +1299,7 @@
      §20 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot v5.0 loaded · Adaptive + B2B Integration',
+    '%c⚡ Boot v6.0 loaded · DEMO DISABLED + Clean Start',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;background:#e6f6ee;border-radius:4px;'
   );
 
