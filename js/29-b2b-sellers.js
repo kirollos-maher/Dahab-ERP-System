@@ -2,13 +2,10 @@
    GOLD MS ENTERPRISE — js/29-b2b-sellers.js
    نظام بياعي الجملة المستقلين + عملاء الجملة (Multi-Tenant B2B)
    ─────────────────────────────────────────────────────────────────────
-   ✅ v1.2.0 — إضافات:
-     • FIX #1: الرصيد الافتتاحي للعميل لا يُحسب مرتين
-     • FIX #2: خزينة البياع لا تتضخم بحركات الرصيد الافتتاحي للعملاء
-     • FIX #3: تصنيف الحركات (rep_open vs customer_open)
-     • 🆕 NEW: قسم "المستحقات المتوقعة" (Receivables) منفصل عن الخزينة الفعلية
-     • 🆕 NEW: قسم "الإجمالي المتوقع" (الخزينة + المستحقات)
-     • 🆕 NEW: عرض تفصيلي لكل عميل مدين مع المبلغ
+   ✅ v1.2.1 — التحديثات:
+     • تعديل كارت "المستحقات التي تم استلامها" ليعرض الذهب فقط
+     • دعم كامل للعيار المختار من الإعدادات (Base Karat)
+     • تحسينات على عرض الـ KPIs
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -176,7 +173,6 @@
       totalCustomerGold: 0,
       pendingSettlements: 0,
       approvedSettlementsValue: 0,
-      /* 🆕 NEW */
       totalExpectedCash: 0,
       totalExpectedGold: 0,
     },
@@ -316,7 +312,7 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
-   * ✅ v1.2.0: حساب خزينة البياع الفعلية
+   * حساب خزينة البياع الفعلية
    * - تستثني الرصيد الافتتاحي للعملاء (ديون)
    * - تشمل: rep_open + كل الحركات الفعلية
    */
@@ -358,7 +354,7 @@
   }
 
   /**
-   * ✅ v1.2.0: حساب رصيد العميل (من دفتر الأستاذ فقط)
+   * حساب رصيد العميل (من دفتر الأستاذ فقط)
    */
   function computeCustomerBalance(customerId) {
     const cust = State.customers.find(c => c.id === customerId);
@@ -396,17 +392,8 @@
   }
 
   /**
-   * 🆕 v1.2.0: حساب المستحقات المتوقعة (Receivables) من عملاء البياع
-   * ─────────────────────────────────────────────────────────────────
+   * حساب المستحقات المتوقعة (Receivables) من عملاء البياع
    * يجمع فقط المديونيات الموجبة (cash > 0 و gold_pure > 0)
-   * أي: العملاء المدينون للبياع
-   *
-   * @returns {{
-   *   totalCash: number,
-   *   totalGoldPure: number,
-   *   customers: Array<{id, name, code, cash, gold_pure}>,
-   *   customersCount: number
-   * }}
    */
   function computeRepReceivables(repId) {
     const repCustomers = State.customers.filter(c =>
@@ -420,7 +407,6 @@
     repCustomers.forEach(cust => {
       const balance = computeCustomerBalance(cust.id);
 
-      /* فقط المديونيات الموجبة (العميل مدين لنا) */
       const cashDebt = Math.max(0, balance.cash);
       const goldDebt = Math.max(0, balance.gold_pure);
 
@@ -439,7 +425,6 @@
       }
     });
 
-    /* ترتيب حسب أكبر مديونية */
     debtors.sort((a, b) => b.cash - a.cash);
 
     return {
@@ -451,7 +436,7 @@
   }
 
   /**
-   * 🆕 v1.2.0: حساب الوضعية الكاملة للبياع
+   * حساب الوضعية الكاملة للبياع
    * = الخزينة الفعلية + المستحقات المتوقعة
    */
   function computeRepFullPosition(repId) {
@@ -459,7 +444,6 @@
     const receivables = computeRepReceivables(repId);
     const price24 = getPrice24();
 
-    /* القيم بالجنيه */
     const treasuryCashValue = treasury.cash;
     const treasuryGoldValue = round(treasury.gold_pure * price24, 2);
 
@@ -467,7 +451,6 @@
     const receivablesGoldValue = round(receivables.totalGoldPure * price24, 2);
 
     return {
-      /* الخزينة الفعلية */
       treasury: {
         cash: treasury.cash,
         gold_pure: treasury.gold_pure,
@@ -476,7 +459,6 @@
         gold_by_karat: treasury.gold_by_karat,
       },
 
-      /* المستحقات المتوقعة */
       receivables: {
         cash: receivables.totalCash,
         gold_pure: receivables.totalGoldPure,
@@ -486,7 +468,6 @@
         customers: receivables.customers,
       },
 
-      /* الإجمالي المتوقع بعد التحصيل الكامل */
       expected: {
         cash: round(treasury.cash + receivables.totalCash, 2),
         gold_pure: round(treasury.gold_pure + receivables.totalGoldPure, 4),
@@ -540,7 +521,6 @@
       totalCustomerGold: round(custGold, 4),
       pendingSettlements: pending,
       approvedSettlementsValue: round(approvedValue, 2),
-      /* 🆕 NEW */
       totalExpectedCash: round(totalExpectedCash, 2),
       totalExpectedGold: round(totalExpectedGold, 4),
     };
@@ -956,11 +936,31 @@
   function renderKPIs() {
     const k = State.kpis;
     const price24 = getPrice24();
-    const expectedGoldValue = round(k.totalExpectedGold * price24, 2);
-    const actualGoldValue = round(k.totalRepGold * price24, 2);
+
+    // ✅ العيار المختار من الإعدادات (Base Karat)
+    const baseKarat = GMS.BaseKarat?.current || 24;
+    const baseLabel = GMS.BaseKarat?.labelShort || '24K';
+
+    // ✅ تحويل الذهب للعيار المختار
+    const totalExpectedGoldByBase = GMS.BaseKarat?.fromPure
+      ? GMS.BaseKarat.fromPure(k.totalExpectedGold, baseKarat)
+      : k.totalExpectedGold;
+
+    const totalRepGoldByBase = GMS.BaseKarat?.fromPure
+      ? GMS.BaseKarat.fromPure(k.totalRepGold, baseKarat)
+      : k.totalRepGold;
+
+    // ✅ القيم النقدية للذهب
+    const expectedGoldValue = round(totalExpectedGoldByBase * price24, 2);
+    const actualGoldValue = round(totalRepGoldByBase * price24, 2);
+
+    // ✅ إجمالي الفلوس المتوقعة (كاش + قيمة الذهب)
+    const totalExpectedCashAndGold = round(k.totalExpectedCash + expectedGoldValue, 2);
 
     return `
       <div class="kpi-row cols-4">
+
+        <!-- 1 · بياعو الجملة -->
         <div class="kpi violet">
           <div class="kpi-label">
             <i data-lucide="user-check"></i>
@@ -972,6 +972,7 @@
           </div>
         </div>
 
+        <!-- 2 · الخزائن الفعلية (كاش) -->
         <div class="kpi success">
           <div class="kpi-label">
             <i data-lucide="wallet"></i>
@@ -979,34 +980,40 @@
           </div>
           <div class="kpi-value">${moneyFmt(k.totalRepCash)} <small>ج.م</small></div>
           <div class="kpi-meta">
-            ذهب فعلي: <b>${gramFmt(k.totalRepGold)}</b> جم
+            ذهب فعلي: <b>${gramFmt(totalRepGoldByBase)}</b> ${baseLabel}
             (<b>${moneyFmt(actualGoldValue)}</b> ج.م)
           </div>
         </div>
 
-        <div class="kpi warn">
+        <!-- 3 · المستحقات التي تم استلامها (ذهب فقط) -->
+        <div class="kpi info">
           <div class="kpi-label">
             <i data-lucide="hand-coins"></i>
-            المستحقات المتوقعة
+            المستحقات التي تم استلامها
           </div>
-          <div class="kpi-value">${moneyFmt(k.totalExpectedCash - k.totalRepCash)} <small>ج.م</small></div>
+          <div class="kpi-value">${gramFmt(totalRepGoldByBase)} <small>${baseLabel}</small></div>
           <div class="kpi-meta">
-            ذهب مستحق: <b>${gramFmt(k.totalExpectedGold - k.totalRepGold)}</b> جم
-            · من <b>${intFmt(k.totalCustomers)}</b> عميل
+            ذهب تم استلامه فعليًا بالعيار المختار
           </div>
         </div>
 
+        <!-- 4 · إجمالي المستحقات (رقمين) -->
         <div class="kpi gold">
           <div class="kpi-label">
             <i data-lucide="trending-up"></i>
-            الإجمالي المتوقع (بعد التحصيل)
+            إجمالي المستحقات
           </div>
-          <div class="kpi-value">${moneyFmt(k.totalExpectedCash)} <small>ج.م</small></div>
-          <div class="kpi-meta">
-            ذهب متوقع: <b>${gramFmt(k.totalExpectedGold)}</b> جم
-            (<b>${moneyFmt(expectedGoldValue)}</b> ج.م)
+          <div class="kpi-value">
+            ${gramFmt(totalExpectedGoldByBase)} <small>${baseLabel}</small>
+          </div>
+          <div class="kpi-meta" style="font-size:11.5px;font-weight:800;color:var(--primary);margin-top:6px">
+            💰 <b>${moneyFmt(totalExpectedCashAndGold)}</b> ج.م
+          </div>
+          <div class="kpi-meta" style="font-size:10.5px;margin-top:2px">
+            (كاش: ${moneyFmt(k.totalExpectedCash)} + ذهب: ${moneyFmt(expectedGoldValue)})
           </div>
         </div>
+
       </div>
     `;
   }
@@ -1038,7 +1045,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · REPS TAB — 🆕 مع قسم المستحقات والإجمالي المتوقع
+     §12 · REPS TAB
      ═════════════════════════════════════════════════════════════════════ */
   function renderRepsTab() {
     const visibleReps = isRepRole()
@@ -1080,12 +1087,6 @@
     `;
   }
 
-  /**
-   * 🆕 v1.2.0: بطاقة البياع مع 3 أقسام منفصلة
-   *   1. الخزينة الفعلية (كاش + ذهب موجود فعلاً)
-   *   2. المستحقات المتوقعة (مديونيات العملاء)
-   *   3. الإجمالي المتوقع بعد التحصيل
-   */
   function renderRepCard(rep) {
     const pos = computeRepFullPosition(rep.id);
     const isActive = rep.is_active !== false;
@@ -1094,7 +1095,6 @@
       <div class="queue-item" data-b2b-rep-card="${esc(rep.id)}"
            style="cursor:default;display:block;padding:16px">
 
-        <!-- ═══ Header: اسم البياع + الأزرار ═══ -->
         <div style="display:flex;align-items:center;gap:12px;
                     margin-bottom:14px;flex-wrap:wrap">
           <div style="width:48px;height:48px;border-radius:12px;
@@ -1161,11 +1161,9 @@
           </div>
         </div>
 
-        <!-- ═══ 3 أقسام مالية منفصلة ═══ -->
         <div style="display:grid;grid-template-columns:repeat(3,1fr);
                     gap:10px">
 
-          <!-- ✅ القسم 1: الخزينة الفعلية -->
           <div style="padding:12px 14px;
                       background:linear-gradient(135deg,
                         color-mix(in srgb,var(--success) 8%,var(--surface-2)) 0%,
@@ -1218,7 +1216,6 @@
             </div>
           </div>
 
-          <!-- ✅ القسم 2: المستحقات المتوقعة -->
           <div style="padding:12px 14px;
                       background:linear-gradient(135deg,
                         color-mix(in srgb,var(--warn) 8%,var(--surface-2)) 0%,
@@ -1275,7 +1272,6 @@
             </div>
           </div>
 
-          <!-- ✅ القسم 3: الإجمالي المتوقع بعد التحصيل -->
           <div style="padding:12px 14px;
                       background:var(--gold-soft);
                       border-radius:10px;
@@ -1494,7 +1490,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · AUDIT TAB — 🆕 يعرض الأعمدة الثلاثة (فعلي + مستحقات + متوقع)
+     §14 · AUDIT TAB
      ═════════════════════════════════════════════════════════════════════ */
   function renderAuditTab() {
     if (!isManager()) {
@@ -1503,7 +1499,6 @@
 
     const reps = State.reps;
 
-    /* الإجماليات */
     let grandTreasuryCash = 0, grandTreasuryGold = 0;
     let grandReceivableCash = 0, grandReceivableGold = 0;
     let grandExpectedCash = 0, grandExpectedGold = 0;
@@ -2539,7 +2534,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §21 · MODAL — REP DETAILS — 🆕 مع المستحقات والإجمالي المتوقع
+     §21 · MODAL — REP DETAILS
      ═════════════════════════════════════════════════════════════════════ */
   function openRepDetails(repId) {
     if (!canAccessRep(repId)) return GMS.Toast.err('غير مصرح');
@@ -2561,9 +2556,6 @@
       size: 'xl',
       body: `
 
-        <!-- ═══════════════════════════════════════════════════════════
-             قسم 1: الخزينة الفعلية
-             ═══════════════════════════════════════════════════════════ -->
         <div style="padding:16px;
                     background:linear-gradient(135deg,
                       color-mix(in srgb,var(--success) 10%,var(--surface)) 0%,
@@ -2639,9 +2631,6 @@
           ` : ''}
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════════
-             قسم 2: المستحقات المتوقعة من العملاء
-             ═══════════════════════════════════════════════════════════ -->
         <div style="padding:16px;
                     background:linear-gradient(135deg,
                       color-mix(in srgb,var(--warn) 10%,var(--surface)) 0%,
@@ -2703,7 +2692,6 @@
             </div>
           </div>
 
-          <!-- قائمة العملاء المدينين -->
           ${pos.receivables.customers.length ? `
             <div style="margin-top:14px;padding-top:12px;
                         border-top:1px dashed color-mix(in srgb,var(--warn) 30%,var(--border))">
@@ -2755,9 +2743,6 @@
           `}
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════════
-             قسم 3: الإجمالي المتوقع (بعد التحصيل الكامل)
-             ═══════════════════════════════════════════════════════════ -->
         <div style="padding:16px;background:var(--gold-soft);
                     border-radius:14px;margin-bottom:16px;
                     border:2.5px solid color-mix(in srgb,var(--primary) 50%,var(--border));
@@ -2832,9 +2817,6 @@
           </div>
         </div>
 
-        <!-- ═══════════════════════════════════════════════════════════
-             قسم 4: آخر الحركات
-             ═══════════════════════════════════════════════════════════ -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div class="card">
             <div class="card-head">
@@ -3392,29 +3374,24 @@
   };
 
   console.log(
-    '%c🏪 B2B Sellers Module v1.2.0 loaded · Multi-Tenant + Receivables',
+    '%c🏪 B2B Sellers Module v1.2.1 loaded · Receivables Card shows Gold Only',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#d4c4f0,#6b3fa0);border-radius:4px;'
   );
 
   console.log(
-    '%c✅ FIX: Customer opening balance no longer double-counted',
+    '%c✅ Card #3 "المستحقات التي تم استلامها" → Gold only (per Base Karat)',
     'color:#0f7a43;font-weight:800;font-size:11px;'
   );
 
   console.log(
-    '%c✅ FIX: Rep treasury excludes customer opening entries (receivables)',
+    '%c✅ Card #4 "إجمالي المستحقات" → Gold + Total Expected Cash',
     'color:#0f7a43;font-weight:800;font-size:11px;'
   );
 
   console.log(
-    '%c🆕 NEW: 3-section rep card — Treasury | Receivables | Expected Total',
-    'color:#1c4fd8;font-weight:900;font-size:11px;'
-  );
-
-  console.log(
-    '%c🆕 NEW: computeRepReceivables() + computeRepFullPosition() APIs',
-    'color:#1c4fd8;font-weight:900;font-size:11px;'
+    '%c⚖️  Base Karat aware — يتحول تلقائيًا حسب العيار المختار في الإعدادات',
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
 })();
