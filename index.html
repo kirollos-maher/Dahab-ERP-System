@@ -1,7 +1,7 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      GOLD MS ENTERPRISE — index.html
-     نظام إدارة الذهب والمجوهرات — PWA
-     ✅ v5: B2B Sellers Module + Adaptive Layout System
+     نظام إدارة الذهب والمجوهرات — Multi-Tenant SaaS
+     ✅ v6: Tenant Login Wizard + Multi-Tenant SaaS Layer
      ═══════════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="light" data-lang="ar">
@@ -12,7 +12,7 @@
 <meta name="theme-color" content="#D4A017" />
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     ✅ ADAPTIVE DEVICE DETECTION — يعمل قبل تحميل أي CSS
+     ADAPTIVE DEVICE DETECTION — يعمل قبل تحميل أي CSS
      ═══════════════════════════════════════════════════════════════════ -->
 <script>
 (function adaptiveDetection() {
@@ -143,6 +143,492 @@
 <link rel="stylesheet" href="style.css" />
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     LOGIN WIZARD STYLES (مضمَّنة لتقليل طلبات الشبكة)
+     ═══════════════════════════════════════════════════════════════════ -->
+<style>
+/* ─── Tenant Login Wizard ──────────────────────────────────────────── */
+#login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background:
+    radial-gradient(1000px 500px at 20% 0%, #1e293b 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 100%, #0f172a 0%, transparent 55%),
+    #080d18;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wizard-card {
+  width: 100%;
+  max-width: min(500px, 95vw);
+  background: var(--surface);
+  border-radius: clamp(16px, 3vw, 24px);
+  padding: clamp(24px, 5vw, 36px) clamp(20px, 4vw, 32px);
+  border: 1px solid var(--border);
+  box-shadow:
+    0 40px 120px -40px rgba(0, 0, 0, .9),
+    0 0 0 1px rgba(255, 255, 255, .03);
+  position: relative;
+  overflow: hidden;
+  animation: wizardPop .5s cubic-bezier(.3, 1.4, .5, 1);
+}
+
+@keyframes wizardPop {
+  from { opacity: 0; transform: scale(.94) translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.wizard-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 5px;
+  background: var(--gold-grad);
+  z-index: 2;
+}
+
+.wizard-brand {
+  display: flex;
+  align-items: center;
+  gap: clamp(9px, 2vw, 13px);
+  margin-bottom: clamp(16px, 3vw, 22px);
+  position: relative;
+  z-index: 1;
+}
+
+.wizard-brand .logo {
+  width: clamp(44px, 10vw, 54px);
+  height: clamp(44px, 10vw, 54px);
+  border-radius: clamp(12px, 2.5vw, 16px);
+  background: var(--gold-grad);
+  display: grid;
+  place-items: center;
+  color: #2a1f05;
+  font-weight: 900;
+  font-size: clamp(18px, 4vw, 23px);
+  box-shadow: 0 14px 34px -12px rgba(184, 145, 47, .95);
+  flex-shrink: 0;
+}
+
+.wizard-brand h1 {
+  font-size: clamp(16px, 3vw, 19px);
+  font-weight: 900;
+  letter-spacing: -.4px;
+  margin: 0;
+}
+
+.wizard-brand p {
+  margin: 3px 0 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Progress Bar */
+.wizard-progress {
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.wizard-progress-fill {
+  height: 100%;
+  width: 25%;
+  background: var(--gold-grad);
+  border-radius: 4px;
+  transition: width .35s cubic-bezier(.4, 0, .2, 1);
+}
+
+.wizard-steps {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 22px;
+  position: relative;
+  z-index: 1;
+}
+
+.wizard-step-dot {
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  transition: all .3s;
+}
+
+.wizard-step-dot.active { background: var(--primary); }
+.wizard-step-dot.done   { background: var(--success); }
+
+/* Panels */
+.wizard-panel {
+  display: none;
+  animation: panelFadeIn .35s ease;
+  position: relative;
+  z-index: 1;
+}
+
+.wizard-panel.active { display: block; }
+
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.wizard-panel h2 {
+  font-size: 17px;
+  font-weight: 900;
+  margin: 0 0 6px;
+  letter-spacing: -.3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wizard-panel h2 svg {
+  color: var(--primary);
+  width: 20px;
+  height: 20px;
+}
+
+.wizard-panel > p {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 18px;
+  line-height: 1.6;
+}
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.wizard-field label {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-2);
+}
+
+.wizard-field input {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-2);
+  font-weight: 700;
+  font-size: 16px;
+  transition: all .2s;
+  font-family: inherit;
+  color: var(--text);
+}
+
+.wizard-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+.wizard-field input.code-input {
+  text-align: center;
+  letter-spacing: 4px;
+  font-size: 20px;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  direction: ltr;
+  text-transform: uppercase;
+}
+
+.wizard-field input.vcode-input {
+  text-align: center;
+  letter-spacing: 10px;
+  font-size: 26px;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  direction: ltr;
+}
+
+.wizard-field input.mono { font-family: var(--font-mono); }
+
+/* User Type Cards */
+.user-type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.user-type-card {
+  padding: 18px 12px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--surface-2);
+  cursor: pointer;
+  text-align: center;
+  transition: all .2s;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-type-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+  transform: translateY(-2px);
+}
+
+.user-type-card.selected {
+  border-color: var(--primary);
+  background: var(--gold-soft);
+  box-shadow: 0 8px 20px -10px rgba(184, 145, 47, .8);
+}
+
+.user-type-card .ut-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  display: grid;
+  place-items: center;
+  transition: all .2s;
+}
+
+.user-type-card.selected .ut-icon {
+  background: var(--gold-grad);
+  color: #2a1f05;
+}
+
+.user-type-card .ut-icon svg { width: 22px; height: 22px; }
+
+.user-type-card .ut-label {
+  font-size: 13.5px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.user-type-card.selected .ut-label { color: var(--primary); }
+
+.user-type-card .ut-desc {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Wizard Buttons */
+.wizard-btn {
+  width: 100%;
+  padding: 14px 20px;
+  border-radius: 12px;
+  border: none;
+  background: var(--gold-grad);
+  color: #2a1f05;
+  font-weight: 900;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 50px;
+  box-shadow: 0 10px 24px -12px rgba(184, 145, 47, .95);
+}
+
+.wizard-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -12px rgba(184, 145, 47, .95);
+}
+
+.wizard-btn:active:not(:disabled) { transform: translateY(0); }
+.wizard-btn:disabled { opacity: .5; cursor: not-allowed; }
+.wizard-btn svg { width: 16px; height: 16px; }
+
+.wizard-btn-secondary {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  font-weight: 700;
+}
+
+.wizard-btn-secondary:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: var(--border-strong);
+  transform: none;
+  box-shadow: none;
+}
+
+.wizard-btn-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+/* Error */
+.wizard-error {
+  margin-top: 12px;
+  padding: 11px 14px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  border: 1px solid var(--danger-border);
+  line-height: 1.5;
+}
+
+.wizard-error.hidden { display: none; }
+
+/* Hint */
+.wizard-hint {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--info-bg);
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  line-height: 1.6;
+  border-inline-start: 3px solid var(--info);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.wizard-hint svg {
+  width: 14px;
+  height: 14px;
+  color: var(--info);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Business Preview */
+.biz-preview {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, var(--gold-soft) 0%, var(--surface) 100%);
+  border-radius: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--primary) 40%, var(--border));
+  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.biz-preview::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 4px;
+  background: var(--gold-grad);
+}
+
+.biz-preview-name {
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--primary);
+  margin-bottom: 4px;
+}
+
+.biz-preview-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 700;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.biz-preview-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Show Password Button */
+.password-wrap {
+  position: relative;
+}
+
+.password-toggle {
+  position: absolute;
+  inset-inline-end: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  transition: all .15s;
+}
+
+.password-toggle:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.password-toggle svg { width: 16px; height: 16px; }
+
+/* Footer */
+.wizard-footer {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.7;
+}
+
+.wizard-footer a {
+  color: var(--primary);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.wizard-footer a:hover { text-decoration: underline; }
+
+/* Mobile */
+[data-layout="mobile"] .wizard-card {
+  padding: 22px 18px;
+  border-radius: 18px 18px 0 0;
+}
+
+[data-layout="mobile"] #login-screen {
+  padding: 0;
+  align-items: flex-end;
+}
+
+[data-layout="mobile"] .wizard-panel h2 { font-size: 16px; }
+[data-layout="mobile"] .wizard-field input { padding: 13px 14px; }
+[data-layout="mobile"] .user-type-grid { gap: 8px; }
+[data-layout="mobile"] .user-type-card { padding: 14px 10px; }
+</style>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      CDN LIBRARIES
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -155,39 +641,28 @@
      APPLICATION MODULES — Order Matters!
      ─────────────────────────────────────────────────────────────────
      🎯 الترتيب حرج — لا تُغيّر ترتيب السكربتات
-     
-     المستويات:
-       Level 0 · Multi-Tenant SaaS Layer  (جديد — يجب أن يكون أولاً)
-       Level 1 · Foundation              (Config, Utils, I18n)
-       Level 2 · Storage & Network       (Cache, Sync, Auth, UI)
-       Level 3 · Feature Modules         (QR, Excel, Realtime)
-       Level 4 · Views                   (كل شاشات النظام)
-       Level 5 · B2B Sellers
-       Level 6 · Utilities               (Inventory Summary, Base Karat)
-       Level 7 · Router + Boot + PWA
      ═══════════════════════════════════════════════════════════════════ -->
 
 <!-- ═══════════════════════════════════════════════════════════════════
      Level 0 · 🆕 Multi-Tenant SaaS Layer
      ─────────────────────────────────────────────────────────────────
-     يجب أن تُحمَّل قبل أي ملف آخر لأن باقي الوحدات تعتمد عليها:
-       • bcryptjs  → تشفير/مقارنة كلمات المرور في المتصفح
-       • 00c-rls-wrapper → GMS.DB + GMS.Biz (Business Context)
-       • 00a-tenant-auth → Wizard تسجيل الدخول (4 خطوات)
+     • bcryptjs        → تشفير كلمات المرور في المتصفح
+     • 00c-rls-wrapper → GMS.DB + GMS.Biz (Business Context)
+     • 00a-tenant-auth → Wizard تسجيل الدخول (4 خطوات)
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js"></script>
 <script defer src="js/00c-rls-wrapper.js"></script>
 <script defer src="js/00a-tenant-auth.js"></script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Level 1 · Foundation — الأساسيات
+     Level 1 · Foundation
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/01-config.js"></script>
 <script defer src="js/02-utils.js"></script>
 <script defer src="js/03-i18n.js"></script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Level 2 · Storage & Network — التخزين والمزامنة والمصادقة
+     Level 2 · Storage & Network
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/04-cache.js"></script>
 <script defer src="js/05-sync.js"></script>
@@ -195,7 +670,7 @@
 <script defer src="js/07-ui.js"></script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Level 3 · Feature Modules — الوحدات المساعدة
+     Level 3 · Feature Modules
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/08-demo.js"></script>
 <script defer src="js/09-qr.js"></script>
@@ -203,9 +678,7 @@
 <script defer src="js/11-realtime.js"></script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Level 4 · Views — شاشات النظام
-     ─────────────────────────────────────────────────────────────────
-     كل شاشة تُسجّل نفسها في GMS.Views.xxx
+     Level 4 · Views
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/12-views-dashboard.js"></script>
 <script defer src="js/13-views-pos.js"></script>
@@ -222,20 +695,12 @@
 <script defer src="js/27-views-wholesale.js"></script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Level 5 · B2B Sellers — وحدة بياعي الجملة المستقلين
-     ─────────────────────────────────────────────────────────────────
-     تُسجّل GMS.B2B + GMS.Views.b2b
-     يجب أن تُحمَّل قبل base-karat لأنها تستخدمها في العرض
+     Level 5 · B2B Sellers
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/29-b2b-sellers.js"></script>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     Level 6 · Utilities — أدوات مساعدة
-     ─────────────────────────────────────────────────────────────────
-     • PriceManager   → الأسعار اللحظية (API)
-     • InventorySummary → ملخّص الجرد حسب التصنيف
-     • BaseKarat      → عيار الأساس (يحتاج أن يُحمَّل بدون defer
-                        لأنه يجب أن يكون جاهزاً قبل أي view)
+     Level 6 · Utilities
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/28-price-manager.js"></script>
 <script defer src="js/30-inventory-count-summary.js"></script>
@@ -244,23 +709,22 @@
 
 <!-- ═══════════════════════════════════════════════════════════════════
      Level 7 · Router + Boot + PWA
-     ─────────────────────────────────────────────────────────────────
-     • Router  → يجب أن يكون آخر ملف JS (يبدأ التنقل)
-     • Boot    → نقطة التشغيل النهائية
-     • PWA     → Service Worker + Install Prompt
      ═══════════════════════════════════════════════════════════════════ -->
 <script defer src="js/22-router.js"></script>
 <script defer src="js/23-boot.js"></script>
 <script defer src="js/25-pwa.js"></script>
+
 </head>
 <body>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     LOGIN SCREEN
+     🚪 TENANT LOGIN WIZARD — 4 Steps
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="login-screen">
-  <div class="login-card">
-    <div class="login-brand">
+  <div class="wizard-card">
+
+    <!-- Brand -->
+    <div class="wizard-brand">
       <div class="logo">Au</div>
       <div>
         <h1>Gold ERP Pro</h1>
@@ -268,31 +732,199 @@
       </div>
     </div>
 
-    <form id="login-form" autocomplete="on">
-      <div class="field">
-        <label>البريد الإلكتروني <span class="req">*</span></label>
-        <input type="email" id="login-email" value="admin@goldms.eg"
-               required dir="ltr" class="mono" autocomplete="username">
-      </div>
-      <div class="field">
-        <label>كلمة المرور <span class="req">*</span></label>
-        <input type="password" id="login-password" value="Admin@123"
-               required dir="ltr" class="mono" autocomplete="current-password">
-      </div>
-      <button type="submit" class="btn btn-primary btn-lg btn-block" id="login-submit">
-        <i data-lucide="log-in"></i> تسجيل الدخول
-      </button>
-      <p id="login-error" class="hidden"></p>
-    </form>
-
-    <div class="demo-creds">
-      <b>🔐 بيانات تجريبية:</b><br>
-      <span class="mono" dir="ltr">admin@goldms.eg / Admin@123</span> — مدير عام<br>
-      <span class="mono" dir="ltr">manager@goldms.eg / Manage@123</span> — مدير فرع<br>
-      <span class="mono" dir="ltr">accountant@goldms.eg / Account@1</span> — محاسب<br>
-      <span class="mono" dir="ltr">cashier@goldms.eg / Cashier@1</span> — بائع<br>
-      <span class="mono" dir="ltr">data@goldms.eg / Data@1234</span> — مدخل بيانات
+    <!-- Progress Bar -->
+    <div class="wizard-progress">
+      <div class="wizard-progress-fill" id="wizard-progress"></div>
     </div>
+
+    <!-- Step Dots -->
+    <div class="wizard-steps">
+      <div class="wizard-step-dot active" data-login-step="1"></div>
+      <div class="wizard-step-dot" data-login-step="2"></div>
+      <div class="wizard-step-dot" data-login-step="3"></div>
+      <div class="wizard-step-dot" data-login-step="4"></div>
+    </div>
+
+    <!-- ═════════════════════════════════════════════════════════════
+         STEP 1 · Business Code
+         ═════════════════════════════════════════════════════════════ -->
+    <div class="wizard-panel active" data-login-panel="1">
+      <h2>
+        <i data-lucide="building-2"></i>
+        كود النشاط
+      </h2>
+      <p>أدخل الكود التعريفي الذي استلمته من مالك النظام</p>
+
+      <div class="wizard-field">
+        <label>الكود التعريفي</label>
+        <input type="text" id="login-biz-code"
+               class="code-input"
+               placeholder="GLD-XXXXXX"
+               autocomplete="off"
+               autocapitalize="characters"
+               spellcheck="false"
+               maxlength="20">
+      </div>
+
+      <button type="button" class="wizard-btn" id="login-step1-next">
+        <span>التالي</span>
+        <i data-lucide="arrow-left"></i>
+      </button>
+
+      <div class="wizard-error hidden" id="login-step1-error"></div>
+
+      <div class="wizard-hint">
+        <i data-lucide="info"></i>
+        <div>
+          الكود يبدأ بـ <span class="mono" style="color:var(--primary)">GLD-</span>
+          ويتكون من 6 أحرف/أرقام. تواصل مع الإدارة إن لم تستلمه.
+        </div>
+      </div>
+    </div>
+
+    <!-- ═════════════════════════════════════════════════════════════
+         STEP 2 · Verification Code
+         ═════════════════════════════════════════════════════════════ -->
+    <div class="wizard-panel" data-login-panel="2">
+      <h2>
+        <i data-lucide="key"></i>
+        رمز التحقق
+      </h2>
+      <p>هذه أول مرة يتم فيها تفعيل النشاط. أدخل رمز التحقق المُرسل إليك</p>
+
+      <div class="wizard-field">
+        <label>رمز التحقق (6 أرقام)</label>
+        <input type="text" id="login-vcode"
+               class="vcode-input"
+               placeholder="000000"
+               inputmode="numeric"
+               autocomplete="off"
+               maxlength="8">
+      </div>
+
+      <div class="wizard-btn-row">
+        <button type="button" class="wizard-btn wizard-btn-secondary"
+                data-wizard-back>
+          <i data-lucide="arrow-right"></i>
+        </button>
+        <button type="button" class="wizard-btn" id="login-step2-next">
+          <span>تفعيل</span>
+          <i data-lucide="check"></i>
+        </button>
+      </div>
+
+      <div class="wizard-error hidden" id="login-step2-error"></div>
+
+      <div class="wizard-hint">
+        <i data-lucide="info"></i>
+        <div>
+          الرمز صالح لمرة واحدة فقط خلال المدة المحددة من الإدارة.
+          لو انتهت صلاحيته، اطلب رمزاً جديداً من مالك النظام.
+        </div>
+      </div>
+    </div>
+
+    <!-- ═════════════════════════════════════════════════════════════
+         STEP 3 · User Type
+         ═════════════════════════════════════════════════════════════ -->
+    <div class="wizard-panel" data-login-panel="3">
+      <h2>
+        <i data-lucide="user-check"></i>
+        نوع الحساب
+      </h2>
+      <p>اختر نوع الحساب الذي تدخل به</p>
+
+      <div class="user-type-grid">
+        <button type="button" class="user-type-card" data-user-type="owner">
+          <div class="ut-icon">
+            <i data-lucide="crown"></i>
+          </div>
+          <div class="ut-label">صاحب المحل</div>
+          <div class="ut-desc">Owner</div>
+        </button>
+
+        <button type="button" class="user-type-card" data-user-type="employee">
+          <div class="ut-icon">
+            <i data-lucide="user-circle"></i>
+          </div>
+          <div class="ut-label">موظف</div>
+          <div class="ut-desc">Employee</div>
+        </button>
+      </div>
+
+      <button type="button" class="wizard-btn wizard-btn-secondary"
+              data-wizard-back style="width:100%">
+        <i data-lucide="arrow-right"></i>
+        <span>رجوع</span>
+      </button>
+
+      <div class="wizard-error hidden" id="login-step3-error"></div>
+    </div>
+
+    <!-- ═════════════════════════════════════════════════════════════
+         STEP 4 · Username + Password
+         ═════════════════════════════════════════════════════════════ -->
+    <div class="wizard-panel" data-login-panel="4">
+      <h2>
+        <i data-lucide="log-in"></i>
+        بيانات الدخول
+      </h2>
+      <p>أدخل بيانات الحساب الخاصة بك</p>
+
+      <!-- Business Preview (dynamic) -->
+      <div id="login-biz-preview"></div>
+
+      <div class="wizard-field">
+        <label>Username</label>
+        <input type="text" id="login-username"
+               class="mono" dir="ltr"
+               placeholder="user_name"
+               autocomplete="username"
+               spellcheck="false">
+      </div>
+
+      <div class="wizard-field">
+        <label>كلمة المرور</label>
+        <div class="password-wrap">
+          <input type="password" id="login-password"
+                 class="mono" dir="ltr"
+                 placeholder="••••••••"
+                 autocomplete="current-password">
+          <button type="button" class="password-toggle" id="login-show-pass"
+                  aria-label="إظهار كلمة المرور">
+            <i data-lucide="eye"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="wizard-btn-row">
+        <button type="button" class="wizard-btn wizard-btn-secondary"
+                data-wizard-back>
+          <i data-lucide="arrow-right"></i>
+        </button>
+        <button type="button" class="wizard-btn" id="login-step4-submit">
+          <span>تسجيل الدخول</span>
+          <i data-lucide="log-in"></i>
+        </button>
+      </div>
+
+      <div class="wizard-error hidden" id="login-step4-error"></div>
+
+      <div class="wizard-hint">
+        <i data-lucide="info"></i>
+        <div>
+          لو نسيت كلمة المرور، اطلب من مالك النظام إعادة تعيينها.
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="wizard-footer">
+      Gold ERP Pro © 2026 · v1.0.1
+      <br>
+      للإدارة والدعم تواصل مع مالك النظام
+    </div>
+
   </div>
 </div>
 
@@ -413,7 +1045,6 @@
       <span data-i18n="nav.wholesale">التوريد والجملة</span>
     </button>
 
-    <!-- ✅ تبويب بياعي الجملة المستقلين -->
     <button class="tab" data-tab="b2b" type="button">
       <i data-lucide="user-check"></i>
       <span data-i18n="nav.b2b">بياعو الجملة</span>
