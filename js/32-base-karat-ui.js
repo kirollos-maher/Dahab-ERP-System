@@ -1,13 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/32-base-karat-ui.js
-   Base Karat UI — v3.2 (Simple Direct Approach)
-   ─────────────────────────────────────────────────────────────────────
-   ✅ v3.2 الميزات:
-     • يعالج كل .kpi-value بدون فلترة معقدة
-     • يستخدم قائمة selectors صريحة للـ KPI
-     • يعمل عند init + عند كل تنقل + كل 5 ثواني
-     • لا يعتمد على Router hooks فقط
-     • Console log واضح لكل عملية
+   Base Karat UI — v4.0 (FINAL — Direct Number Conversion)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -15,39 +8,23 @@
 
   const GMS = window.GMS = window.GMS || {};
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §1 · STATE
-     ═════════════════════════════════════════════════════════════════════ */
   const State = {
     installed: false,
     _timer: null,
     _interval: null,
-    _stats: {
-      runs: 0,
-      numbersConverted: 0,
-      textsCleaned: 0,
-      lastRun: null,
-    },
+    _observer: null,
+    _stats: { runs: 0, converted: 0, cleaned: 0, lastRun: null },
   };
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §2 · SKIP ROUTES
-     ═════════════════════════════════════════════════════════════════════ */
   const SKIP_ROUTES = ['settings', 'audit'];
 
   function isSkipRoute() {
     try {
       const r = GMS.Router?.currentId?.();
-      if (!r) return false;
-      return SKIP_ROUTES.includes(r);
-    } catch (_) {
-      return false;
-    }
+      return r ? SKIP_ROUTES.includes(r) : false;
+    } catch (_) { return false; }
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §3 · HELPERS
-     ═════════════════════════════════════════════════════════════════════ */
   function getKarat() {
     try { return GMS.BaseKarat?.current || 24; } catch (_) { return 24; }
   }
@@ -56,48 +33,43 @@
     try { return GMS.BaseKarat?.labelShort || '24K'; } catch (_) { return '24K'; }
   }
 
-  function convertWeight(w) {
+  function convert(w) {
     const v = parseFloat(w);
     if (!isFinite(v) || v === 0) return 0;
     try {
       if (GMS.BaseKarat?.fromPure) {
         return GMS.BaseKarat.fromPure(v, getKarat());
       }
-      const k = getKarat();
-      return v * (24 / k);
-    } catch (_) {
-      return v;
-    }
+      return v * (24 / getKarat());
+    } catch (_) { return v; }
   }
 
-  function parseNumber(text) {
-    if (!text) return 0;
-    const cleaned = String(text).replace(/,/g, '').replace(/[^\d.\-]/g, '');
-    const n = parseFloat(cleaned);
+  function parseNum(t) {
+    if (!t) return 0;
+    const n = parseFloat(String(t).replace(/,/g, '').replace(/[^\d.\-]/g, ''));
     return isFinite(n) ? n : 0;
   }
 
-  function formatLike(value, template) {
-    const v = Number(value);
-    if (!isFinite(v)) return String(template);
+  function fmt(v, template) {
+    const n = Number(v);
+    if (!isFinite(n)) return String(template);
     const hasComma = /,/.test(template);
-    const match = String(template).match(/\.(\d+)/);
-    const decimals = match ? match[1].length : 0;
-    let s = v.toFixed(decimals);
+    const m = String(template).match(/\.(\d+)/);
+    const dec = m ? m[1].length : 0;
+    let s = n.toFixed(dec);
     if (hasComma) {
-      const parts = s.split('.');
-      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-      s = parts.join('.');
+      const p = s.split('.');
+      p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      s = p.join('.');
     }
     return s;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · CLEAN TEXT
+     §1 · CLEAN TEXT — إزالة "بندق" + استبدال 24K/21K
      ═════════════════════════════════════════════════════════════════════ */
   function cleanText(text) {
     if (!text) return text;
-
     const t = String(text).trim();
     if (t.length < 2) return text;
     if (!/[\u0600-\u06FFa-zA-Z]/.test(t)) return text;
@@ -105,18 +77,19 @@
     const baseLabel = getLabel();
     let out = String(text);
 
-    /* إزالة "بندق" و "بندقي" */
-    out = out.replace(/\(\s*بندق[ي]?\s+(18K|21K|24K)\s*\)/g, (m, k) => {
-      return k === baseLabel ? `(${k})` : `(${baseLabel})`;
-    });
-
+    /* إزالة "بندق" و"بندقي" */
+    out = out.replace(/\(\s*بندق[ي]?\s+(18K|21K|24K)\s*\)/g, (m, k) =>
+      k === baseLabel ? `(${k})` : `(${baseLabel})`);
     out = out.replace(/\(\s*بندق[ي]?\s+(\d{2,3})\s*\)/g, () => `(${baseLabel})`);
-    out = out.replace(/بندق[ي]?\s+(18K|21K|24K)/g, (m, k) => k === baseLabel ? k : baseLabel);
+    out = out.replace(/بندق[ي]?\s+(18K|21K|24K)/g, (m, k) =>
+      k === baseLabel ? k : baseLabel);
     out = out.replace(/بندق[ي]?\s+(\d{2,3})\b/g, () => baseLabel);
-    out = out.replace(/البندق[ي]?\s+(18K|21K|24K)/g, (m, k) => `العيار ${k === baseLabel ? k : baseLabel}`);
+    out = out.replace(/البندق[ي]?\s+(18K|21K|24K)/g, (m, k) =>
+      `العيار ${k === baseLabel ? k : baseLabel}`);
     out = out.replace(/بندق[ي]?\s+جملة\s+مُباع/gi, 'ذهب جملة مُباع');
     out = out.replace(/بندق[ي]?\s+جملة/gi, 'ذهب جملة');
-    out = out.replace(/جم\s+بندق[ي]?\s+(18K|21K|24K)/g, (m, k) => `جم ${k === baseLabel ? k : baseLabel}`);
+    out = out.replace(/جم\s+بندق[ي]?\s+(18K|21K|24K)/g, (m, k) =>
+      `جم ${k === baseLabel ? k : baseLabel}`);
     out = out.replace(/جم\s+بندق[ي]?/gi, 'جم');
     out = out.replace(/البندق[ي]?\s+المُفلتر/gi, 'العيار المُفلتر');
     out = out.replace(/البندق[ي]?\s+الفلتر/gi, 'العيار المفلتر');
@@ -125,9 +98,11 @@
     out = out.replace(/^بندق[ي]?\s+/g, '');
     out = out.replace(/\s+بندق[ي]?$/g, '');
 
-    /* استبدال العيارات */
-    out = out.replace(/\(\s*(24K|21K|18K)\s*\)/g, (m, k) => k === baseLabel ? m : `(${baseLabel})`);
-    out = out.replace(/\b(24K|21K|18K)\b/g, (m, k) => k === baseLabel ? m : baseLabel);
+    /* استبدال العيارات — 24K و21K و18K → baseLabel */
+    out = out.replace(/\(\s*(24K|21K|18K)\s*\)/g, (m, k) =>
+      k === baseLabel ? m : `(${baseLabel})`);
+    out = out.replace(/\b(24K|21K|18K)\b/g, (m, k) =>
+      k === baseLabel ? m : baseLabel);
 
     /* تنظيف */
     out = out.replace(/\(\s*\)/g, '');
@@ -142,70 +117,59 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · CONVERT ALL KPI VALUES — v3.2 (بدون فلترة)
+     §2 · CONVERT NUMBERS — الأهم في v4.0
      ═════════════════════════════════════════════════════════════════════
-     يستهدف كل .kpi-value مباشرة ويحوّلها
-     الاستثناءات الوحيدة:
-       1. KPI داخل Settings
-       2. KPI فيه "عدد" (فواتير/أصناف/قطع)
-       3. KPI فيه "نسبة" أو "%"
-       4. KPI فيه "ج.م" أو "جنيه" (أسعار نقدية)
+     يستهدف كل KPI value في كل الصفحات بشكل مباشر
      ═════════════════════════════════════════════════════════════════════ */
-  function convertKPIValues(root) {
+  function convertNumbers(root) {
     if (!root) return 0;
-
     let converted = 0;
 
-    root.querySelectorAll('.kpi').forEach(kpi => {
+    /* ═══ v4.0: نستهدف كل عناصر .kpi-value بدون شروط ═══ */
+    root.querySelectorAll('.kpi-value').forEach(el => {
       try {
-        /* استثناء settings */
-        if (kpi.closest('#set-base-karat-card')) return;
-        if (kpi.closest('[data-no-karat-ui]')) return;
+        if (el.closest('#set-base-karat-card')) return;
+        if (el.closest('[data-no-karat-ui]')) return;
 
-        const labelEl = kpi.querySelector('.kpi-label');
-        const valueEl = kpi.querySelector('.kpi-value');
-        if (!labelEl || !valueEl) return;
+        const kpi = el.closest('.kpi');
+        const labelText = kpi?.querySelector('.kpi-label')?.textContent?.trim() || '';
+        const valueText = el.textContent?.trim() || '';
 
-        const labelText = (labelEl.textContent || '').trim();
-        const valueText = (valueEl.textContent || '').trim();
+        if (!valueText) return;
 
-        /* استثناءات المحتوى */
-        if (/عدد|فواتير|أصناف|قطع|نسبة|%|ج\.م|جنيه|صافي|صافي الفترة|عمر/i.test(labelText)) {
-          return;
+        /* استثناءات ذكية */
+        if (/عدد|فواتير|نتائج|نتيجة/i.test(labelText)) return;      /* أعداد صحيحة */
+        if (/%|نسبة|نقاء/i.test(labelText)) return;                  /* نسب */
+        if (/عمر|يوم|شهر|سنة/i.test(labelText)) return;              /* فترات زمنية */
+        if (/ج\.م|جنيه|سعر|قيمة نقدية|EGP/i.test(labelText) &&
+            /ج\.م|جنيه/.test(valueText)) return;                     /* أسعار نقدية */
+
+        /* نستخرج الرقم */
+        const current = parseNum(valueText);
+        if (current === 0) return;
+
+        /* القيمة الأصلية — أو نخزّن الحالية */
+        let original = parseFloat(el.dataset.karatOriginal);
+        if (!isFinite(original)) {
+          original = current;
+          el.dataset.karatOriginal = String(original);
         }
 
-        /* استخراج القيمة */
-        const numValue = parseNumber(valueText);
-        if (numValue === 0) return;
-
-        /* نتحقق إن كان الرقم معقول لـ ذهب (100-100000) */
-        if (numValue < 0.1 || numValue > 1000000) return;
-
-        /* القيمة الأصلية */
-        let originalValue = parseFloat(valueEl.dataset.karatOriginal);
-
-        /* لو ما تخزنتش، نخزّن القيمة الحالية كأصلية */
-        if (!isFinite(originalValue)) {
-          originalValue = numValue;
-          valueEl.dataset.karatOriginal = String(originalValue);
-        }
-
-        /* نحوّل من الأصلية */
-        const convertedValue = convertWeight(originalValue);
+        /* نحول من الأصلية */
+        const result = convert(original);
 
         /* نحافظ على <small> */
-        const innerHTML = valueEl.innerHTML;
-        const smallMatch = innerHTML.match(/<small[^>]*>[\s\S]*?<\/small>/i);
-        const smallHTML = smallMatch ? smallMatch[0] : '';
+        const innerHTML = el.innerHTML;
+        const m = innerHTML.match(/<small[^>]*>[\s\S]*?<\/small>/i);
+        const smallHTML = m ? m[0] : '';
 
-        const formatted = formatLike(convertedValue, valueText);
+        const formatted = fmt(result, valueText);
         const newHTML = formatted + (smallHTML ? ' ' + smallHTML : '');
 
-        if (valueEl.innerHTML !== newHTML) {
-          valueEl.innerHTML = newHTML;
+        if (el.innerHTML !== newHTML) {
+          el.innerHTML = newHTML;
           converted++;
-
-          console.log(`  ✅ "${labelText}": ${valueText} → ${newHTML}`);
+          console.log(`   ✅ ${labelText}: ${valueText} → ${newHTML}`);
         }
       } catch (_) {}
     });
@@ -214,72 +178,57 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · CLEAN TEXT NODES
+     §3 · CLEAN TEXT NODES
      ═════════════════════════════════════════════════════════════════════ */
   function cleanTextNodes(root) {
     if (!root) return 0;
 
-    let cleaned = 0;
+    let count = 0;
+    const updates = [];
 
     try {
-      const walker = document.createTreeWalker(
-        root,
-        NodeFilter.SHOW_TEXT,
-        {
-          acceptNode: (node) => {
-            if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-            const parent = node.parentNode;
-            if (!parent) return NodeFilter.FILTER_REJECT;
-            const tag = parent.tagName;
-            if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
-              return NodeFilter.FILTER_REJECT;
-            }
-            /* استثناء settings */
-            if (parent.closest && parent.closest('#set-base-karat-card')) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (parent.closest && parent.closest('[data-no-karat-ui]')) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            /* استثناء buttons/inputs */
-            if (parent.closest && parent.closest('button, input, select, textarea')) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            return NodeFilter.FILTER_ACCEPT;
-          },
-        }
-      );
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          if (!node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
+          const p = node.parentNode;
+          if (!p) return NodeFilter.FILTER_REJECT;
+          const tag = p.tagName;
+          if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT') {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (p.closest?.('#set-base-karat-card')) return NodeFilter.FILTER_REJECT;
+          if (p.closest?.('[data-no-karat-ui]')) return NodeFilter.FILTER_REJECT;
+          if (p.closest?.('button, input, select, textarea, a')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
 
-      const updates = [];
       let node;
       while ((node = walker.nextNode())) {
-        const original = node.nodeValue;
-        const newText = cleanText(original);
-        if (newText !== original) {
-          updates.push({ node, newText });
-        }
+        const orig = node.nodeValue;
+        const next = cleanText(orig);
+        if (next !== orig) updates.push({ node, next });
       }
 
-      updates.forEach(({ node, newText }) => {
-        node.nodeValue = newText;
-        cleaned++;
+      updates.forEach(({ node, next }) => {
+        node.nodeValue = next;
+        count++;
       });
-    } catch (e) {
-      console.warn('[BaseKaratUI v3.2] cleanTextNodes error:', e);
-    }
+    } catch (_) {}
 
-    return cleaned;
+    return count;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · CHART LABELS
+     §4 · CHARTS
      ═════════════════════════════════════════════════════════════════════ */
   function updateCharts() {
     try {
       const charts = GMS.Views?.dashboard?.state?.charts;
       if (!charts) return 0;
-
-      let updated = 0;
+      let c = 0;
 
       Object.values(charts).forEach(chart => {
         if (!chart?.data?.datasets) return;
@@ -287,215 +236,148 @@
 
         chart.data.datasets.forEach(ds => {
           if (ds.label) {
-            const cleaned = cleanText(ds.label);
-            if (cleaned !== ds.label) {
-              ds.label = cleaned;
-              changed = true;
-            }
+            const clean = cleanText(ds.label);
+            if (clean !== ds.label) { ds.label = clean; changed = true; }
           }
         });
 
-        if (changed) {
-          try { chart.update('none'); } catch (_) {}
-          updated++;
-        }
+        if (changed) { try { chart.update('none'); } catch (_) {} c++; }
       });
 
-      return updated;
+      return c;
     } catch (_) { return 0; }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · MAIN PROCESS
+     §5 · MAIN
      ═════════════════════════════════════════════════════════════════════ */
   function processPage(opts = {}) {
     const { silent = false } = opts;
 
-    if (isSkipRoute()) {
-      return { skipped: true, reason: 'route_skipped' };
-    }
-
+    if (isSkipRoute()) return { skipped: true };
     const page = document.getElementById('page');
-    if (!page) return { skipped: true, reason: 'no_page' };
+    if (!page) return { skipped: true };
 
     State._stats.runs++;
     const t0 = performance.now();
 
-    const kpiCount = convertKPIValues(page);
-    const textCount = cleanTextNodes(page);
-    const chartCount = updateCharts();
+    const nums = convertNumbers(page);
+    const texts = cleanTextNodes(page);
+    const charts = updateCharts();
 
-    const total = kpiCount + textCount + chartCount;
-    State._stats.numbersConverted += kpiCount;
-    State._stats.textsCleaned += textCount;
+    State._stats.converted += nums;
+    State._stats.cleaned += texts;
     State._stats.lastRun = new Date().toISOString();
 
-    const elapsed = Math.round((performance.now() - t0) * 100) / 100;
+    const total = nums + texts + charts;
+    const ms = Math.round((performance.now() - t0) * 100) / 100;
 
     if (!silent) {
       console.log(
-        `%c🏷️ BaseKaratUI v3.2 [run #${State._stats.runs}]: ${kpiCount} numbers, ${textCount} texts, ${chartCount} charts (${elapsed}ms) → ${getLabel()}`,
+        `%c🏷️ BaseKaratUI v4.0 [#${State._stats.runs}]: ${nums} numbers, ${texts} texts, ${charts} charts (${ms}ms) → ${getLabel()}`,
         'color:#0f7a43;font-weight:800;font-size:12px;'
       );
     }
 
-    return {
-      success: true,
-      numbersConverted: kpiCount,
-      textsCleaned: textCount,
-      chartsUpdated: chartCount,
-      total,
-      elapsed,
-      karat: getKarat(),
-      label: getLabel(),
-    };
+    return { success: true, numbers: nums, texts, charts, ms };
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §9 · SCHEDULE
-     ═════════════════════════════════════════════════════════════════════ */
-  function scheduleProcess(delay = 300) {
+  function schedule(delay = 250) {
     if (State._timer) clearTimeout(State._timer);
-    State._timer = setTimeout(() => {
-      State._timer = null;
-      processPage();
-    }, delay);
+    State._timer = setTimeout(() => { State._timer = null; processPage(); }, delay);
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · HOOKS
+     §6 · HOOKS
      ═════════════════════════════════════════════════════════════════════ */
   function hookRouter() {
-    if (!GMS.Router) {
-      setTimeout(hookRouter, 500);
-      return;
-    }
-
-    if (GMS.Router._baseKaratUIHookedV32) return;
-    GMS.Router._baseKaratUIHookedV32 = true;
+    if (!GMS.Router) { setTimeout(hookRouter, 500); return; }
+    if (GMS.Router._bkUIV40) return;
+    GMS.Router._bkUIV40 = true;
 
     try {
       GMS.Router.on('afterNavigate', (data) => {
         const route = data?.to || GMS.Router.currentId?.();
         if (SKIP_ROUTES.includes(route)) return;
-
-        /* 3 محاولات */
         setTimeout(() => processPage(), 100);
         setTimeout(() => processPage(), 500);
         setTimeout(() => processPage(), 1500);
       });
-
-      console.log('[BaseKaratUI v3.2] ✅ Router hooked');
     } catch (_) {}
   }
 
   function hookBaseKarat() {
-    if (!GMS.BaseKarat?.on) {
-      setTimeout(hookBaseKarat, 500);
-      return;
-    }
-
+    if (!GMS.BaseKarat?.on) { setTimeout(hookBaseKarat, 500); return; }
     try {
-      GMS.BaseKarat.on((payload) => {
-        console.log(`[BaseKaratUI v3.2] 🔄 Karat → ${payload.current}K`);
-
+      GMS.BaseKarat.on(() => {
         if (isSkipRoute()) return;
-
         setTimeout(() => processPage(), 50);
         setTimeout(() => processPage(), 400);
       });
-
-      console.log('[BaseKaratUI v3.2] ✅ BaseKarat hooked');
     } catch (_) {}
   }
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §11 · OBSERVER (خفيف جدًا)
-     ═════════════════════════════════════════════════════════════════════ */
   function startObserver() {
-    const target = document.getElementById('page');
-    if (!target) {
-      setTimeout(startObserver, 500);
-      return;
-    }
+    const target = document.getElementById('page') || document.body;
+    if (!target) { setTimeout(startObserver, 500); return; }
 
-    const obs = new MutationObserver((mutations) => {
+    State._observer = new MutationObserver((mutations) => {
       if (isSkipRoute()) return;
-
-      let hasNewKPI = false;
+      let hasNew = false;
       for (const m of mutations) {
-        if (m.type === 'childList' && m.addedNodes.length > 0) {
-          for (const node of m.addedNodes) {
-            if (node.nodeType === 1 && (node.classList?.contains('kpi') || node.querySelector?.('.kpi'))) {
-              hasNewKPI = true;
+        if (m.type === 'childList' && m.addedNodes.length) {
+          for (const n of m.addedNodes) {
+            if (n.nodeType === 1 && (n.classList?.contains('kpi') || n.querySelector?.('.kpi'))) {
+              hasNew = true;
               break;
             }
           }
         }
-        if (hasNewKPI) break;
+        if (hasNew) break;
       }
-
-      if (hasNewKPI) scheduleProcess(300);
+      if (hasNew) schedule(300);
     });
 
-    obs.observe(target, { childList: true, subtree: true });
-    State._observer = obs;
-
-    console.log('[BaseKaratUI v3.2] 👁️ Observer started');
+    State._observer.observe(target, { childList: true, subtree: true });
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · INIT / DESTROY
+     §7 · INIT
      ═════════════════════════════════════════════════════════════════════ */
   function init() {
     if (State.installed) return;
 
-    console.log(
-      '%c🏷️  BaseKarat UI v3.2 initializing…',
-      'color:#a55a00;font-weight:800;font-size:13px;'
-    );
+    console.log('%c🏷️ BaseKarat UI v4.0 initializing…', 'color:#a55a00;font-weight:800;font-size:13px;');
 
     hookRouter();
     hookBaseKarat();
     startObserver();
 
-    /* معالجة أولية — 5 محاولات */
     setTimeout(() => processPage(), 300);
     setTimeout(() => processPage(), 1000);
     setTimeout(() => processPage(), 2000);
-    setTimeout(() => processPage(), 3500);
-    setTimeout(() => processPage(), 5000);
+    setTimeout(() => processPage(), 4000);
 
-    /* معالجة دورية كل 10 ثواني (خفيفة) */
     State._interval = setInterval(() => {
-      try {
-        if (!document.hidden && !isSkipRoute()) {
-          processPage({ silent: true });
-        }
-      } catch (_) {}
+      if (!document.hidden && !isSkipRoute()) processPage({ silent: true });
     }, 10000);
 
     State.installed = true;
-
-    console.log(
-      `%c✅ BaseKarat UI v3.2 ready · ${getLabel()}`,
-      'color:#0f7a43;font-weight:800;font-size:13px;'
-    );
+    console.log(`%c✅ BaseKarat UI v4.0 ready → ${getLabel()}`, 'color:#0f7a43;font-weight:800;font-size:13px;');
   }
 
   function destroy() {
-    if (State._observer) { State._observer.disconnect(); State._observer = null; }
-    if (State._timer) { clearTimeout(State._timer); State._timer = null; }
-    if (State._interval) { clearInterval(State._interval); State._interval = null; }
+    if (State._observer) State._observer.disconnect();
+    if (State._timer) clearTimeout(State._timer);
+    if (State._interval) clearInterval(State._interval);
     State.installed = false;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · EXPORT
+     §8 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   GMS.BaseKaratUI = {
-    init,
-    destroy,
+    init, destroy,
     refresh: processPage,
     processPage,
     cleanText,
@@ -507,7 +389,6 @@
       karat: getKarat(),
       label: getLabel(),
       stats: { ...State._stats },
-      skipRoutes: SKIP_ROUTES,
     }),
     SKIP_ROUTES,
     get state() { return State; },
@@ -515,19 +396,12 @@
 
   window.BaseKaratUI = GMS.BaseKaratUI;
 
-  /* ═════════════════════════════════════════════════════════════════════
-     §14 · AUTO-INIT — أسرع (300ms)
-     ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => setTimeout(init, 300));
   } else {
     setTimeout(init, 300);
   }
 
-  console.log(
-    '%c🏷️  BaseKarat UI v3.2 LOADED · Ready',
-    'color:#a55a00;font-weight:900;font-size:14px;padding:3px 8px;' +
-    'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
-  );
+  console.log('%c🏷️ BaseKarat UI v4.0 LOADED', 'color:#a55a00;font-weight:900;font-size:14px;padding:3px 8px;background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;');
 
 })();
