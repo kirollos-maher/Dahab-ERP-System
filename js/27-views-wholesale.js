@@ -7,13 +7,16 @@
      • Inter-Branch    — تحويل مشغولات بين الفروع (Transfer Manifest)
      • Retail B2C      — البيع العادي (يُعالج من POS)
 
-   ✅ v4: إصلاح جوهري — عزل مخزون البياعين
-     • عند عدم وجود بياعين → الكيان واحد (المحل القطاعي + الجملة)
-     • عند وجود بياعين → اختيارين لكل بياع:
-         - "مخزون مشترك" (shared) → يستخدم مخزون المحل الرئيسي
-         • "مخزون معزول" (isolated) → خزنة خاصة بالبياع
+   ✅ v4.1: إصلاح تحميل B2B عند refresh مباشر
+     • ensureB2BLoaded() — lazy load بيانات البياعين
+     • يُستدعى في render() + openWholesaleModal()
+     • يحل مشكلة: refresh → فاتورة جديدة → لا يوجد بياعين
+
+   ✅ v4: عزل مخزون البياعين
+     • عدم وجود بياعين → كيان واحد (المحل القطاعي + الجملة)
+     • عند وجود بياعين → اختيار: مخزون مشترك أو معزول لكل بياع
      • الفلترة التلقائية للـ picker / scan / inline search
-     • إصلاح عرض "undefinedK" — استخدام getItemKaratDisplay
+     • إصلاح عرض "undefinedK" — getItemKaratDisplay()
      • حماية البيانات: التحقق من ملكية القطعة قبل الإضافة
 
    المكونات:
@@ -23,7 +26,6 @@
      • طباعة: إذن توريد / فاتورة جملة / Transfer Manifest
      • Excel Export
      • Realtime Integration
-     • ✅ v2: تكامل كامل مع نظام بياعي الجملة المستقلين (B2B Reps)
      • ✅ v3: نظام SCAN + بحث يدوي inline (مثل POS)
 
    التخزين (CacheDB):
@@ -631,7 +633,6 @@
 
   /**
    * ✅ v4: عرض العيار بشكل آمن (يحل مشكلة undefinedK)
-   * @returns {{text:string, isCustom:boolean, karat:number|null, customKarat:number|null, purity:number}}
    */
   function getItemKaratDisplay(item) {
     if (!item) {
@@ -717,6 +718,46 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
+     §5.3 · ✅ v4.1 FIX: تأكد من تحميل بيانات B2B
+     ─────────────────────────────────────────────────────────────────────
+     المشكلة: عند عمل refresh مباشر على قسم الجملة،
+     B2B state يكون فارغ لأن loadAll لم يُستدع بعد.
+     الحل: نستدعي GMS.Views.b2b.load() إذا كانت القائمة فارغة.
+     ═════════════════════════════════════════════════════════════════════ */
+  async function ensureB2BLoaded() {
+    try {
+      /* 1 · لو B2B غير متاح → نتخطى */
+      if (!isB2BAvailable()) return false;
+
+      /* 2 · لو القائمة موجودة وممتلئة → لا داعي */
+      const existing = getB2BReps();
+      if (Array.isArray(existing) && existing.length > 0) {
+        return true;
+      }
+
+      /* 3 · محاولة تحميل من B2B View */
+      if (GMS.Views?.b2b?.load && typeof GMS.Views.b2b.load === 'function') {
+        console.log('[WSL] 🔄 B2B reps not loaded — loading now…');
+        await GMS.Views.b2b.load();
+        const count = getB2BReps().length;
+        console.log(`[WSL] ✅ B2B data loaded: ${count} reps`);
+        return true;
+      }
+
+      /* 4 · fallback → من GMS.B2B.load لو موجود */
+      if (GMS.B2B?.load && typeof GMS.B2B.load === 'function') {
+        await GMS.B2B.load();
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      console.warn('[WSL.ensureB2BLoaded]', e);
+      return false;
+    }
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
      §6 · DATA LOADING
      ═════════════════════════════════════════════════════════════════════ */
 
@@ -756,7 +797,6 @@
         items = GMS.Demo.getInventory();
       }
 
-      /* ✅ v4: ضمان وجود holder_type افتراضي */
       items = (Array.isArray(items) ? items : []).map(it => {
         if (!it.holder_type) {
           it.holder_type = HOLDER_TYPES.RETAIL_SHOP.key;
@@ -1367,6 +1407,9 @@
         </div>
       `;
 
+      /* ✅ v4.1 FIX: تأكد من تحميل B2B reps أولاً */
+      await ensureB2BLoaded();
+
       await Promise.all([
         loadInvoices(),
         loadTransfers(),
@@ -1685,7 +1728,11 @@
     };
   }
 
-  function openWholesaleModal(mode = 'wholesale') {
+  /* ✅ v4.1: صارت async لتستدعي ensureB2BLoaded */
+  async function openWholesaleModal(mode = 'wholesale') {
+    /* ✅ v4.1 FIX: تأكد من تحميل B2B قبل فتح المودال */
+    await ensureB2BLoaded();
+
     initInvoiceDraft(mode);
 
     GMS.Modal.open({
@@ -1828,7 +1875,6 @@
     const userIsRep = isCurrentUserRep();
     const singleEntityMode = isSingleEntityMode();
 
-    /* ✅ v4: معلومات المخزون الحالي */
     const availableInventory = getAvailableInventoryForInvoice();
     const availableInStock = availableInventory.filter(i => i.status === 'IN_STOCK').length;
 
@@ -1840,7 +1886,6 @@
       <div style="padding:16px 18px;background:var(--surface-2);border-radius:12px;
                   border:1px solid var(--border);margin-bottom:16px">
 
-        <!-- ✅ v4: كيان واحد (لا يوجد بياعين) -->
         ${singleEntityMode ? `
           <div style="margin-bottom:16px;padding:12px 14px;
                       background:linear-gradient(135deg,
@@ -1864,7 +1909,6 @@
           </div>
         ` : ''}
 
-        <!-- ✅ Rep Selector -->
         ${b2bAvailable && !userIsRep && !singleEntityMode ? `
           <div style="margin-bottom:16px;padding:14px 16px;
                       background:linear-gradient(135deg,
@@ -1901,7 +1945,6 @@
           ${renderInventoryModeToggle()}
         ` : ''}
 
-        <!-- ✅ بياع جملة مسجَّل → يعرض نفسه -->
         ${b2bAvailable && userIsRep && d.rep_id ? `
           <div style="margin-bottom:16px;padding:12px 14px;
                       background:var(--violet-bg);border-radius:10px;
@@ -1921,7 +1964,6 @@
           </div>
         ` : ''}
 
-        <!-- نمط التوريد -->
         <div style="font-size:11px;font-weight:800;color:var(--muted);
                     text-transform:uppercase;letter-spacing:.4px;
                     margin-bottom:10px;display:flex;align-items:center;gap:6px">
@@ -2019,7 +2061,6 @@
         </div>
       </div>
 
-      <!-- ✅ Section 2: B2B Customer -->
       ${d.rep_id && b2bAvailable && !singleEntityMode ? `
         <div style="padding:16px 18px;
                     background:linear-gradient(135deg,
@@ -2071,7 +2112,6 @@
         </div>
       ` : ''}
 
-      <!-- ✅ v4: معلومات مصدر المخزون -->
       <div style="padding:10px 14px;background:var(--${modeMeta.color}-bg);
                   border-radius:10px;margin-bottom:12px;
                   border:1px solid color-mix(in srgb,var(--${modeMeta.color}) 30%,var(--border));
@@ -2090,9 +2130,6 @@
         </div>
       </div>
 
-      <!-- ═══════════════════════════════════════════════════════════════
-           SCAN SECTION
-           ═══════════════════════════════════════════════════════════════ -->
       <div class="scan-hero" id="wsl-scan-hero"
            style="margin-bottom:16px;
                   background:linear-gradient(135deg,
@@ -2149,9 +2186,6 @@
 
       <div id="wsl-scan-result"></div>
 
-      <!-- ═══════════════════════════════════════════════════════════════
-           INLINE SEARCH
-           ═══════════════════════════════════════════════════════════════ -->
       <div style="padding:14px 18px;background:var(--info-bg);
                   border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--info) 30%,var(--border));
@@ -2193,7 +2227,6 @@
         </div>
       </div>
 
-      <!-- Section 3: Item Picker -->
       <div style="padding:16px 18px;background:var(--gold-soft);border-radius:12px;
                   border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));
                   margin-bottom:16px">
@@ -2223,7 +2256,6 @@
         </div>
       </div>
 
-      <!-- Section 4: Payment -->
       <div style="padding:16px 18px;background:var(--surface-2);border-radius:12px;
                   border:1px solid var(--border);margin-bottom:16px">
         <div style="font-size:11px;font-weight:800;color:var(--muted);
@@ -2719,14 +2751,12 @@
     try {
       GMS.Beep?.info?.();
 
-      /* ✅ v4: البحث فقط في المخزون المتاح للفاتورة الحالية */
       const availableInv = getAvailableInventoryForInvoice();
 
       let item = availableInv.find(i =>
         String(i.sku || '').toUpperCase() === key
       );
 
-      /* fallback → IDB مع فلترة holder */
       if (!item && GMS.IDB?.isOpen) {
         try {
           const idbItem = await GMS.IDB.getBySku(key);
@@ -2739,11 +2769,9 @@
         } catch (_) {}
       }
 
-      /* مش موجود */
       if (!item) {
         GMS.Beep?.error?.();
 
-        /* ✅ v4: تحقق هل موجود في مخزون آخر */
         const globalMatch = State.inventory.find(i =>
           String(i.sku || '').toUpperCase() === key
         );
@@ -2772,7 +2800,6 @@
         return;
       }
 
-      /* الحالة */
       if (item.status && item.status !== 'IN_STOCK') {
         GMS.Beep?.error?.();
         const statusLabel = GMS.getStatus?.(item.status)?.label || item.status;
@@ -2787,7 +2814,6 @@
         return;
       }
 
-      /* مكرر */
       if (State.draft.items.find(i => i.sku === item.sku)) {
         GMS.Beep?.warning?.();
         if (resultHost) {
@@ -2801,7 +2827,6 @@
         return;
       }
 
-      /* الإضافة */
       addItemToInvoice(item.sku);
       GMS.Beep?.success?.();
 
@@ -2849,7 +2874,6 @@
       return;
     }
 
-    /* ✅ v4: البحث في المخزون المتاح فقط */
     const availableInv = getAvailableInventoryForInvoice();
     const selectedSkus = new Set(State.draft.items.map(i => i.sku));
 
@@ -3016,14 +3040,12 @@
   function bindInvoiceForm(root) {
     const $ = (id) => root.querySelector('#' + id);
 
-    /* Rep selector */
     const repSel = $('wsl-rep-id');
     if (repSel) {
       repSel.onchange = (e) => {
         const newRepId = e.target.value;
         State.draft.rep_id = newRepId;
 
-        /* ✅ v4: التحقق من القطع الحالية — لو البياع تغير ومخزونه معزول */
         if (State.draft.items.length > 0) {
           const newMode = getRepInventoryMode(newRepId);
           const validItems = State.draft.items.filter(item => {
@@ -3054,7 +3076,6 @@
       };
     }
 
-    /* ✅ v4: Inventory mode toggle */
     root.querySelectorAll('[data-inv-mode]').forEach(btn => {
       btn.onclick = () => {
         const mode = btn.dataset.invMode;
@@ -3063,7 +3084,6 @@
         const currentMode = getRepInventoryMode(State.draft.rep_id);
         if (currentMode === mode) return;
 
-        /* التحقق من القطع الحالية */
         if (State.draft.items.length > 0) {
           GMS.Confirm.ask(
             `تغيير نمط المخزون إلى "${getInventoryMode(mode).label}" سيؤدي لإزالة ` +
@@ -3091,7 +3111,6 @@
       };
     });
 
-    /* B2B Customer selector */
     const b2bCustSel = $('wsl-b2b-customer');
     if (b2bCustSel) {
       b2bCustSel.onchange = (e) => {
@@ -3124,7 +3143,6 @@
       };
     }
 
-    /* Mode selection */
     root.querySelectorAll('[data-wsl-mode]').forEach(btn => {
       btn.onclick = () => {
         const mode = btn.dataset.wslMode;
@@ -3134,7 +3152,6 @@
       };
     });
 
-    /* Recipient type */
     const typeSelect = $('wsl-recipient-type');
     if (typeSelect) {
       typeSelect.onchange = (e) => {
@@ -3190,7 +3207,6 @@
       addBtn.onclick = () => openItemPicker();
     }
 
-    /* Scan input */
     const scanInput = $('wsl-scan-input');
     if (scanInput) {
       setTimeout(() => {
@@ -3226,7 +3242,6 @@
       };
     }
 
-    /* Inline search */
     const inlineSearchInput = $('wsl-inline-search-input');
     const inlineSearchClear = $('wsl-inline-search-clear');
 
@@ -3272,7 +3287,6 @@
       };
     }
 
-    /* F2 shortcut */
     const f2Handler = (e) => {
       if (e.key !== 'F2') return;
       const formHost = document.getElementById('wsl-form-host');
@@ -3303,7 +3317,6 @@
       observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    /* Payment */
     root.querySelectorAll('[data-wsl-pay]').forEach(btn => {
       btn.onclick = () => {
         State.draft.payment.mode = btn.dataset.wslPay;
@@ -3388,10 +3401,9 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────
-     Item Picker Modal — ✅ v4: يستخدم getAvailableInventoryForInvoice
+     Item Picker Modal
      ───────────────────────────────────────────────────────────────── */
   function openItemPicker() {
-    /* ✅ v4: استخدام المخزون المتاح للفاتورة */
     const inv = getAvailableInventoryForInvoice().filter(i => i.status === 'IN_STOCK');
 
     const selectedSkus = new Set(State.draft.items.map(i => i.sku));
@@ -3546,7 +3558,6 @@
       return GMS.Toast.warn('الصنف مُضاف مسبقاً');
     }
 
-    /* ✅ v4: التحقق من الملكية */
     if (!itemBelongsToCurrentInvoice(item)) {
       return GMS.Toast.err('الصنف لا ينتمي لمخزون هذه الفاتورة');
     }
@@ -3559,7 +3570,6 @@
     const saleRate = Number(item.workmanship_per_gram || 0);
     const makeValue = round(net * saleRate, 2);
 
-    /* ✅ v4: حفظ معلومات الملكية */
     const holderType = item.holder_type || HOLDER_TYPES.RETAIL_SHOP.key;
     const holderId = item.holder_id || null;
     const holderName = item.holder_name ||
@@ -3582,7 +3592,6 @@
       gold_value: goldValue,
       total_value: round(goldValue + makeValue, 2),
       branch_id: item.branch_id,
-      /* ✅ v4 */
       holder_type: holderType,
       holder_id: holderId,
       holder_name: holderName,
@@ -3770,11 +3779,9 @@
         created_by_id: GMS.Auth?.user?.id || null,
       };
 
-      /* 1 · Save */
       const saved = await CacheDB.save(STORE_INVOICES, invoice);
       if (!saved) throw new Error('فشل الحفظ المحلي');
 
-      /* 2 · Update inventory */
       const newStatus = d.mode === 'inter_branch' ? 'TRANSFERRED' : 'SOLD';
       for (const item of invoice.items) {
         if (!item.inventory_id) continue;
@@ -3785,7 +3792,6 @@
               existing.status = newStatus;
               existing.updated_at = now;
 
-              /* ✅ v4: نقل ملكية القطعة عند التحويل بين الفروع */
               if (d.mode === 'inter_branch' && d.recipient.type === 'branch') {
                 existing.branch_id = d.recipient.id;
                 existing.branch_name = getBranches().find(b => b.id === d.recipient.id)?.name || '—';
@@ -3799,7 +3805,6 @@
         }
       }
 
-      /* 3 · Supabase */
       if (GMS.Supabase?.isReady?.()) {
         try {
           const client = GMS.Supabase.get();
@@ -3836,14 +3841,12 @@
         }
       }
 
-      /* 4 · Ledger */
       try {
         await recordLedgerEntry(invoice);
       } catch (e) {
         console.warn('[WSL.saveInvoice] Ledger failed:', e);
       }
 
-      /* 5 · B2B rep ledger */
       if (invoice.rep_id && GMS.B2B?.attachInvoiceToRep) {
         try {
           await GMS.B2B.attachInvoiceToRep(invoice, invoice.rep_id);
@@ -3853,7 +3856,6 @@
         }
       }
 
-      /* 6 · Audit */
       if (GMS.Audit) {
         try {
           await GMS.Audit.log(
@@ -3877,12 +3879,10 @@
         } catch (_) {}
       }
 
-      /* 7 · Realtime */
       if (GMS.Realtime) {
         try { GMS.Realtime.emit('wholesale_invoices', 'INSERT', invoice); } catch (_) {}
       }
 
-      /* 8 · Success */
       State.invoices.unshift(invoice);
       computeKPIs();
 
@@ -4342,7 +4342,6 @@
   function openTransferItemPicker() {
     const sourceBranch = State.draft.from_branch_id;
 
-    /* ✅ v4: التحويلات بين الفروع — فقط مخزون الفرع المصدر */
     const inv = State.inventory.filter(i =>
       i.status === 'IN_STOCK' &&
       (!sourceBranch || i.branch_id === sourceBranch)
@@ -5755,15 +5754,20 @@
     state: State,
 
     load: async () => {
+      await ensureB2BLoaded();
       await Promise.all([loadInvoices(), loadTransfers(), loadInventory()]);
       computeKPIs();
     },
 
     reload: async () => {
+      await ensureB2BLoaded();
       await Promise.all([loadInvoices(), loadTransfers(), loadInventory()]);
       computeKPIs();
       await render(document.getElementById('page'));
     },
+
+    /* ✅ v4.1: معرّضة للاستخدام */
+    ensureB2BLoaded,
 
     /* Actions */
     openWholesaleModal,
@@ -5814,6 +5818,8 @@
     load: GMS.Views.wholesale.load,
     reload: GMS.Views.wholesale.reload,
 
+    ensureB2BLoaded,
+
     openWholesaleModal,
     openTransferModal,
     openInvoiceDetails,
@@ -5845,7 +5851,7 @@
      §28 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏭 Wholesale & Transfers View v4 loaded · B2B Inventory Isolation',
+    '%c🏭 Wholesale & Transfers View v4.1 loaded · B2B Auto-Load Fix',
     'color:#6b3fa0;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#e0d4f5,#6b3fa0);border-radius:4px;'
   );
@@ -5853,6 +5859,11 @@
   console.log(
     '%c📦 B2B Wholesale · Inter-Branch Transfers · Gold Exchange · Dual Ledger',
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🆕 v4.1: ensureB2BLoaded() · Fixes empty reps on direct refresh · Auto-load B2B data',
+    'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
   console.log(
