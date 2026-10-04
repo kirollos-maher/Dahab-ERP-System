@@ -11,6 +11,12 @@
      • يستمر في العمل محلياً في كل الحالات بدون كسر الواجهة
      • Console.info بدل warn لحالات "غير مُهيّأ"
 
+   ✅ v1.0.2 (NEW) — Guard على dispatchWindowEvent:
+     • ما بيطلقش الحدث أثناء الكتابة في حقل
+     • ما بيطلقش الحدث أثناء highlight (selection)
+     • ما بيطلقش الحدث أثناء modal مفتوح
+     • ما بيطلقش الحدث خلال 1 ثانية من آخر pointer
+
    ✅ v1.0.0 المزايا الأساسية:
      • تفاعلي كامل (Reactive) — أي تغيير يُحدّث كل الواجهات فوراً
      • يحفظ في: LocalStorage + IndexedDB + Supabase (اختياري)
@@ -152,6 +158,50 @@
     const role = currentUser().role;
     if (!role || role === 'GUEST') return true;   /* سماح بوضع Demo */
     return ALLOWED_ROLES.includes(role);
+  }
+
+  /* ✅ v1.0.2: Guards */
+  function isUserTyping() {
+    try {
+      const active = document.activeElement;
+      if (!active) return false;
+      const tag = active.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (active.isContentEditable) return true;
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function hasSelection() {
+    try {
+      const sel = window.getSelection?.();
+      if (!sel || sel.isCollapsed) return false;
+      return sel.toString().trim().length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isModalOpen() {
+    try {
+      const modalRoot = document.getElementById('modal-root');
+      if (!modalRoot) return false;
+      return modalRoot.querySelectorAll('.overlay').length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function hasRecentPointer() {
+    try {
+      const lastPointer = window.GMS?._lastPointer || 0;
+      if (!lastPointer) return false;
+      return (Date.now() - lastPointer) < 1500;
+    } catch (_) {
+      return false;
+    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -410,8 +460,41 @@
     });
   }
 
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ v1.0.2: dispatchWindowEvent — Guarded
+     ─────────────────────────────────────────────────────────────────────
+     ما بيطلقش الحدث في الحالات دي:
+       • المستخدم بيكتب في حقل
+       • فيه نص محدد (highlight)
+       • فيه modal مفتوح
+       • فيه pointerdown حديث (< 1.5 ثانية)
+     ═════════════════════════════════════════════════════════════════════ */
   function dispatchWindowEvent(payload) {
     try {
+      /* 1 · الكتابة في حقل */
+      if (isUserTyping()) {
+        console.log('[BaseKarat] ⛔ Skipped event dispatch — user is typing');
+        return;
+      }
+
+      /* 2 · تحديد نص (highlight) */
+      if (hasSelection()) {
+        console.log('[BaseKarat] ⛔ Skipped event dispatch — text selected');
+        return;
+      }
+
+      /* 3 · Modal مفتوح */
+      if (isModalOpen()) {
+        console.log('[BaseKarat] ⛔ Skipped event dispatch — modal is open');
+        return;
+      }
+
+      /* 4 · pointerdown حديث */
+      if (hasRecentPointer()) {
+        console.log('[BaseKarat] ⛔ Skipped event dispatch — recent pointer');
+        return;
+      }
+
       window.dispatchEvent(new CustomEvent('gms:baseKaratChanged', {
         detail: payload,
       }));
@@ -939,6 +1022,12 @@
     canChange: userCanChange,
     getDiagnostics,
 
+    /* ✅ v1.0.2: guards معرّضة */
+    isUserTyping,
+    hasSelection,
+    isModalOpen,
+    hasRecentPointer,
+
     /**
      * نص عرض واضح للعيار النشط (للاستخدام في التسميات)
      * @returns {string}  "21K Equivalent" | "عيار 21 (معادل)"
@@ -985,7 +1074,7 @@
      §17 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚖️  BaseKarat v1.0.1 loaded · Resilient Local-First Mode',
+    '%c⚖️  BaseKarat v1.0.2 loaded · Resilient Local-First Mode + Guards',
     'color:#a55a00;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
@@ -1003,6 +1092,11 @@
   console.log(
     '%c☁️  Supabase missing config → silently falls back to LocalStorage (no crash)',
     'color:#0f7a43;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🛡️  v1.0.2: dispatchWindowEvent بيحترم الكتابة · highlight · modal · pointer',
+    'color:#1c4fd8;font-weight:900;font-size:11px;'
   );
 
 })();
