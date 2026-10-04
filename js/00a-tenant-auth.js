@@ -7,15 +7,13 @@
    Step 3: Owner / Employee
    Step 4: Username + Password
 
-   ✅ v1.2.0 — التحديثات:
-     • ✅ FIX: دعم bcrypt من dcodeIO.bcrypt (تصدير bcryptjs v2.4.3)
-     • ✅ AUTO-INIT في نهاية الملف
-     • ✅ bcrypt.compareSync محلياً (بدل RPC للتحقق)
-     • ✅ Fallback كامل لاستعلامات مباشرة
-     • ✅ retry آلية لانتظار تحميل Supabase / bcrypt
-     • ✅ حماية من double-init
-     • ✅ حفظ آخر كود نشاط تلقائياً
-     • ✅ failed_attempts + قفل 15 دقيقة
+   ✅ v1.2.0:
+     • AUTO-INIT في نهاية الملف
+     • bcrypt dual-namespace (window.bcrypt / dcodeIO.bcrypt)
+     • bcrypt.compareSync محلياً
+     • Fallback كامل لاستعلامات مباشرة
+     • حفظ آخر كود نشاط تلقائياً
+     • failed_attempts + قفل 15 دقيقة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -32,9 +30,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §0.1 · ✅ BCRYPT RESOLVER (v1.2.0)
+     §0.1 · BCRYPT RESOLVER
      ─────────────────────────────────────────────────────────────────────
-     bcryptjs v2.4.3 exports itself as:
+     bcryptjs v2.4.3 يصدّر نفسه كـ:
        • window.bcrypt          (بعض الإصدارات)
        • window.dcodeIO.bcrypt  (v2.4.3 الرسمي)
      هذا الـ helper يوحّد الوصول لكلا الحالتين
@@ -216,10 +214,8 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §4 · WIZARD STEPS
+     §4 · STEP 1 — Business Code
      ═════════════════════════════════════════════════════════════════════ */
-
-  /* ─── STEP 1: Business Code ─────────────────────────────────────── */
   async function submitStep1() {
     const input = $('#login-biz-code');
     const btn = $('#login-step1-next');
@@ -248,6 +244,7 @@
       let data = null;
       let usedRpc = false;
 
+      // محاولة RPC
       try {
         const rpcResult = await client.rpc('check_business_access', { p_code: code });
         if (!rpcResult.error && rpcResult.data) {
@@ -260,6 +257,7 @@
         console.warn('[Wizard.step1] RPC exception:', rpcErr.message);
       }
 
+      // Fallback: استعلام مباشر
       if (!usedRpc) {
         console.log('[Wizard.step1] Falling back to direct query');
         const { data: rows, error } = await client
@@ -357,7 +355,9 @@
     }
   }
 
-  /* ─── STEP 2: Verification Code ─────────────────────────────────── */
+  /* ═════════════════════════════════════════════════════════════════════
+     §5 · STEP 2 — Verification Code
+     ═════════════════════════════════════════════════════════════════════ */
   async function submitStep2() {
     const input = $('#login-vcode');
     const btn = $('#login-step2-next');
@@ -381,6 +381,7 @@
       const bizId = WizState.business.business_id;
       let ok = false;
 
+      // RPC أولاً
       try {
         const { data, error } = await client.rpc('consume_verification_code', {
           p_business_id: bizId,
@@ -398,6 +399,7 @@
         console.warn('[Wizard.step2] RPC exception:', rpcErr.message);
       }
 
+      // Fallback: استعلام مباشر
       if (!ok) {
         console.log('[Wizard.step2] Falling back to direct query');
 
@@ -449,7 +451,9 @@
     }
   }
 
-  /* ─── STEP 3: User Type ─────────────────────────────────────────── */
+  /* ═════════════════════════════════════════════════════════════════════
+     §6 · STEP 3 — User Type
+     ═════════════════════════════════════════════════════════════════════ */
   function submitStep3(userType) {
     if (userType !== 'owner' && userType !== 'employee') return;
 
@@ -465,7 +469,9 @@
     setStep(4);
   }
 
-  /* ─── STEP 4: Credentials ───────────────────────────────────────── */
+  /* ═════════════════════════════════════════════════════════════════════
+     §7 · STEP 4 — Credentials (bcrypt.compareSync محلياً)
+     ═════════════════════════════════════════════════════════════════════ */
   async function submitStep4() {
     const userInput = $('#login-username');
     const passInput = $('#login-password');
@@ -486,7 +492,7 @@
       return showError('login-step4-error', 'انتهت الجلسة — ابدأ من جديد');
     }
 
-    /* ✅ v1.2.0: استخدام getBcrypt() بدل window.bcrypt */
+    // ✅ استخدام getBcrypt() بدل window.bcrypt
     const bcrypt = getBcrypt();
     if (!bcrypt) {
       return showError(
@@ -503,6 +509,7 @@
     try {
       const bizId = WizState.business.business_id;
 
+      // ✅ جلب المستخدم من قاعدة البيانات
       const { data: users, error } = await client
         .from('business_users')
         .select(
@@ -522,14 +529,17 @@
 
       const user = users[0];
 
+      // فحص الحساب نشط
       if (user.is_active === false) {
         return showError('login-step4-error', 'هذا الحساب موقوف — تواصل مع الإدارة');
       }
 
+      // فحص القفل
       if (user.locked_until && new Date(user.locked_until) > new Date()) {
         return showError('login-step4-error', 'الحساب مقفل مؤقتاً — حاول بعد قليل');
       }
 
+      // فحص نوع الحساب
       const isOwner = Boolean(user.is_owner);
       if (WizState.userType === 'owner' && !isOwner) {
         return showError(
@@ -544,6 +554,7 @@
         );
       }
 
+      // ✅ مقارنة كلمة المرور
       let passwordOk = false;
       try {
         passwordOk = bcrypt.compareSync(password, user.password_hash);
@@ -553,6 +564,7 @@
       }
 
       if (!passwordOk) {
+        // زوّد failed_attempts
         const newAttempts = (user.failed_attempts || 0) + 1;
         const shouldLock = newAttempts >= 5;
 
@@ -580,6 +592,7 @@
         );
       }
 
+      // ✅ نجاح — نصفّر failed_attempts ونحدّث last_login
       const now = new Date().toISOString();
 
       try {
@@ -597,11 +610,13 @@
 
       console.log('[Wizard] ✅ Auth success:', user.username);
 
+      // حذف password_hash من الكائن
       const safeUser = { ...user };
       delete safeUser.password_hash;
       delete safeUser.failed_attempts;
       delete safeUser.locked_until;
 
+      // حفظ الجلسة
       const session = {
         session_type: 'business_user',
         user: safeUser,
@@ -626,10 +641,12 @@
         } catch (_) {}
       }
 
+      // تهيئة DB Wrapper
       if (GMS.DB && typeof GMS.DB.init === 'function') {
         GMS.DB.init(client, bizId);
       }
 
+      // تغيير الشاشة
       const loginScreen = document.getElementById('login-screen');
       if (loginScreen) loginScreen.style.display = 'none';
 
@@ -643,6 +660,7 @@
         `${businessInfo.name} · ${isOwner ? 'صاحب المحل' : 'موظف'}`
       );
 
+      // بدء التطبيق
       if (GMS.Boot && typeof GMS.Boot.startApp === 'function') {
         try {
           await GMS.Boot.startApp();
@@ -652,6 +670,7 @@
         }
       }
 
+      // Audit log
       if (GMS.Audit && typeof GMS.Audit.log === 'function') {
         try {
           await GMS.Audit.log(
@@ -678,7 +697,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · NAVIGATION
+     §8 · NAVIGATION
      ═════════════════════════════════════════════════════════════════════ */
   function goBack() {
     if (WizState.step > 1) {
@@ -704,7 +723,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · RENDER — Business Preview (Step 4)
+     §9 · Business Preview (Step 4)
      ═════════════════════════════════════════════════════════════════════ */
   function renderBusinessPreview() {
     const host = document.getElementById('login-biz-preview');
@@ -742,7 +761,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · BIND EVENTS
+     §10 · BIND EVENTS
      ═════════════════════════════════════════════════════════════════════ */
   function bindEvents() {
     if (WizState.bound) {
@@ -750,7 +769,7 @@
       return;
     }
 
-    /* ─── Step 1 ──────────────────────────────────────────────────── */
+    /* Step 1 */
     const codeInput = $('#login-biz-code');
 
     if (codeInput) {
@@ -775,7 +794,7 @@
       });
     }
 
-    /* ─── Step 2 ──────────────────────────────────────────────────── */
+    /* Step 2 */
     const vcode = $('#login-vcode');
 
     if (vcode) {
@@ -807,7 +826,7 @@
       });
     }
 
-    /* ─── Step 3 ──────────────────────────────────────────────────── */
+    /* Step 3 */
     $$('[data-user-type]').forEach(el => {
       el.onclick = null;
       el.addEventListener('click', (e) => {
@@ -816,7 +835,7 @@
       });
     });
 
-    /* ─── Step 4 ──────────────────────────────────────────────────── */
+    /* Step 4 */
     const userInput = $('#login-username');
     const passInput = $('#login-password');
 
@@ -847,7 +866,7 @@
       });
     }
 
-    /* ─── Show/Hide password ──────────────────────────────────────── */
+    /* Show/Hide password */
     const showPassBtn = $('#login-show-pass');
     if (showPassBtn) {
       showPassBtn.onclick = null;
@@ -864,7 +883,7 @@
       });
     }
 
-    /* ─── Back buttons ────────────────────────────────────────────── */
+    /* Back buttons */
     $$('[data-wizard-back]').forEach(btn => {
       btn.onclick = null;
       btn.addEventListener('click', (e) => {
@@ -873,7 +892,7 @@
       });
     });
 
-    /* ─── آخر كود محفوظ ───────────────────────────────────────────── */
+    /* آخر كود محفوظ */
     if (codeInput && !codeInput.value) {
       try {
         const lastCode =
@@ -895,7 +914,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · INIT
+     §11 · INIT
      ═════════════════════════════════════════════════════════════════════ */
   function init() {
     if (WizState.initialized) {
@@ -930,7 +949,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · AUTO-INIT
+     §12 · AUTO-BOOT
      ═════════════════════════════════════════════════════════════════════ */
   function boot() {
     if (!$('#login-biz-code')) {
@@ -953,7 +972,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · EXPORT
+     §13 · EXPORT
      ═════════════════════════════════════════════════════════════════════ */
   GMS.TenantAuth = {
     __loaded: true,
@@ -961,7 +980,7 @@
     boot,
     state: WizState,
     getSbClient,
-    getBcrypt,   /* ✅ v1.2.0: معرّضة للاستخدام الخارجي */
+    getBcrypt,
 
     reset: () => {
       WizState.business = null;
@@ -1012,7 +1031,7 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · AUTO-BOOT
+     §14 · AUTO-BOOT TRIGGER
      ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
@@ -1021,7 +1040,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · LOADED CONFIRMATION
+     §15 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
     '%c🚪 TenantAuth Wizard v1.2.0 loaded · bcrypt dual-namespace support',
