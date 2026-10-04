@@ -1,8 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة — النسخة v6.2
+   صفحة المخزون الشاملة — النسخة v6.3
    ─────────────────────────────────────────────────────────────────────
-   ✅ v6.2 التحديثات (NEW):
+   ✅ v6.3 التحديثات (NEW):
+     • 🔓 Demo Optional — النظام يعمل بدون GMS.Demo
+     • getBranchesList() helper موحّد (Demo → Biz → DEFAULT_BRANCHES)
+     • getManufacturers() مع fallback آمن
+     • getWorkshopsList() من GMS.DEMO_WORKSHOPS
+     • getCustomersList() / getSuppliersList() من config
+     • loadInventory() يتخطى Demo fallback بهدوء لو مش موجود
+     • كل استخدامات GMS.Demo أصبحت optional
+   ─────────────────────────────────────────────────────────────────────
+   ✅ v6.2 التحديثات (محفوظة):
      • 🔒 Tenant Isolation — فلترة صارمة حسب business_id
      • loadInventory() بيفلتر الأصناف حسب النشاط الحالي فقط
      • handleSave() بيحفظ business_id مع كل صنف جديد
@@ -64,6 +73,9 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §0.1 · INTERACTION LOCK
+     ─────────────────────────────────────────────────────────────────────
+     منع إغلاق القوائم المنسدلة (select) أثناء التفاعل
+     لو المستخدم فتح قائمة واختار منها خلال 10 ثواني، منعملش render
      ═════════════════════════════════════════════════════════════════════ */
   const INTERACTION_LOCK_MS = 10000;
 
@@ -210,13 +222,109 @@
     clearTimeout(InvState.timers.search);
   }
 
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ v6.3: getManufacturers() — Demo Optional
+     ─────────────────────────────────────────────────────────────────────
+     الترتيب:
+       1. Cache (المصدر الأسرع)
+       2. Demo (optional — لو موجود)
+       3. DEFAULT_MANUFACTURERS من config
+     ═════════════════════════════════════════════════════════════════════ */
   function getManufacturers() {
+    /* 1 · Cache أولاً */
     if (GMS.Cache?.getManufacturersList) {
-      const list = GMS.Cache.getManufacturersList();
-      if (list && list.length) return list;
+      try {
+        const list = GMS.Cache.getManufacturersList();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (_) {}
     }
-    if (GMS.Demo?.getManufacturers) return GMS.Demo.getManufacturers();
-    return GMS.DEFAULT_MANUFACTURERS.map(m => ({ ...m }));
+
+    /* 2 · Demo (optional) */
+    if (GMS.Demo && typeof GMS.Demo.getManufacturers === 'function') {
+      try {
+        const list = GMS.Demo.getManufacturers();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (e) {
+        console.warn('[Inventory] Demo getManufacturers failed:', e);
+      }
+    }
+
+    /* 3 · Fallback من config */
+    return (GMS.DEFAULT_MANUFACTURERS || []).map(m => ({ ...m }));
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ v6.3: getBranchesList() — Demo → Biz → DEFAULT_BRANCHES
+     ═════════════════════════════════════════════════════════════════════ */
+  function getBranchesList() {
+    /* 1 · Demo (optional) */
+    if (GMS.Demo && typeof GMS.Demo.getBranches === 'function') {
+      try {
+        const list = GMS.Demo.getBranches();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (e) {
+        console.warn('[Inventory] Demo getBranches failed:', e);
+      }
+    }
+
+    /* 2 · Biz context (لو موجود) */
+    try {
+      const biz = GMS.Biz?.getBusiness?.();
+      if (biz && Array.isArray(biz.branches) && biz.branches.length) {
+        return biz.branches;
+      }
+    } catch (_) {}
+
+    /* 3 · Fallback من config */
+    return (GMS.DEFAULT_BRANCHES || []).map(b => ({ ...b }));
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ v6.3: getWorkshopsList() — Demo → config
+     ═════════════════════════════════════════════════════════════════════ */
+  function getWorkshopsList() {
+    /* 1 · Demo (optional) */
+    if (GMS.Demo && typeof GMS.Demo.getWorkshops === 'function') {
+      try {
+        const list = GMS.Demo.getWorkshops();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (_) {}
+    }
+
+    /* 2 · من config */
+    return (GMS.DEMO_WORKSHOPS || []).slice();
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ v6.3: getCustomersList() — Demo → DEMO_CUSTOMERS
+     ═════════════════════════════════════════════════════════════════════ */
+  function getCustomersList() {
+    /* 1 · Demo (optional) */
+    if (GMS.Demo && typeof GMS.Demo.getCustomers === 'function') {
+      try {
+        const list = GMS.Demo.getCustomers();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (_) {}
+    }
+
+    /* 2 · من config */
+    return (GMS.DEMO_CUSTOMERS || []).slice();
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     ✅ v6.3: getSuppliersList() — Demo → DEMO_SUPPLIERS
+     ═════════════════════════════════════════════════════════════════════ */
+  function getSuppliersList() {
+    /* 1 · Demo (optional) */
+    if (GMS.Demo && typeof GMS.Demo.getSuppliers === 'function') {
+      try {
+        const list = GMS.Demo.getSuppliers();
+        if (Array.isArray(list) && list.length) return list;
+      } catch (_) {}
+    }
+
+    /* 2 · من config */
+    return (GMS.DEMO_SUPPLIERS || []).slice();
   }
 
   function buildUniqueSku(baseSku, index, total) {
@@ -294,6 +402,11 @@
      §2.5 · ENTITY / HOLDER HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * قراءة بيانات العهدة من صنف
+   * @param {Object} item
+   * @returns {{type:string, id:string|null, name:string}}
+   */
   function getItemHolder(item) {
     if (!item) {
       return {
@@ -314,6 +427,12 @@
     return { type, id, name };
   }
 
+  /**
+   * كتابة بيانات العهدة على صنف
+   * @param {Object} item
+   * @param {Object} holder
+   * @returns {Object}
+   */
   function setItemHolder(item, holder) {
     if (!item || !holder) return item;
     item.holder_type = holder.type || ENTITY_TYPES.RETAIL_SHOP.key;
@@ -611,11 +730,9 @@
       return items;
     }
 
-    /* فلترة صارمة: النشاط الحالي أو بدون business_id (توافق قديم) */
-    const filtered = items.filter(it => {
-      if (!it.business_id) return true;
-      return it.business_id === currentBizId;
-    });
+    /* 🔒 فلترة صارمة: النشاط الحالي فقط
+       (الصنف بدون business_id مش بيتعرض — كان ده سبب ظهور أصناف في نشاط جديد) */
+    const filtered = items.filter(it => it.business_id === currentBizId);
 
     const hidden = items.length - filtered.length;
 
@@ -628,7 +745,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · DATA LOADING — ✅ v6.2 مع Tenant Isolation
+     §3 · DATA LOADING — ✅ v6.3 (Demo Optional)
      ═════════════════════════════════════════════════════════════════════ */
 
   async function loadInventory() {
@@ -664,24 +781,29 @@
         }
       }
 
-      /* ─── 2 · Demo Fallback (مش هيشتغل لو DEMO_ENABLED = false) ─── */
+      /* ─── 2 · Demo Fallback (optional — ✅ v6.3) ─── */
       if (GMS.Demo && typeof GMS.Demo.getInventory === 'function') {
-        const demoItems = GMS.Demo.getInventory();
+        try {
+          const demoItems = GMS.Demo.getInventory();
 
-        if (Array.isArray(demoItems) && demoItems.length) {
-          /* ✅ v6.2: حتى الديمو يخضع للفلترة */
-          const items = filterByTenant(demoItems);
+          if (Array.isArray(demoItems) && demoItems.length) {
+            /* ✅ v6.2: حتى الديمو يخضع للفلترة */
+            const items = filterByTenant(demoItems);
 
-          items.forEach(it => {
-            if (!it.holder_type) {
-              it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
-              it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
-              it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
-            }
-          });
+            items.forEach(it => {
+              if (!it.holder_type) {
+                it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
+                it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
+                it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
+              }
+            });
 
-          InvState.items = items;
-          return InvState.items;
+            InvState.items = items;
+            console.log(`[Inventory] ✅ Using Demo fallback: ${items.length} items`);
+            return InvState.items;
+          }
+        } catch (e) {
+          console.warn('[Inventory] Demo fallback failed:', e);
         }
       }
 
@@ -1188,7 +1310,7 @@
     const status = GMS.getStatus(item.status);
 
     const branchName = item.branch_name
-      || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
+      || (getBranchesList().find(b => b.id === item.branch_id)?.name || '—');
 
     const cells = [];
 
@@ -1441,7 +1563,7 @@
     }
     if (f.status) chips.push({ key: 'status', label: 'حالة', value: GMS.getStatus(f.status).label });
     if (f.branch) {
-      const b = GMS.Demo?.getBranches()?.find(x => x.id === f.branch);
+      const b = getBranchesList().find(x => x.id === f.branch);
       chips.push({ key: 'branch', label: 'فرع', value: b?.name || f.branch });
     }
     if (f.manufacturer) chips.push({ key: 'manufacturer', label: 'ماركة', value: f.manufacturer });
@@ -1519,7 +1641,7 @@
      ═════════════════════════════════════════════════════════════════════ */
 
   function render(root) {
-    const branches = GMS.Demo?.getBranches() || [];
+    const branches = getBranchesList();
     const manufacturers = getManufacturers();
     const categories = GMS.CATEGORIES;
 
@@ -2073,7 +2195,7 @@
     const baseLabel = getBaseLabel();
 
     const branchName = item.branch_name
-      || (GMS.Demo?.getBranches()?.find(b => b.id === item.branch_id)?.name || '—');
+      || (getBranchesList().find(b => b.id === item.branch_id)?.name || '—');
 
     const purchaseRate = Number(item.purchase_workmanship || item.workmanship_per_gram || 0);
     const saleRate = Number(item.workmanship_per_gram || 0);
@@ -2793,7 +2915,7 @@
     const item_ = item || {};
 
     const manufacturers = getManufacturers();
-    const branches = GMS.Demo?.getBranches() || [];
+    const branches = getBranchesList();
     const categories = GMS.CATEGORIES;
 
     const mstate = {
@@ -4371,13 +4493,20 @@
     /* ✅ v6.2: Tenant helpers */
     getCurrentBusinessId,
     filterByTenant,
+
+    /* ✅ v6.3: Demo optional helpers */
+    getManufacturers,
+    getBranchesList,
+    getWorkshopsList,
+    getCustomersList,
+    getSuppliersList,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
      §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Inventory View v6.2 loaded · Tenant Isolation + Base Karat',
+    '%c📦 Inventory View v6.3 loaded · Demo Optional + Tenant Isolation + Base Karat',
     'color:#b8912f;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
@@ -4388,8 +4517,8 @@
   );
 
   console.log(
-    `%c🆕 v6.2: business_id isolation — أصناف الأنشطة الأخرى مخفية تلقائياً`,
-    'color:#a55a00;font-weight:900;font-size:11px;'
+    `%c✅ v6.3: GMS.Demo optional — يعمل بدون 08-demo.js`,
+    'color:#0a7a43;font-weight:900;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
