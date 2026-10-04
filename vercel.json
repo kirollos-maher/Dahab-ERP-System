@@ -1,7 +1,6 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "name": "dahab-erp-system",
-  "public": false,
   "cleanUrls": true,
   "trailingSlash": false,
   "headers": [
@@ -46,7 +45,5 @@
       "source": "/((?!api/|js/|icons/|lib/|.*\\.(?:js|css|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|eot|json|map|html|txt|xml|webmanifest)$).*)",
       "destination": "/index.html"
     }
-  ],
-  "cleanUrls": true,
-  "trailingSlash": false
+  ]
 }
