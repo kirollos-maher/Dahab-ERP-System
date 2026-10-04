@@ -1,14 +1,21 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/14-views-inventory.js
-   صفحة المخزون الشاملة — النسخة v6.1
+   صفحة المخزون الشاملة — النسخة v6.2
    ─────────────────────────────────────────────────────────────────────
-   ✅ v6.1 التحديثات:
-     • 🆕 دعم BaseKarat — تحويل القيم الرياضية + تسميات ديناميكية
-     • 🆕 إخفاء التبويبات الفارغة تلقائياً (خزنة بدون قطع)
-     • 🆕 عرض "الكل" فقط عند وجود أكثر من كيان به بضاعة
-     • 🆕 الافتراضي = أول كيان فيه بضاعة فعلاً
-     • 🆕 Auto-refresh عند تغيير عيار الأساس
-     • 🆕 ربط event 'gms:baseKaratChanged' لإعادة الحسابات
+   ✅ v6.2 التحديثات (NEW):
+     • 🔒 Tenant Isolation — فلترة صارمة حسب business_id
+     • loadInventory() بيفلتر الأصناف حسب النشاط الحالي فقط
+     • handleSave() بيحفظ business_id مع كل صنف جديد
+     • منع ظهور أصناف الأنشطة الأخرى بعد refresh
+     • Debug logs محسّنة لمعرفة مصدر الأصناف
+   ─────────────────────────────────────────────────────────────────────
+   ✅ v6.1 التحديثات (محفوظة):
+     • دعم BaseKarat — تحويل القيم الرياضية + تسميات ديناميكية
+     • إخفاء التبويبات الفارغة تلقائياً (خزنة بدون قطع)
+     • عرض "الكل" فقط عند وجود أكثر من كيان به بضاعة
+     • الافتراضي = أول كيان فيه بضاعة فعلاً
+     • Auto-refresh عند تغيير عيار الأساس
+     • ربط event 'gms:baseKaratChanged' لإعادة الحسابات
    ─────────────────────────────────────────────────────────────────────
    المزايا المحفوظة من v6.0:
      • عزل العهدة حسب الدور (Role-Based Holder Filtering)
@@ -239,7 +246,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2.1 · BASE KARAT HELPERS — ✅ جديد
+     §2.1 · BASE KARAT HELPERS
      ═════════════════════════════════════════════════════════════════════ */
 
   /** تسمية العيار النشط (مثلاً "18K") */
@@ -338,12 +345,9 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §2.6 · LOAD ENTITIES — ✅ v6.1 (إخفاء الفارغة + عدّاد لكل كيان)
-     ═════════════════════════════════════════════════════════════════════
-     - فقط الكيانات التي فيها بضاعة فعلية تظهر
-     - "الكل" يظهر فقط لو فيه أكثر من كيان غير فارغ
-     - الافتراضي = أول كيان فيه بضاعة
+     §2.6 · LOAD ENTITIES — إخفاء الفارغة + عدّاد لكل كيان
      ═════════════════════════════════════════════════════════════════════ */
+
   async function loadEntities() {
     const list = [];
     const visibleItems = (InvState.items || []).filter(itemVisibleToUser);
@@ -558,54 +562,134 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · DATA LOADING
+     §2.7 · ✅ v6.2: TENANT ISOLATION
+     ─────────────────────────────────────────────────────────────────────
+     الفلترة حسب business_id لمنع تسريب بيانات نشاط لآخر
      ═════════════════════════════════════════════════════════════════════ */
 
-async function loadInventory() {
-  try {
-    InvState.loading = true;
-    const currentBizId = GMS.Biz?.getBusinessId() || null;
+  /**
+   * الحصول على معرّف النشاط الحالي
+   * @returns {string|null}
+   */
+  function getCurrentBusinessId() {
+    try {
+      if (GMS.Biz && typeof GMS.Biz.getBusinessId === 'function') {
+        return GMS.Biz.getBusinessId();
+      }
+    } catch (_) {}
 
-    if (GMS.IDB && GMS.IDB.isOpen) {
-      try {
-        const items = await GMS.IDB.getAll();
-        if (items.length) {
-          // ✅ فلترة حسب النشاط الحالي
-          const filtered = currentBizId
-            ? items.filter(i => !i.business_id || i.business_id === currentBizId)
-            : items;
+    try {
+      if (GMS.Auth?.profile?.business_id) {
+        return GMS.Auth.profile.business_id;
+      }
+    } catch (_) {}
 
-          filtered.forEach(it => {
+    try {
+      const stored = localStorage.getItem('gms.tenant.business');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.id) return parsed.id;
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  /**
+   * فلترة الأصناف حسب النشاط الحالي
+   * @param {Array} items
+   * @returns {Array}
+   */
+  function filterByTenant(items) {
+    if (!Array.isArray(items)) return [];
+
+    const currentBizId = getCurrentBusinessId();
+
+    /* لو مفيش business_id → نعرض الكل (وضع ديمو) */
+    if (!currentBizId) {
+      console.warn('[Inventory] ⚠️ No business_id — showing all items');
+      return items;
+    }
+
+    /* فلترة صارمة: النشاط الحالي أو بدون business_id (توافق قديم) */
+    const filtered = items.filter(it => {
+      if (!it.business_id) return true;
+      return it.business_id === currentBizId;
+    });
+
+    const hidden = items.length - filtered.length;
+
+    console.log(
+      `[Inventory] 🔒 Tenant filter: ${filtered.length}/${items.length} visible` +
+      (hidden > 0 ? ` (${hidden} hidden from other businesses)` : '')
+    );
+
+    return filtered;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §3 · DATA LOADING — ✅ v6.2 مع Tenant Isolation
+     ═════════════════════════════════════════════════════════════════════ */
+
+  async function loadInventory() {
+    try {
+      InvState.loading = true;
+
+      const currentBizId = getCurrentBusinessId();
+      console.log('[Inventory] 🔍 Loading inventory for business:', currentBizId || 'NONE');
+
+      /* ─── 1 · IndexedDB (المصدر الرئيسي) ─── */
+      if (GMS.IDB && GMS.IDB.isOpen) {
+        try {
+          const allItems = await GMS.IDB.getAll();
+
+          if (allItems.length) {
+            /* ✅ v6.2: فلترة حسب business_id */
+            const items = filterByTenant(allItems);
+
+            /* تطبيع holder للعناصر القديمة */
+            items.forEach(it => {
+              if (!it.holder_type) {
+                it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
+                it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
+                it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
+              }
+            });
+
+            InvState.items = items;
+            return items;
+          }
+        } catch (e) {
+          console.warn('[Inventory] IDB read failed:', e);
+        }
+      }
+
+      /* ─── 2 · Demo Fallback (مش هيشتغل لو DEMO_ENABLED = false) ─── */
+      if (GMS.Demo && typeof GMS.Demo.getInventory === 'function') {
+        const demoItems = GMS.Demo.getInventory();
+
+        if (Array.isArray(demoItems) && demoItems.length) {
+          /* ✅ v6.2: حتى الديمو يخضع للفلترة */
+          const items = filterByTenant(demoItems);
+
+          items.forEach(it => {
             if (!it.holder_type) {
               it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
               it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
               it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
             }
           });
-          InvState.items = filtered;
-          return filtered;
+
+          InvState.items = items;
+          return InvState.items;
         }
-      } catch (e) {
-        console.warn('[Inventory] IDB read failed:', e);
-      }
-    }
-    
-
-      if (GMS.Demo) {
-        const items = GMS.Demo.getInventory();
-        items.forEach(it => {
-          if (!it.holder_type) {
-            it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
-            it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
-            it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
-          }
-        });
-        InvState.items = items;
-        return InvState.items;
       }
 
+      /* ─── 3 · فاضي تماماً ─── */
       InvState.items = [];
+      console.log('[Inventory] ✅ No items found for this business — starting clean');
       return [];
+
     } finally {
       InvState.loading = false;
     }
@@ -2472,6 +2556,7 @@ async function loadInventory() {
   async function executeInternalTransfer({ fromEntity, toEntity, items, notes }) {
     const now = new Date().toISOString();
     const voucherNo = `TRF-${Date.now().toString(36).toUpperCase().slice(-8)}`;
+    const currentBizId = getCurrentBusinessId();
 
     const newHolder = {
       type: toEntity.type,
@@ -2484,6 +2569,8 @@ async function loadInventory() {
         const fresh = await GMS.IDB?.get?.(item.id) || item;
         setItemHolder(fresh, newHolder);
         fresh.updated_at = now;
+        /* ✅ v6.2: حفظ business_id */
+        if (!fresh.business_id) fresh.business_id = currentBizId;
 
         if (GMS.IDB) {
           await GMS.IDB.put(fresh);
@@ -2698,7 +2785,7 @@ async function loadInventory() {
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · ITEM MODAL (ADD / EDIT)
+     §12 · ITEM MODAL (ADD / EDIT) — ✅ v6.2 مع business_id
      ═════════════════════════════════════════════════════════════════════ */
 
   function openItemModal(item = null) {
@@ -3793,6 +3880,10 @@ async function loadInventory() {
     }
   }
 
+  /* ═════════════════════════════════════════════════════════════════════
+     §12.1 · ✅ v6.2: handleSave — مع business_id
+     ═════════════════════════════════════════════════════════════════════ */
+
   async function handleSave(el, closeFn, isEdit, item_, mstate, manufacturers, categories, getCurrentKarat) {
     const $id = (id) => el.querySelector('#' + id);
 
@@ -3843,6 +3934,9 @@ async function loadInventory() {
     const colorCode = $id('f-color')?.value || '';
     const now = new Date().toISOString();
 
+    /* ✅ v6.2: الحصول على business_id الحالي */
+    const currentBizId = getCurrentBusinessId();
+
     const karatPayload = GMS.buildKaratPayload({
       karat: karatInfo.is_custom ? null : karatInfo.karat,
       customKarat: karatInfo.is_custom ? karatInfo.custom_karat : null,
@@ -3866,6 +3960,9 @@ async function loadInventory() {
         parent_sku: qty > 1 ? baseSku : null,
         instance_number: qty > 1 ? (idx + 1) : null,
         category: $id('f-category').value,
+
+        /* ✅ v6.2: ربط الصنف بالنشاط الحالي */
+        business_id: currentBizId,
 
         karat: karatPayload.karat,
         custom_karat: karatPayload.custom_karat,
@@ -3948,6 +4045,7 @@ async function loadInventory() {
           {
             base_sku: baseSku,
             count: qty,
+            business_id: currentBizId,
             holder_type: holder.type,
             holder_id: holder.id,
             holder_name: holder.name,
@@ -4162,7 +4260,7 @@ async function loadInventory() {
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · ✅ v6.1: PRICE LISTENER + BASEKARAT LISTENER
+     §18 · PRICE LISTENER + BASEKARAT LISTENER
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindPriceListener() {
@@ -4188,7 +4286,7 @@ async function loadInventory() {
       window.removeEventListener('goldPriceUpdated', priceHandler);
     });
 
-    /* 3 · ✅ v6.1: BaseKarat listener */
+    /* 3 · BaseKarat listener */
     if (GMS.BaseKarat?.on) {
       const unsub = GMS.BaseKarat.on(() => {
         console.log('[Inventory] 🔄 Base Karat changed — refreshing view');
@@ -4269,24 +4367,28 @@ async function loadInventory() {
     getBaseLabel,
     getBaseKarat,
     convertFromPure24,
+
+    /* ✅ v6.2: Tenant helpers */
+    getCurrentBusinessId,
+    filterByTenant,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
      §21 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c📦 Inventory View v6.1 loaded · Base Karat + Hide Empty Tabs',
+    '%c📦 Inventory View v6.2 loaded · Tenant Isolation + Base Karat',
     'color:#b8912f;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
 
   console.log(
-    `%c🔒 Role-Based Isolation · Auto-Hide Empty Entities · Live Karat Conversion`,
+    `%c🔒 Tenant Filter · Base Karat · Auto-Hide Empty Entities · Live Conversion`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🆕 v6.1: getBaseLabel / getBaseKarat / convertFromPure24 — العيار النشط يظهر في كل الصفحة`,
+    `%c🆕 v6.2: business_id isolation — أصناف الأنشطة الأخرى مخفية تلقائياً`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
