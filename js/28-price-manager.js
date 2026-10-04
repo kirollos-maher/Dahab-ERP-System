@@ -8,6 +8,10 @@
      • Open ER API   → USD/EGP (الأولوية)
      • Frankfurter   → USD/EGP (احتياطي)
 
+   ✅ v1.0.2 (NEW): Guard ضد الكتابة + Highlight
+     • Auto-refresh 180s (من 60s)
+     • فحص user-typing + selection + modal + pointer قبل كل fetch
+     • على visibilitychange — نتحقق من نفس الـ guards
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -25,9 +29,10 @@
     SOURCE:       'gms.price.lastSource',
   };
 
+  /* ✅ v1.0.2: auto-refresh من 60s إلى 180s */
   const DEFAULT_CONFIG = {
     autoRefreshEnabled: true,
-    autoRefreshInterval: 60000,
+    autoRefreshInterval: 180000,  /* 3 دقائق */
     offsetEGP: 0,
     fetchTimeout: 10000,
   };
@@ -170,6 +175,63 @@
   function num(v, fallback = 0) {
     const n = Number(v);
     return isFinite(n) ? n : fallback;
+  }
+
+  /* ✅ v1.0.2: Guard helpers */
+  function isUserTyping() {
+    try {
+      const active = document.activeElement;
+      if (!active) return false;
+      const tag = active.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (active.isContentEditable) return true;
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function hasSelection() {
+    try {
+      const sel = window.getSelection?.();
+      if (!sel || sel.isCollapsed) return false;
+      return sel.toString().trim().length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isModalOpen() {
+    try {
+      const modalRoot = document.getElementById('modal-root');
+      if (!modalRoot) return false;
+      return modalRoot.querySelectorAll('.overlay').length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function hasRecentInteraction() {
+    try {
+      const lastInteraction = Math.max(
+        window.GMS?._lastInteraction || 0,
+        window.GMS?._lastFormInteraction || 0
+      );
+      if (!lastInteraction) return false;
+      return (Date.now() - lastInteraction) < 3000;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function shouldSkipAutoFetch() {
+    if (document.hidden) return true;
+    if (State.prices.status === 'fetching') return true;
+    if (isUserTyping()) return true;
+    if (hasSelection()) return true;
+    if (isModalOpen()) return true;
+    if (hasRecentInteraction()) return true;
+    return false;
   }
 
   async function fetchWithTimeout(url, timeoutMs = 10000) {
@@ -580,7 +642,7 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════════
-     AUTO REFRESH
+     AUTO REFRESH — ✅ v1.0.2 (Guarded)
      ═══════════════════════════════════════════════════════════════════ */
   function startAutoRefresh(intervalMs) {
     const interval = num(intervalMs, State.config.autoRefreshInterval);
@@ -591,8 +653,12 @@
     State.config.autoRefreshInterval = interval;
 
     State.autoRefreshTimer = setInterval(() => {
-      if (document.hidden) return;
-      if (State.prices.status === 'fetching') return;
+      /* ✅ v1.0.2: guard قوي — بيتحقق من كل حاجة */
+      if (shouldSkipAutoFetch()) {
+        console.log('[PriceManager] ⛔ Auto-fetch skipped (guarded)');
+        return;
+      }
+
       updatePrices({ silent: true }).catch(() => {});
     }, interval);
 
@@ -665,7 +731,7 @@
           State.config.autoRefreshEnabled = parsed.enabled;
         }
         if (parsed.interval > 0) {
-          State.config.autoRefreshInterval = num(parsed.interval, 60000);
+          State.config.autoRefreshInterval = num(parsed.interval, 180000);
         }
       }
     } catch (_) {}
@@ -753,7 +819,7 @@
     if (State.initialized) return State.prices;
     State.initialized = true;
 
-    console.log('%c💹 PriceManager v1.0.1 initializing…', 'color:#D4A017;font-weight:800;');
+    console.log('%c💹 PriceManager v1.0.2 initializing…', 'color:#D4A017;font-weight:800;');
 
     loadConfig();
 
@@ -788,18 +854,31 @@
       }
     });
 
-    /* Visibility */
+    /* ✅ v1.0.2: Visibility — guarded */
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
+
+      /* ✅ فحص شامل قبل الجلب */
+      if (shouldSkipAutoFetch()) {
+        console.log('[PriceManager] ⛔ Visibility fetch skipped (guarded)');
+        return;
+      }
+
       const ageMs = Date.now() - new Date(State.prices.fetchedAt || 0).getTime();
       if (ageMs > State.config.autoRefreshInterval * 1.5 && State.config.autoRefreshEnabled) {
         updatePrices({ silent: true }).catch(() => {});
       }
     });
 
-    /* Online */
+    /* ✅ v1.0.2: Online — delayed + guarded */
     window.addEventListener('online', () => {
-      setTimeout(() => updatePrices({ silent: true }).catch(() => {}), 1500);
+      setTimeout(() => {
+        if (shouldSkipAutoFetch()) {
+          console.log('[PriceManager] ⛔ Online fetch skipped (guarded)');
+          return;
+        }
+        updatePrices({ silent: true }).catch(() => {});
+      }, 1500);
     });
 
     console.log('%c✅ PriceManager initialized', 'color:#0f7a43;font-weight:800;');
@@ -875,6 +954,13 @@
       return round((oz / TROY_OUNCE_GRAMS) * rate, 2);
     },
 
+    /* ✅ v1.0.2: Guards للمستخدمين الخارجيين */
+    isUserTyping,
+    hasSelection,
+    isModalOpen,
+    hasRecentInteraction,
+    shouldSkipAutoFetch,
+
     init,
 
     destroy() {
@@ -902,7 +988,7 @@
   }
 
   console.log(
-    '%c💹 PriceManager v1.0.1 loaded',
+    '%c💹 PriceManager v1.0.2 loaded · Auto-refresh 180s + Guards',
     'color:#0f7a43;font-weight:900;font-size:13px;padding:2px 6px;' +
     'background:linear-gradient(135deg,#a8dfc4,#0f7a43);border-radius:4px;'
   );
@@ -910,6 +996,11 @@
   console.log(
     '%c🌐 Gold: GoldPrice.org + Gold-API.com · Rate: Open ER + Frankfurter',
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🛡️  Guards: user-typing · selection · modal · recent-interaction',
+    'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
   console.log(
