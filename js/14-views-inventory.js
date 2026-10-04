@@ -693,7 +693,8 @@
   function getCurrentBusinessId() {
     try {
       if (GMS.Biz && typeof GMS.Biz.getBusinessId === 'function') {
-        return GMS.Biz.getBusinessId();
+        const id = GMS.Biz.getBusinessId();
+        if (id) return id;           // ✅ لو null نكمّل للـ fallbacks بدل ما نرجع null
       }
     } catch (_) {}
 
@@ -724,10 +725,10 @@
 
     const currentBizId = getCurrentBusinessId();
 
-    /* لو مفيش business_id → نعرض الكل (وضع ديمو) */
+    /* 🔒 لو مفيش نشاط محدد → مانعرضش حاجة (كان بيعرض الكل) */
     if (!currentBizId) {
-      console.warn('[Inventory] ⚠️ No business_id — showing all items');
-      return items;
+      console.warn('[Inventory] ⚠️ No business_id — showing NOTHING (fail-closed)');
+      return [];
     }
 
     /* 🔒 فلترة صارمة: النشاط الحالي فقط
