@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/21-views-settings.js
-   الإعدادات الشاملة — النسخة v7.0
+   الإعدادات الشاملة — النسخة v7.1
      - إعدادات عامة (الفروع، الماركات، بياعو الجملة)
      - ✅ v7: توحيد وحدة الذهب (Base Karat Standardization)
      - المظهر واللغة والصوت
@@ -14,11 +14,11 @@
      - نسخ احتياطي واستعادة
      - منطقة الخطر
 
-   ✅ v7 التغييرات:
-     • كارت "توحيد وحدة الذهب" — اختيار عيار الأساس (18/21/24)
-     • Reactive propagation عبر GMS.BaseKarat
-     • صلاحية: SUPER_ADMIN / BRANCH_MANAGER / ACCOUNTANT
-     • معاينة تحويل مباشرة
+   ✅ v7.1 التغييرات (NEW):
+     • Fix: price events مابقتش تعمل render للصفحة أثناء التعديل
+     • Fix: guards أقوى (user-typing + selection + pointer + modal)
+     • Fix: bindPricingTab مابقتش تسمع لـ PM.on() و goldPriceUpdated
+     • Fix: bindPriceManagerEvents بقى يحدّث DOM مباشرة بدون render
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -59,7 +59,7 @@
       /* ✅ PriceManager */
       offset: 0,
       autoRefreshEnabled: true,
-      priceManagerInterval: 60,
+      priceManagerInterval: 180,   /* ✅ v7.1: 180 ثانية بدل 60 */
 
       /* ✅ v7: Base Karat */
       baseKarat: 21,
@@ -176,7 +176,7 @@
         const pmStatus = PM.getStatus?.() || {};
         SetState.draft.offset = pmStatus.offset || 0;
         SetState.draft.autoRefreshEnabled = pmStatus.autoRefresh !== false;
-        SetState.draft.priceManagerInterval = Math.round((pmStatus.interval || 60000) / 1000);
+        SetState.draft.priceManagerInterval = Math.round((pmStatus.interval || 180000) / 1000);
       } else {
         SetState.draft.price24 = GMS.APP_CONFIG.DEFAULT_PRICE_24;
       }
@@ -1040,7 +1040,7 @@
     const liveScrap = pmPrices.scrapPrice || 0;
 
     const liveOffset = pmStatus.offset || 0;
-    const liveInterval = Math.round((pmStatus.interval || 60000) / 1000);
+    const liveInterval = Math.round((pmStatus.interval || 180000) / 1000);
     const autoRefresh = pmStatus.autoRefresh !== false;
 
     const statusText = {
@@ -1246,12 +1246,12 @@
               <div class="field">
                 <label>فترة التحديث التلقائي (ثانية)</label>
                 <input type="number" id="set-pm-interval"
-                       step="5" min="10" max="600"
+                       step="5" min="30" max="600"
                        value="${liveInterval}"
                        class="mono"
                        style="font-size:15px;font-weight:800;
                               text-align:center">
-                <span class="hint">من 10 إلى 600 ثانية</span>
+                <span class="hint">من 30 إلى 600 ثانية</span>
               </div>
             </div>
 
@@ -2728,7 +2728,12 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · BIND PRICING TAB
+     §19 · BIND PRICING TAB — ✅ v7.1 (Guarded — no auto render)
+     ─────────────────────────────────────────────────────────────────────
+     التغييرات:
+       • لا نستخدم PM.on() (بدل render فوري)
+       • لا نستخدم goldPriceUpdated → لا render
+       • bindPriceManagerEvents بيحدّث DOM مباشرة (بدون render)
      ═════════════════════════════════════════════════════════════════════ */
 
   function bindPricingTab() {
@@ -2748,7 +2753,62 @@
 
         try {
           await PM.syncNow();
-          setTimeout(() => render(document.getElementById('page')), 400);
+
+          /* ✅ v7.1: نحدّث القيم في DOM مباشرة (بدون render كامل) */
+          const prices = PM.getCurrentPrices();
+          const livePrice24 = prices.price24 || 0;
+          const livePrice22 = prices.price22 || 0;
+          const livePrice21 = prices.price21 || 0;
+          const livePrice18 = prices.price18 || 0;
+          const livePrice14 = prices.price14 || 0;
+          const liveScrap = prices.scrapPrice || 0;
+
+          /* حدّث بطاقات الأسعار */
+          document.querySelectorAll('[data-price-karat]').forEach(el => {
+            const karat = Number(el.dataset.priceKarat);
+            const val = karat === 24 ? livePrice24
+                      : karat === 22 ? livePrice22
+                      : karat === 21 ? livePrice21
+                      : karat === 18 ? livePrice18
+                      : karat === 14 ? livePrice14
+                      : 0;
+            el.textContent = GMS.moneyFmt(val);
+          });
+
+          /* حدّث سعر الكسر */
+          const scrapEl = document.querySelector('[data-scrap-price]');
+          if (scrapEl) scrapEl.textContent = GMS.moneyFmt(liveScrap) + ' ج.م';
+
+          /* حدّث حالة الـ chip */
+          const statusChip = document.getElementById('pm-status-chip');
+          if (statusChip) {
+            const pmStatus = PM.getStatus?.() || {};
+            const statusText = {
+              fresh: 'حديث',
+              stale: 'قديم',
+              fetching: 'جارٍ الجلب…',
+              error: 'خطأ',
+              idle: 'غير مُفعّل',
+            }[pmStatus.status] || 'غير معروف';
+            const statusColor = {
+              fresh: 'var(--success)',
+              stale: 'var(--warn)',
+              fetching: 'var(--info)',
+              error: 'var(--danger)',
+              idle: 'var(--muted)',
+            }[pmStatus.status] || 'var(--muted)';
+
+            statusChip.style.background = statusColor + '20';
+            statusChip.style.color = statusColor;
+            statusChip.style.borderColor = statusColor + '40';
+            statusChip.innerHTML = `
+              <i data-lucide="wifi" style="width:12px;height:12px"></i>
+              ${statusText}
+            `;
+            window.lucide?.createIcons();
+          }
+
+          GMS.Toast?.ok?.('تم تحديث الأسعار');
         } catch (e) {
           GMS.Toast?.err?.('فشل التحديث', e.message);
         } finally {
@@ -2800,8 +2860,8 @@
     const intervalInput = document.getElementById('set-pm-interval');
     if (intervalInput) {
       intervalInput.onchange = () => {
-        let v = parseInt(intervalInput.value) || 60;
-        v = Math.max(10, Math.min(600, v));
+        let v = parseInt(intervalInput.value) || 180;
+        v = Math.max(30, Math.min(600, v));
         intervalInput.value = v;
 
         const PM = window.GMS?.PriceManager || window.PriceManager;
@@ -2858,29 +2918,8 @@
       };
     }
 
-    /* مستمع PriceManager */
-    const PM = window.GMS?.PriceManager || window.PriceManager;
-    if (PM?.on) {
-      const unsub = PM.on(() => {
-        if (GMS.Router?.currentId?.() !== 'settings') return;
-        if (SetState.activeTab !== 'pricing') return;
-        setTimeout(() => render(document.getElementById('page')), 150);
-      });
-      SetState.unsubscribers.push(unsub);
-    }
-
-    /* استمع لحدث goldPriceUpdated */
-    const priceHandler = (e) => {
-      if (GMS.Router?.currentId?.() !== 'settings') return;
-      if (SetState.activeTab !== 'pricing') return;
-      if (!e.detail?.prices?.price24) return;
-      setTimeout(() => render(document.getElementById('page')), 150);
-    };
-
-    window.addEventListener('goldPriceUpdated', priceHandler);
-    SetState.unsubscribers.push(() => {
-      window.removeEventListener('goldPriceUpdated', priceHandler);
-    });
+    /* ✅ v7.1: bindPriceManagerEvents بيشتغل بدون render */
+    bindPriceManagerEvents();
 
     recalcBuyMargin();
   }
@@ -3867,20 +3906,108 @@
     bindPriceManagerEvents();
   }
 
+  /* ═════════════════════════════════════════════════════════════════════
+     §30 · BIND PRICE MANAGER EVENTS — ✅ v7.1 (Guarded, no render)
+     ─────────────────────────────────────────────────────────────────────
+     التغييرات الرئيسية:
+       • نتجاهل الحدث أثناء الكتابة في الحقول
+       • نتجاهل الحدث أثناء highlight
+       • نتجاهل الحدث أثناء modal
+       • نتجاهل الحدث خلال 5 ثواني من آخر تفاعل
+       • نحدّث DOM مباشرة (بدون render كامل)
+     ═════════════════════════════════════════════════════════════════════ */
   function bindPriceManagerEvents() {
     if (!window || !document) return;
 
-    window.addEventListener('goldPriceUpdated', (e) => {
+    /* ✅ v7.1: حماية شاملة ضد الـ render أثناء التعديل */
+    const guardActive = () => {
+      /* 1 · الكتابة في حقل */
+      const active = document.activeElement;
+      if (active && (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'SELECT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.isContentEditable
+      )) {
+        return true;
+      }
+
+      /* 2 · تحديد نص (highlight) */
+      try {
+        const sel = window.getSelection?.();
+        if (sel && !sel.isCollapsed && sel.toString().trim()) {
+          return true;
+        }
+      } catch (_) {}
+
+      /* 3 · Modal مفتوح */
+      try {
+        const modalRoot = document.getElementById('modal-root');
+        if (modalRoot && modalRoot.querySelectorAll('.overlay').length > 0) {
+          return true;
+        }
+      } catch (_) {}
+
+      /* 4 · تفاعل حديث */
+      const lastInteraction = Math.max(
+        window.GMS?._lastInteraction || 0,
+        window.GMS?._lastFormInteraction || 0,
+        window.GMS?._lastPointer || 0
+      );
+      if (lastInteraction && (Date.now() - lastInteraction) < 5000) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const priceHandler = (e) => {
       if (GMS.Router?.currentId?.() !== 'settings') return;
       if (SetState.activeTab !== 'pricing') return;
 
-      const prices = e.detail?.prices || {};
-      if (prices.price24 > 0) {
-        SetState.draft.price24 = prices.price24;
+      /* ✅ v7.1: تجاهل لو فيه أي تفاعل */
+      if (guardActive()) {
+        console.log('[Settings] ⛔ Skipped price update — user interacting');
+        return;
       }
+
+      const prices = e.detail?.prices || {};
+      if (!prices.price24) return;
+
+      SetState.draft.price24 = prices.price24;
+
+      /* ✅ v7.1: نحدّث DOM مباشرة بدون render */
+      const livePrice24 = prices.price24 || 0;
+      const livePrice22 = prices.price22 || 0;
+      const livePrice21 = prices.price21 || 0;
+      const livePrice18 = prices.price18 || 0;
+      const livePrice14 = prices.price14 || 0;
+      const liveScrap = prices.scrapPrice || 0;
+
+      document.querySelectorAll('[data-price-karat]').forEach(el => {
+        const karat = Number(el.dataset.priceKarat);
+        const val = karat === 24 ? livePrice24
+                  : karat === 22 ? livePrice22
+                  : karat === 21 ? livePrice21
+                  : karat === 18 ? livePrice18
+                  : karat === 14 ? livePrice14
+                  : 0;
+        el.textContent = GMS.moneyFmt(val);
+      });
+
+      const scrapEl = document.querySelector('[data-scrap-price]');
+      if (scrapEl) scrapEl.textContent = GMS.moneyFmt(liveScrap) + ' ج.م';
+
+      console.log('[Settings] ✅ Price updated (DOM only, no render)');
+    };
+
+    window.addEventListener('goldPriceUpdated', priceHandler);
+
+    SetState.unsubscribers.push(() => {
+      window.removeEventListener('goldPriceUpdated', priceHandler);
     });
 
-    console.log('[Settings] ✅ PriceManager events bound');
+    console.log('[Settings] ✅ PriceManager events bound (v7.1 — guarded)');
   }
 
   function cleanup() {
@@ -3888,7 +4015,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §30 · VIEW REGISTRATION
+     §31 · VIEW REGISTRATION
      ═════════════════════════════════════════════════════════════════════ */
   GMS.Views = GMS.Views || {};
 
@@ -3912,10 +4039,10 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §31 · LOADED CONFIRMATION
+     §32 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚙️  Settings View v7.0 loaded · 10 tabs + B2B + Base Karat',
+    '%c⚙️  Settings View v7.1 loaded · 10 tabs + B2B + Base Karat + Guards',
     'color:#6b7a95;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#eef2f8;border-radius:4px;'
   );
@@ -3926,7 +4053,7 @@
   );
 
   console.log(
-    `%c🆕 v7: Base Karat Standardization card · 18/21/24 · Reactive propagation`,
+    `%c🆕 v7.1: Price events مابقتش تعمل render · DOM update مباشر + guards`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
