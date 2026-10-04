@@ -14,6 +14,7 @@
      • تسجيل المدفوعات
      • سجل الحركات (Audit Log)
      • الإعدادات العامة
+     • 🆕 إعدادات Supabase قبل تسجيل الدخول (Chicken-and-egg fix)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -305,7 +306,266 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · SUPABASE CLIENT
+     §7 · 🆕 SUPABASE CONFIG — داخل شاشة الدخول
+     ─────────────────────────────────────────────────────────────────────
+     يسمح بإدخال بيانات Supabase قبل تسجيل الدخول
+     (حل مشكلة chicken-and-egg)
+     ═════════════════════════════════════════════════════════════════════ */
+
+  const SBConfig = {
+    URL_KEY: 'gms.supabase.config.url',
+    KEY_KEY: 'gms.supabase.config.key',
+
+    get url() {
+      try { return localStorage.getItem(this.URL_KEY) || ''; }
+      catch (_) { return ''; }
+    },
+
+    get key() {
+      try { return localStorage.getItem(this.KEY_KEY) || ''; }
+      catch (_) { return ''; }
+    },
+
+    get isConfigured() {
+      return Boolean(this.url && this.key);
+    },
+
+    save(url, key) {
+      try {
+        localStorage.setItem(this.URL_KEY, String(url || '').trim());
+        localStorage.setItem(this.KEY_KEY, String(key || '').trim());
+        return true;
+      } catch (e) {
+        console.warn('[SBConfig.save]', e);
+        return false;
+      }
+    },
+
+    clear() {
+      try {
+        localStorage.removeItem(this.URL_KEY);
+        localStorage.removeItem(this.KEY_KEY);
+        return true;
+      } catch (_) { return false; }
+    },
+  };
+
+  function bindSupabaseConfig() {
+    const toggle   = document.getElementById('sb-config-toggle');
+    const panel    = document.getElementById('sb-config-panel');
+    const urlInput = document.getElementById('sb-config-url');
+    const keyInput = document.getElementById('sb-config-key');
+    const keyTgl   = document.getElementById('sb-config-key-toggle');
+    const saveBtn  = document.getElementById('sb-config-save');
+    const testBtn  = document.getElementById('sb-config-test');
+    const clearBtn = document.getElementById('sb-config-clear');
+    const errEl    = document.getElementById('sb-config-error');
+    const statusDt = document.getElementById('sb-status-dot');
+
+    if (!urlInput || !keyInput) {
+      console.warn('[SBConfig] Login screen elements not found');
+      return;
+    }
+
+    /* ─── تحميل القيم الحالية ─── */
+    urlInput.value = SBConfig.url;
+    keyInput.value = SBConfig.key;
+
+    const updateStatus = () => {
+      if (!statusDt) return;
+      statusDt.classList.toggle('connected', SBConfig.isConfigured);
+      statusDt.title = SBConfig.isConfigured
+        ? 'متصل بـ Supabase'
+        : 'لم يتم الإعداد بعد';
+    };
+    updateStatus();
+
+    /* ─── Toggle Panel ─── */
+    if (toggle && panel) {
+      toggle.onclick = () => {
+        const isHidden = panel.classList.contains('hidden');
+
+        if (isHidden && !SBConfig.isConfigured) {
+          /* أول مرة — افتح تلقائياً */
+          panel.classList.remove('hidden');
+        } else {
+          panel.classList.toggle('hidden');
+        }
+        window.lucide?.createIcons();
+      };
+
+      /* افتح تلقائياً لو مش مُهيّأ */
+      if (!SBConfig.isConfigured) {
+        panel.classList.remove('hidden');
+      }
+    }
+
+    /* ─── Show/Hide Key ─── */
+    if (keyTgl) {
+      keyTgl.onclick = () => {
+        const isText = keyInput.type === 'text';
+        keyInput.type = isText ? 'password' : 'text';
+        keyTgl.innerHTML = isText
+          ? '<i data-lucide="eye"></i>'
+          : '<i data-lucide="eye-off"></i>';
+        window.lucide?.createIcons();
+      };
+    }
+
+    /* ─── Helpers ─── */
+    function showErr(msg) {
+      if (!errEl) return;
+      errEl.textContent = msg;
+      errEl.classList.remove('hidden');
+      try {
+        errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (_) {}
+    }
+
+    function clearErr() {
+      if (errEl) errEl.classList.add('hidden');
+    }
+
+    function setBusy(btn, busy, txt) {
+      if (!btn) return;
+      if (busy) {
+        btn.dataset._orig = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-circle"></i> ${txt || 'جارٍ…'}`;
+        window.lucide?.createIcons();
+      } else {
+        btn.disabled = false;
+        if (btn.dataset._orig) btn.innerHTML = btn.dataset._orig;
+        window.lucide?.createIcons();
+      }
+    }
+
+    /* ─── SAVE ─── */
+    if (saveBtn) {
+      saveBtn.onclick = () => {
+        clearErr();
+
+        const url = urlInput.value.trim();
+        const key = keyInput.value.trim();
+
+        if (!url) return showErr('Project URL مطلوب');
+        if (!key) return showErr('Anon Key مطلوب');
+
+        if (!/^https?:\/\/.+/i.test(url)) {
+          return showErr('URL غير صحيح — يجب أن يبدأ بـ https://');
+        }
+
+        if (key.length < 20) {
+          return showErr('المفتاح يبدو غير صحيح (قصير جداً)');
+        }
+
+        if (!SBConfig.save(url, key)) {
+          return showErr('فشل الحفظ في LocalStorage');
+        }
+
+        updateStatus();
+        Toast.ok('✅ تم الحفظ', 'جارٍ إعادة التحميل…');
+
+        setTimeout(() => {
+          window.GMS = window.GMS || {};
+          window.GMS._intentionalReload = true;
+          location.reload();
+        }, 800);
+      };
+    }
+
+    /* ─── TEST ─── */
+    if (testBtn) {
+      testBtn.onclick = async () => {
+        clearErr();
+
+        const url = urlInput.value.trim();
+        const key = keyInput.value.trim();
+
+        if (!url || !key) return showErr('أدخل URL و Anon Key أولاً');
+
+        if (!window.supabase) {
+          return showErr('مكتبة Supabase غير محمَّلة — أعد تحميل الصفحة');
+        }
+
+        setBusy(testBtn, true, 'جارٍ الاختبار…');
+
+        try {
+          const testClient = window.supabase.createClient(url, key, {
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+
+          /* اختبار الجدول الرئيسي */
+          const { error } = await testClient
+            .from('saas_owners')
+            .select('id', { count: 'exact', head: true })
+            .limit(1);
+
+          if (error) {
+            /* جرّب جدول بديل */
+            const { error: err2 } = await testClient
+              .from('businesses')
+              .select('id', { count: 'exact', head: true })
+              .limit(1);
+
+            if (err2) throw new Error(err2.message);
+          }
+
+          Toast.ok('✅ الاتصال ناجح', 'تم الوصول لقاعدة البيانات');
+
+          /* علّم كمُهيّأ */
+          if (statusDt) statusDt.classList.add('connected');
+
+        } catch (e) {
+          console.error('[SBConfig.test]', e);
+          showErr(`فشل الاتصال: ${e.message}`);
+        } finally {
+          setBusy(testBtn, false);
+        }
+      };
+    }
+
+    /* ─── CLEAR ─── */
+    if (clearBtn) {
+      clearBtn.onclick = () => {
+        if (!confirm('⚠️ سيتم حذف إعدادات Supabase من هذا الجهاز.\n\nمتابعة؟')) return;
+
+        SBConfig.clear();
+        urlInput.value = '';
+        keyInput.value = '';
+        clearErr();
+        updateStatus();
+
+        Toast.warn('تم حذف الإعدادات', 'جارٍ إعادة التحميل…');
+
+        setTimeout(() => {
+          window.GMS = window.GMS || {};
+          window.GMS._intentionalReload = true;
+          location.reload();
+        }, 800);
+      };
+    }
+
+    /* ─── Enter key: Focus flow ─── */
+    urlInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        keyInput.focus();
+      }
+    };
+
+    keyInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (saveBtn) saveBtn.click();
+      }
+    };
+
+    console.log('[SBConfig] ✅ Bound — Configured:', SBConfig.isConfigured);
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §8 · SUPABASE CLIENT
      ═════════════════════════════════════════════════════════════════════ */
   function getSb() {
     if (State.supabaseClient) return State.supabaseClient;
@@ -315,8 +575,9 @@
       return null;
     }
 
-    const url = localStorage.getItem('gms.supabase.config.url');
-    const key = localStorage.getItem('gms.supabase.config.key');
+    /* ✅ نستخدم SBConfig كمصدر موحّد */
+    const url = SBConfig.url;
+    const key = SBConfig.key;
 
     if (!url || !key) {
       console.warn('[Owner] Supabase credentials not configured');
@@ -336,7 +597,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · CODE GENERATORS
+     §9 · CODE GENERATORS
      ═════════════════════════════════════════════════════════════════════ */
   function genCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -364,11 +625,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · AUTH
+     §10 · AUTH
      ═════════════════════════════════════════════════════════════════════ */
   async function loginOwner(username, password) {
     const client = getSb();
-    if (!client) throw new Error('لا يوجد اتصال بـ Supabase');
+    if (!client) throw new Error('لا يوجد اتصال بـ Supabase — أضف الإعدادات أولاً');
 
     const { data: rows, error } = await client
       .from('saas_owners')
@@ -459,7 +720,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · DATA LOADERS
+     §11 · DATA LOADERS
      ═════════════════════════════════════════════════════════════════════ */
   async function loadBusinesses() {
     const client = getSb();
@@ -536,7 +797,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · RENDER HELPERS
+     §12 · RENDER HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   function getBusinessStatus(b) {
     if (b.is_suspended) return 'SUSPENDED';
@@ -575,7 +836,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · RENDER — DASHBOARD
+     §13 · RENDER — DASHBOARD
      ═════════════════════════════════════════════════════════════════════ */
   function renderDashboard() {
     const now = new Date();
@@ -731,7 +992,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · RENDER — BUSINESSES
+     §14 · RENDER — BUSINESSES
      ═════════════════════════════════════════════════════════════════════ */
   function renderBusinessRow(b) {
     const status = getBusinessStatus(b);
@@ -870,7 +1131,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · RENDER — PAYMENTS
+     §15 · RENDER — PAYMENTS
      ═════════════════════════════════════════════════════════════════════ */
   function renderPayments() {
     const total = State.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -956,7 +1217,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · RENDER — AUDIT
+     §16 · RENDER — AUDIT
      ═════════════════════════════════════════════════════════════════════ */
   function renderAudit() {
     return `
@@ -1030,11 +1291,11 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · RENDER — SETTINGS
+     §17 · RENDER — SETTINGS
      ═════════════════════════════════════════════════════════════════════ */
   function renderSettings() {
-    const url = localStorage.getItem('gms.supabase.config.url') || '';
-    const key = localStorage.getItem('gms.supabase.config.key') || '';
+    const url = SBConfig.url;
+    const key = SBConfig.key;
 
     return `
       <h2 style="font-size:22px;font-weight:900;margin:0 0 20px;display:flex;
@@ -1097,6 +1358,12 @@
       <div class="card">
         <div class="card-head">
           <h3><i data-lucide="database"></i> اتصال Supabase</h3>
+          <div class="spacer" style="flex:1"></div>
+          <span class="chip ${SBConfig.isConfigured ? 'ok' : 'err'}">
+            <i data-lucide="${SBConfig.isConfigured ? 'cloud-check' : 'cloud-off'}"
+               style="width:12px;height:12px"></i>
+            ${SBConfig.isConfigured ? 'متصل' : 'غير مُهيّأ'}
+          </span>
         </div>
         <div class="card-body">
           <div class="grid-form">
@@ -1158,7 +1425,7 @@
                 إصدار لوحة المالك
               </div>
               <div class="mono" style="font-size:20px;font-weight:900;margin-top:4px">
-                v1.0.0
+                v1.1.0
               </div>
             </div>
           </div>
@@ -1168,7 +1435,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · RENDER — MAIN
+     §18 · RENDER — MAIN
      ═════════════════════════════════════════════════════════════════════ */
   function renderCurrentTab() {
     const host = document.getElementById('owner-content');
@@ -1199,7 +1466,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · COPY HELPER
+     §19 · COPY HELPER
      ═════════════════════════════════════════════════════════════════════ */
   async function copyText(text) {
     try {
@@ -1224,7 +1491,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · MODAL — CREATE BUSINESS
+     §20 · MODAL — CREATE BUSINESS
      ═════════════════════════════════════════════════════════════════════ */
   function openCreateBusiness() {
     const defaultCode = genCode();
@@ -1544,7 +1811,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §20 · MODAL — SUCCESS CODES (بعد إنشاء النشاط)
+     §21 · MODAL — SUCCESS CODES (بعد إنشاء النشاط)
      ═════════════════════════════════════════════════════════════════════ */
   function showSuccessCodes(biz, vcode, owner) {
     Modal.show({
@@ -1682,7 +1949,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §21 · MODAL — EDIT BUSINESS
+     §22 · MODAL — EDIT BUSINESS
      ═════════════════════════════════════════════════════════════════════ */
   function openEditBusiness(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -1823,7 +2090,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §22 · MODAL — USERS
+     §23 · MODAL — USERS
      ═════════════════════════════════════════════════════════════════════ */
   async function openUsers(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -1966,7 +2233,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §23 · MODAL — ADD USER
+     §24 · MODAL — ADD USER
      ═════════════════════════════════════════════════════════════════════ */
   function openAddUser(bizId, onSuccess) {
     Modal.show({
@@ -2102,7 +2369,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §24 · USER ACTIONS
+     §25 · USER ACTIONS
      ═════════════════════════════════════════════════════════════════════ */
   async function deleteUser(userId, bizId) {
     const ok = confirm('⚠️ سيتم حذف المستخدم نهائياً.\nهل أنت متأكد؟');
@@ -2230,7 +2497,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §25 · MODAL — VERIFICATION CODE
+     §26 · MODAL — VERIFICATION CODE
      ═════════════════════════════════════════════════════════════════════ */
   function openVerificationCode(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2353,7 +2620,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §26 · MODAL — SUBSCRIPTION
+     §27 · MODAL — SUBSCRIPTION
      ═════════════════════════════════════════════════════════════════════ */
   function openSubscription(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2597,7 +2864,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §27 · MODAL — DELETE BUSINESS
+     §28 · MODAL — DELETE BUSINESS
      ═════════════════════════════════════════════════════════════════════ */
   function deleteBusiness(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2699,7 +2966,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §28 · UPDATE HELPERS
+     §29 · UPDATE HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   async function updateBusiness(bizId, updates) {
     try {
@@ -2725,7 +2992,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §29 · TAB SWITCHING
+     §30 · TAB SWITCHING
      ═════════════════════════════════════════════════════════════════════ */
   function switchTab(tab) {
     State.activeTab = tab;
@@ -2733,7 +3000,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §30 · REFRESH HELPERS
+     §31 · REFRESH HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   async function refreshAll() {
     State.loading = true;
@@ -2765,7 +3032,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §31 · SETTINGS EVENTS
+     §32 · SETTINGS EVENTS
      ═════════════════════════════════════════════════════════════════════ */
   function bindSettingsEvents() {
     // حفظ كلمة المرور
@@ -2849,13 +3116,16 @@
           return;
         }
 
-        localStorage.setItem('gms.supabase.config.url', url);
-        localStorage.setItem('gms.supabase.config.key', key);
+        SBConfig.save(url, key);
 
         State.supabaseClient = null;
 
         Toast.ok('✅ تم حفظ الإعدادات', 'سيتم إعادة التحميل…');
-        setTimeout(() => location.reload(), 800);
+        setTimeout(() => {
+          window.GMS = window.GMS || {};
+          window.GMS._intentionalReload = true;
+          location.reload();
+        }, 800);
       };
     }
 
@@ -2907,23 +3177,29 @@
     if (clearSb) {
       clearSb.onclick = () => {
         if (!confirm('سيتم حذف إعدادات Supabase. متابعة؟')) return;
-        localStorage.removeItem('gms.supabase.config.url');
-        localStorage.removeItem('gms.supabase.config.key');
+        SBConfig.clear();
         State.supabaseClient = null;
         Toast.warn('تم الحذف', 'جارٍ إعادة التحميل…');
-        setTimeout(() => location.reload(), 800);
+        setTimeout(() => {
+          window.GMS = window.GMS || {};
+          window.GMS._intentionalReload = true;
+          location.reload();
+        }, 800);
       };
     }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §32 · LOGIN SCREEN
+     §33 · LOGIN SCREEN
      ═════════════════════════════════════════════════════════════════════ */
   function bindLogin() {
     const form = document.getElementById('owner-login-form');
     const errEl = document.getElementById('owner-login-error');
 
     if (!form) return;
+
+    /* 🆕 اربط إعدادات Supabase أولاً */
+    bindSupabaseConfig();
 
     form.onsubmit = async (e) => {
       e.preventDefault();
@@ -2964,11 +3240,14 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §33 · SHOW APP / LOGIN
+     §34 · SHOW APP / LOGIN
      ═════════════════════════════════════════════════════════════════════ */
   function showApp() {
-    document.getElementById('owner-login-screen').style.display = 'none';
-    document.getElementById('owner-app').classList.remove('hidden');
+    const loginScreen = document.getElementById('owner-login-screen');
+    if (loginScreen) loginScreen.style.display = 'none';
+
+    const app = document.getElementById('owner-app');
+    if (app) app.classList.remove('hidden');
 
     // تحديث اسم المالك
     const nameEl = document.getElementById('owner-name-display');
@@ -2981,18 +3260,32 @@
   }
 
   function showLogin() {
-    document.getElementById('owner-login-screen').style.display = '';
-    document.getElementById('owner-app').classList.add('hidden');
+    const loginScreen = document.getElementById('owner-login-screen');
+    if (loginScreen) loginScreen.style.display = '';
+
+    const app = document.getElementById('owner-app');
+    if (app) app.classList.add('hidden');
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §34 · TOPBAR EVENTS
+     §35 · TOPBAR EVENTS
      ═════════════════════════════════════════════════════════════════════ */
   function bindTopbar() {
     const logoutBtn = document.getElementById('owner-logout-btn');
     if (logoutBtn) {
       logoutBtn.onclick = () => {
         if (confirm('تسجيل الخروج من لوحة المالك؟')) logoutOwner();
+      };
+    }
+
+    const refreshBtn = document.getElementById('owner-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.onclick = () => {
+        refreshBtn.classList.add('loading');
+        refreshAll().finally(() => {
+          refreshBtn.classList.remove('loading');
+          Toast.ok('تم التحديث');
+        });
       };
     }
   }
@@ -3004,7 +3297,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §35 · INIT
+     §36 · INIT
      ═════════════════════════════════════════════════════════════════════ */
   async function init() {
     if (State.initialized) return;
@@ -3014,6 +3307,9 @@
       '%c🔐 SaaS Owner Panel initializing…',
       'color:#D4A017;font-weight:900;font-size:13px;'
     );
+
+    /* 🆕 اربط إعدادات Supabase (حتى قبل تسجيل الدخول) */
+    bindSupabaseConfig();
 
     // استرجاع الجلسة
     const session = restoreOwnerSession();
@@ -3040,7 +3336,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §36 · EXPORT — window.OwnerPanel
+     §37 · EXPORT — window.OwnerPanel
      ═════════════════════════════════════════════════════════════════════ */
   window.OwnerPanel = {
     /* Lifecycle */
@@ -3068,12 +3364,16 @@
     copyText,
     copyAllCodes,
 
+    /* 🆕 Supabase Config */
+    SBConfig,
+    bindSupabaseConfig,
+
     /* State (للتصحيح فقط) */
     getState: () => ({ ...State }),
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §37 · AUTO-INIT
+     §38 · AUTO-INIT
      ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -3084,10 +3384,10 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §38 · LOADED CONFIRMATION
+     §39 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c👑 SaaS Owner Panel v1.0.0 loaded',
+    '%c👑 SaaS Owner Panel v1.1.0 loaded · Supabase Config in Login Screen',
     'color:#D4A017;font-weight:900;font-size:13px;padding:3px 8px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
@@ -3095,6 +3395,11 @@
   console.log(
     '%c🌐 Available on: /owner.html · API: window.OwnerPanel',
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🆕 v1.1.0: SBConfig + bindSupabaseConfig() — إعداد Supabase قبل تسجيل الدخول',
+    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
 })();
