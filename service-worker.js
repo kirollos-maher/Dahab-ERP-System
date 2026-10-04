@@ -23,8 +23,8 @@
      - الكاش القديم يُحذَف تلقائياً في activate
      - يُشعر المستخدم بوجود تحديث جديد
    ───────────────────────────────────────────────────────────────────── */
-const SW_VERSION = 'v1.0.15';       // ✅ FIX: إصلاح أزرار ملخّص الجرد
-const BUILD_DATE = '2026-09-27';
+const SW_VERSION = 'v1.0.16';       // 🔒 FIX: عزل بيانات الأنشطة (tenant isolation)
+const BUILD_DATE = '2026-10-04';
 
 const CACHE_STATIC = `gold-erp-static-${SW_VERSION}`;
 const CACHE_CDN    = `gold-erp-cdn-${SW_VERSION}`;
