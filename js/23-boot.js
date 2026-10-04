@@ -2,6 +2,7 @@
    GOLD MS ENTERPRISE — js/23-boot.js
    نقطة التشغيل النهائية + PWA Integration
    ✅ v6.0: DEMO DISABLED + B2B Bootstrap Skipped
+   ✅ v6.1: FIX — Null-safe profile in startApp() (fixes Tenant Wizard crash)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -913,13 +914,142 @@
 
       try { localStorage.setItem('gms.lastBoot', BootState.completedAt); } catch (_) {}
 
-      const profile = GMS.Auth.profile;
-      GMS.Toast.ok(
-        `مرحباً ${profile.full_name} 👋`,
-        `أنت مسجَّل الدخول بدور: ${GMS.ROLES[profile.role]?.label || profile.role}`
-      );
+      /* ═════════════════════════════════════════════════════════════════
+         ✅ FIX v6.1: Null-safe profile access
+         ─────────────────────────────────────────────────────────────────
+         المشكلة: بعد Tenant Wizard login، GMS.Auth.profile ممكن يكون
+         لسه null لو الـ synchronization اتأخر. الكود القديم كان بيرمي
+         TypeError: Cannot read properties of null (reading 'full_name')
+         ═════════════════════════════════════════════════════════════════ */
+      const profile = GMS.Auth?.profile;
 
-      console.log(`[Boot] ✅ App ready in ${BootState.elapsedMs}ms`, BootState.systems);
+      if (profile) {
+        const welcomeName = profile.full_name || profile.username || 'مستخدم';
+        const roleLabel = GMS.ROLES?.[profile.role]?.label || profile.role || 'غير معروف';
+
+        GMS.Toast.ok(
+          `مرحباً ${welcomeName} 👋`,
+          `أنت مسجَّل الدخول بدور: ${roleLabel}`
+        );
+
+        console.log(`[Boot] ✅ App ready in ${BootState.elapsedMs}ms`, {
+          user: welcomeName,
+          role: profile.role,
+          permissions: GMS.Auth?.getPermissions?.()?.length || 0,
+          systems: BootState.systems,
+        });
+
+      } else {
+        /* profile مش جاهز — نطبّع الوضع بهدوء */
+        console.warn(
+          '[Boot] ⚠️ startApp completed but Auth.profile is null.\n' +
+          'هذا يعني أن الجلسة لم تُحمَّل بشكل صحيح.\n' +
+          'تأكد من تنفيذ 00a-tenant-auth.js sync قبل استدعاء startApp().'
+        );
+
+        /* ما نرميش Toast مزعج — النظام هيكمل ونترك للـ Router يتصرف */
+        /* لو الجلسة اتحفظت في gms.tenant.session، نعطي المستخدم فرصة */
+        try {
+          const tenantRaw = localStorage.getItem('gms.tenant.session');
+          if (tenantRaw) {
+            const tenantData = JSON.parse(tenantRaw);
+            const tenantUser = tenantData?.user;
+
+            if (tenantUser) {
+              console.log(
+                '%c[Boot] 🔧 Auto-recovering profile from gms.tenant.session…',
+                'color:#a55a00;font-weight:900;font-size:12px;'
+              );
+
+              /* نحقن profile مباشرة في AuthState */
+              const recoveredProfile = {
+                id: tenantUser.id,
+                email: tenantUser.email || null,
+                username: tenantUser.username,
+                full_name: tenantUser.full_name || tenantUser.username,
+                phone: tenantUser.phone || null,
+                role: tenantUser.role || 'SALESPERSON',
+                branch_id: tenantUser.branch_id || null,
+                rep_id: tenantUser.rep_id || null,
+                is_owner: Boolean(tenantUser.is_owner),
+                is_active: tenantUser.is_active !== false,
+                last_login: tenantUser.last_login || null,
+                created_at: tenantUser.created_at || null,
+                _source: 'boot-recovery',
+              };
+
+              if (GMS.AuthState) {
+                GMS.AuthState.user = {
+                  id: recoveredProfile.id,
+                  email: recoveredProfile.email || recoveredProfile.username,
+                };
+                GMS.AuthState.profile = recoveredProfile;
+                GMS.AuthState.signedIn = true;
+                GMS.AuthState.sessionStartedAt = tenantData.startedAt || Date.now();
+
+                /* احسب الصلاحيات */
+                if (typeof GMS.Auth?._computePermissions === 'function') {
+                  GMS.Auth._computePermissions();
+                } else if (GMS.PERMISSIONS?.[recoveredProfile.role]) {
+                  GMS.AuthState.permissions.clear();
+                  GMS.PERMISSIONS[recoveredProfile.role].forEach(p =>
+                    GMS.AuthState.permissions.add(p)
+                  );
+                }
+
+                /* احفظ gms.session */
+                try {
+                  localStorage.setItem(
+                    (GMS.LS_KEYS && GMS.LS_KEYS.SESSION) || 'gms.session',
+                    JSON.stringify({
+                      userId: recoveredProfile.id,
+                      email: recoveredProfile.email || recoveredProfile.username,
+                      rep_id: recoveredProfile.rep_id || null,
+                      startedAt: Date.now(),
+                    })
+                  );
+                } catch (_) {}
+
+                /* أضف للـ employees */
+                const exists = GMS.AuthState.employees.find(e => e.id === recoveredProfile.id);
+                if (!exists) {
+                  GMS.AuthState.employees.push({
+                    ...recoveredProfile,
+                    password: '__REDACTED__',
+                  });
+                }
+
+                GMS.Toast.ok(
+                  `مرحباً ${recoveredProfile.full_name} 👋`,
+                  `الدور: ${GMS.ROLES?.[recoveredProfile.role]?.label || recoveredProfile.role}`
+                );
+
+                console.log(
+                  '%c[Boot] ✅ Profile recovered successfully',
+                  'color:#0f7a43;font-weight:900;font-size:13px;',
+                  {
+                    username: recoveredProfile.username,
+                    role: recoveredProfile.role,
+                    permissions: GMS.AuthState.permissions.size,
+                  }
+                );
+              }
+            }
+          } else {
+            /* مفيش tenant session كذلك */
+            GMS.Toast.warn(
+              'مرحباً',
+              'لم يتم تحميل بيانات المستخدم — أعد تحميل الصفحة'
+            );
+          }
+        } catch (recoveryErr) {
+          console.error('[Boot] Profile recovery failed:', recoveryErr);
+          GMS.Toast.warn(
+            'مرحباً',
+            'حدثت مشكلة في تحميل البيانات — راجع Console'
+          );
+        }
+      }
 
       window.dispatchEvent(new CustomEvent('gms:ready', {
         detail: { bootState: BootState },
@@ -1299,7 +1429,7 @@
      §20 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c⚡ Boot v6.0 loaded · DEMO DISABLED + Clean Start',
+    '%c⚡ Boot v6.1 loaded · Null-safe profile + Auto-recovery',
     'color:#0f7a43;font-weight:800;font-size:12px;padding:1px 5px;background:#e6f6ee;border-radius:4px;'
   );
 
