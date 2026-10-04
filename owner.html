@@ -33,6 +33,14 @@
 <!-- Libraries -->
 <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js"></script>
+<script>
+  // shim: bcryptjs v2.4.3 يصدّر نفسه كـ dcodeIO.bcrypt مش bcrypt
+  window.addEventListener('load', function () {
+    if (!window.bcrypt && window.dcodeIO && window.dcodeIO.bcrypt) {
+      window.bcrypt = window.dcodeIO.bcrypt;
+    }
+  });
+</script>
 <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 
 <!-- Owner Scripts -->
@@ -190,7 +198,7 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      OWNER APP SHELL
      ═══════════════════════════════════════════════════════════════════ -->
-<div id="owner-app" class="hidden" style="display:none">
+<div id="owner-app" class="hidden">
 
   <!-- Topbar -->
   <header class="owner-topbar">
