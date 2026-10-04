@@ -561,28 +561,35 @@
      §3 · DATA LOADING
      ═════════════════════════════════════════════════════════════════════ */
 
-  async function loadInventory() {
-    try {
-      InvState.loading = true;
+async function loadInventory() {
+  try {
+    InvState.loading = true;
+    const currentBizId = GMS.Biz?.getBusinessId() || null;
 
-      if (GMS.IDB && GMS.IDB.isOpen) {
-        try {
-          const items = await GMS.IDB.getAll();
-          if (items.length) {
-            items.forEach(it => {
-              if (!it.holder_type) {
-                it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
-                it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
-                it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
-              }
-            });
-            InvState.items = items;
-            return items;
-          }
-        } catch (e) {
-          console.warn('[Inventory] IDB read failed:', e);
+    if (GMS.IDB && GMS.IDB.isOpen) {
+      try {
+        const items = await GMS.IDB.getAll();
+        if (items.length) {
+          // ✅ فلترة حسب النشاط الحالي
+          const filtered = currentBizId
+            ? items.filter(i => !i.business_id || i.business_id === currentBizId)
+            : items;
+
+          filtered.forEach(it => {
+            if (!it.holder_type) {
+              it.holder_type = ENTITY_TYPES.RETAIL_SHOP.key;
+              it.holder_id = ENTITY_TYPES.RETAIL_SHOP.defaultId;
+              it.holder_name = ENTITY_TYPES.RETAIL_SHOP.label;
+            }
+          });
+          InvState.items = filtered;
+          return filtered;
         }
+      } catch (e) {
+        console.warn('[Inventory] IDB read failed:', e);
       }
+    }
+    
 
       if (GMS.Demo) {
         const items = GMS.Demo.getInventory();
