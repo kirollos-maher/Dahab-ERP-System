@@ -895,6 +895,9 @@
 
       const { table, action, id, row } = event;
 
+      /* 🔒 تجاهل أحداث نشاط تاني */
+      if (GMS.isForeignTenantRow && GMS.isForeignTenantRow(row)) return;
+
       switch (table) {
         case 'price_board':
           this.invalidate(GMS.LS_KEYS.CACHE_PRICE);
