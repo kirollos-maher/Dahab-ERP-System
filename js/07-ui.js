@@ -548,7 +548,10 @@
       }
 
       /* الإغلاق */
+      let closing = false;
       async function close(force = false) {
+        if (closing) return;   // ✅ منع الإغلاق المزدوج (X + handler تاني)
+
         /* onBeforeClose */
         if (!force && onBeforeClose) {
           try {
@@ -559,6 +562,9 @@
             return;
           }
         }
+
+        if (closing) return;
+        closing = true;
 
         /* نغمة الإغلاق */
         Sound.close();
@@ -600,10 +606,20 @@
       };
 
       /* زر الإغلاق */
-       overlay.querySelectorAll('[data-close]').forEach(btn => {
+      overlay.querySelectorAll('[data-close], [data-modal-close]').forEach(btn => {
         if (!btn.onclick) {
           btn.onclick = () => close();
         }
+      });
+
+      /* ✅ FIX: زرار X في رأس النافذة (data-modal-close) ماكانش متربط بأي handler.
+         + تفويض (delegation) لأي زرار إغلاق بيتضاف بعد الفتح (مثلاً عبر update()) */
+      overlay.addEventListener('click', (e) => {
+        const btn = e.target.closest && e.target.closest('[data-modal-close], [data-close]');
+        if (!btn || !overlay.contains(btn)) return;
+        if (btn.onclick) return;        // له handler خاص → ما نتدخلش
+        e.preventDefault();
+        close();
       });
 
       /* النقر على الخلفية */
@@ -616,6 +632,10 @@
       /* Escape */
       if (escClose) {
         const escHandler = (e) => {
+          if (!overlay.isConnected) {            // اتقفلت بطريقة تانية → نشيل الـ listener
+            document.removeEventListener('keydown', escHandler);
+            return;
+          }
           if (e.key === 'Escape') {
             /* فقط إذا كان أعلى modal */
             if (UIState.modalStack[UIState.modalStack.length - 1] === id) {
