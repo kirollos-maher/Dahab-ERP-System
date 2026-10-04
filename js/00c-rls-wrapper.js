@@ -324,7 +324,7 @@
 
     getSession() { return this._session; },
     getBusiness() { return this._business; },
-    getBusinessId() { return this._business?.id || null; },
+    getBusinessId() { return this._business?.id || this._business?.business_id || null; },
     getUser() { return this._session?.user || null; },
     getRole() { return this._session?.user?.role || null; },
     isOwner() { return Boolean(this._session?.user?.is_owner); },
@@ -354,6 +354,14 @@
      ═════════════════════════════════════════════════════════════════════ */
   GMS.DB = DB;
   GMS.Biz = Biz;
+
+  /* 🔒 استرجاع جلسة النشاط من localStorage عند تحميل الصفحة.
+     قبل كده Biz.restore() ماكانش حد بينادي عليها، فبعد أي ريلود
+     كان النشاط الحالي = null وطبقة العزل كلها بتتعطّل. */
+  try {
+    const restored = Biz.restore();
+    console.log('[Biz] restore on load:', restored ? restored.business?.id : 'no session');
+  } catch (e) { console.warn('[Biz] auto-restore failed:', e); }
 
   /**
    * هل الصف ده تابع لنشاط تاني؟ (حماية للـ Realtime والكاش)
