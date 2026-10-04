@@ -7,6 +7,8 @@
      - سجل التدقيق غير القابل للتعديل (Audit Trail)
      - إدارة الموظفين
    ✅ v2: دعم B2B_REP + حقل rep_id في الجلسة والملف الشخصي
+   ✅ v2.1: FIX — tryRestoreSession يقرأ من gms.tenant.session كـ fallback
+             (يحل مشكلة role: undefined بعد Tenant Wizard login)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -515,6 +517,9 @@
 
       try {
         localStorage.removeItem(GMS.LS_KEYS.SESSION);
+        /* ✅ v2.1: نظّف جلسة الـ Tenant أيضاً */
+        localStorage.removeItem('gms.tenant.session');
+        localStorage.removeItem('gms.tenant.business');
       } catch (_) {}
     },
 
@@ -531,34 +536,157 @@
       } catch (_) {}
     },
 
+    /**
+     * ✅ v2.1: استرجاع الجلسة مع دعم مصادر متعددة
+     * ─────────────────────────────────────────────────────────────────
+     * الترتيب:
+     *   1. gms.session (المصدر الأساسي — من Auth.signIn)
+     *   2. gms.tenant.session (من Tenant Wizard — 00a-tenant-auth.js)
+     *   3. Supabase auth (لو متاح)
+     */
     tryRestoreSession() {
       try {
+        /* ═══════════════════════════════════════════════════════════
+           [1] المحاولة الأولى: gms.session (المسار العادي)
+           ═══════════════════════════════════════════════════════════ */
         const stored = localStorage.getItem(GMS.LS_KEYS.SESSION);
-        if (!stored) return false;
 
-        const session = JSON.parse(stored);
-        if (!session.userId) return false;
+        if (stored) {
+          try {
+            const session = JSON.parse(stored);
 
-        const elapsed = Date.now() - (session.startedAt || 0);
-        if (elapsed > GMS.SECURITY_CONFIG.SESSION_TIMEOUT_MS) {
-          localStorage.removeItem(GMS.LS_KEYS.SESSION);
-          return false;
+            if (session && session.userId) {
+              /* فحص TTL */
+              const elapsed = Date.now() - (session.startedAt || 0);
+              if (elapsed > GMS.SECURITY_CONFIG.SESSION_TIMEOUT_MS) {
+                console.warn('[Auth] ⏰ Session expired');
+                localStorage.removeItem(GMS.LS_KEYS.SESSION);
+                /* لا نرجع false — نكمل للمصادر الأخرى */
+              } else {
+                /* ابحث في employees */
+                const user = AuthState.employees.find(u => u.id === session.userId);
+
+                if (user && user.is_active) {
+                  AuthState.user = { id: user.id, email: user.email };
+                  AuthState.profile = { ...user };
+                  AuthState.sessionStartedAt = session.startedAt || Date.now();
+                  this._computePermissions();
+                  AuthState.signedIn = true;
+
+                  emit('sessionRestored', AuthState.profile);
+                  console.log('[Auth] ✅ Restored from gms.session:', user.username || user.email);
+                  return true;
+                }
+              }
+            }
+          } catch (parseErr) {
+            console.warn('[Auth] Failed to parse gms.session:', parseErr.message);
+          }
         }
 
-        const user = AuthState.employees.find(u => u.id === session.userId);
-        if (!user || !user.is_active) {
-          localStorage.removeItem(GMS.LS_KEYS.SESSION);
-          return false;
+        /* ═══════════════════════════════════════════════════════════
+           [2] المحاولة الثانية: gms.tenant.session
+               (من Tenant Wizard — 00a-tenant-auth.js)
+           ═══════════════════════════════════════════════════════════ */
+        const tenantRaw = localStorage.getItem('gms.tenant.session');
+
+        if (tenantRaw) {
+          try {
+            const tenantSession = JSON.parse(tenantRaw);
+            const tenantUser = tenantSession?.user;
+
+            if (tenantUser && tenantUser.id) {
+              /* فحص TTL */
+              const startedAt = tenantSession.startedAt || Date.now();
+              const expiresAt = tenantSession.expiresAt || (startedAt + GMS.SECURITY_CONFIG.SESSION_TIMEOUT_MS);
+              const elapsed = Date.now() - startedAt;
+
+              if (expiresAt && Date.now() > expiresAt) {
+                console.warn('[Auth] ⏰ Tenant session expired');
+                localStorage.removeItem('gms.tenant.session');
+                localStorage.removeItem('gms.tenant.business');
+              } else {
+                /* ✅ نبني profile متوافق مع نموذج Auth */
+                const profile = {
+                  id: tenantUser.id,
+                  email: tenantUser.email || null,
+                  username: tenantUser.username,
+                  full_name: tenantUser.full_name || tenantUser.username,
+                  phone: tenantUser.phone || null,
+                  role: tenantUser.role || 'SALESPERSON',
+                  branch_id: tenantUser.branch_id || null,
+                  rep_id: tenantUser.rep_id || null,
+                  is_owner: Boolean(tenantUser.is_owner),
+                  is_active: tenantUser.is_active !== false,
+                  last_login: tenantUser.last_login || null,
+                  created_at: tenantUser.created_at || null,
+                  _source: 'tenant.session',
+                };
+
+                AuthState.user = {
+                  id: profile.id,
+                  email: profile.email || profile.username,
+                };
+                AuthState.profile = profile;
+                AuthState.sessionStartedAt = startedAt;
+                AuthState.signedIn = true;
+
+                this._computePermissions();
+
+                /* ✅ نُزامن للـ gms.session عشان الاستدعاءات القادمة */
+                try {
+                  localStorage.setItem(
+                    GMS.LS_KEYS.SESSION,
+                    JSON.stringify({
+                      userId: profile.id,
+                      email: profile.email || profile.username,
+                      rep_id: profile.rep_id || null,
+                      startedAt: startedAt,
+                    })
+                  );
+                } catch (_) {}
+
+                /* نضيف الموظف للـ employees عشان يبقى متاح في getEmployeeById */
+                const exists = AuthState.employees.find(e => e.id === profile.id);
+                if (!exists) {
+                  AuthState.employees.push({
+                    id: profile.id,
+                    email: profile.email,
+                    username: profile.username,
+                    full_name: profile.full_name,
+                    phone: profile.phone,
+                    role: profile.role,
+                    branch_id: profile.branch_id,
+                    rep_id: profile.rep_id,
+                    is_owner: profile.is_owner,
+                    is_active: profile.is_active,
+                    created_at: profile.created_at,
+                    last_login: profile.last_login,
+                  });
+                }
+
+                emit('sessionRestored', AuthState.profile);
+
+                console.log(
+                  '%c[Auth] ✅ Restored from gms.tenant.session:',
+                  'color:#0f7a43;font-weight:800;',
+                  profile.username,
+                  '· role:', profile.role,
+                  '· perms:', AuthState.permissions.size
+                );
+
+                return true;
+              }
+            }
+          } catch (parseErr) {
+            console.warn('[Auth] Failed to parse gms.tenant.session:', parseErr.message);
+          }
         }
 
-        AuthState.user = { id: user.id, email: user.email };
-        AuthState.profile = { ...user };
-        AuthState.sessionStartedAt = session.startedAt;
-        this._computePermissions();
-        AuthState.signedIn = true;
-
-        emit('sessionRestored', AuthState.profile);
-        return true;
+        /* ═══════════════════════════════════════════════════════════
+           [3] لا يوجد أي جلسة صالحة
+           ═══════════════════════════════════════════════════════════ */
+        return false;
 
       } catch (e) {
         console.warn('[Auth.tryRestoreSession]', e.message);
@@ -599,9 +727,22 @@
       AuthState.permissions.clear();
 
       const role = AuthState.profile?.role;
-      if (!role || !GMS.PERMISSIONS[role]) return;
+      if (!role) {
+        console.warn('[Auth] ⚠️ No role found — permissions empty');
+        return;
+      }
+
+      if (!GMS.PERMISSIONS || !GMS.PERMISSIONS[role]) {
+        console.warn(`[Auth] ⚠️ Unknown role: ${role} — no permissions matrix`);
+        return;
+      }
 
       GMS.PERMISSIONS[role].forEach(p => AuthState.permissions.add(p));
+
+      console.log(
+        `%c[Auth] ✅ Permissions computed for role "${role}": ${AuthState.permissions.size}`,
+        'color:#0f7a43;font-weight:700;font-size:11px;'
+      );
     },
 
     can(permission) {
@@ -686,7 +827,7 @@
 
     getEmployeeByEmail(email) {
       return AuthState.employees.find(
-        u => u.email.toLowerCase() === String(email).toLowerCase()
+        u => u.email && u.email.toLowerCase() === String(email).toLowerCase()
       ) || null;
     },
 
@@ -977,7 +1118,7 @@
      §8 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🔐 Auth & RBAC v2 loaded · 6 roles + B2B_REP · Audit trail',
+    '%c🔐 Auth & RBAC v2.1 loaded · 6 roles + B2B_REP · Multi-Source Session Restore',
     'color:#b3261e;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#fdecea;border-radius:4px;'
   );
@@ -989,7 +1130,12 @@
   );
 
   console.log(
-    `%c🆕 v2: rep_id in session · canAccessRep() · isB2BRep() helpers`,
+    `%c🆕 v2.1: tryRestoreSession reads from gms.session → gms.tenant.session`,
+    'color:#a55a00;font-weight:900;font-size:11px;'
+  );
+
+  console.log(
+    `%c🆕 v2.1: signOut clears both gms.session + gms.tenant.session`,
     'color:#a55a00;font-weight:900;font-size:11px;'
   );
 
