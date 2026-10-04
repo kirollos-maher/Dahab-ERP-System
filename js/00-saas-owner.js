@@ -15,6 +15,7 @@
      • سجل الحركات (Audit Log)
      • الإعدادات العامة
      • 🆕 إعدادات Supabase قبل تسجيل الدخول (Chicken-and-egg fix)
+     • 🆕 Guard ضد الربط المزدوج لـ SBConfig
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -351,6 +352,12 @@
   };
 
   function bindSupabaseConfig() {
+    /* 🛡️ Guard: امنع الربط المزدوج */
+    if (window._gms_owner_sbconfig_bound) {
+      console.log('[SBConfig] Already bound — skip');
+      return;
+    }
+
     const toggle   = document.getElementById('sb-config-toggle');
     const panel    = document.getElementById('sb-config-panel');
     const urlInput = document.getElementById('sb-config-url');
@@ -366,6 +373,9 @@
       console.warn('[SBConfig] Login screen elements not found');
       return;
     }
+
+    /* ✅ علّم كـ مُربّط بعد التأكد من وجود العناصر */
+    window._gms_owner_sbconfig_bound = true;
 
     /* ─── تحميل القيم الحالية ─── */
     urlInput.value = SBConfig.url;
@@ -3247,7 +3257,10 @@
     if (loginScreen) loginScreen.style.display = 'none';
 
     const app = document.getElementById('owner-app');
-    if (app) app.classList.remove('hidden');
+    if (app) {
+      app.classList.remove('hidden');
+      app.style.display = 'flex';
+    }
 
     // تحديث اسم المالك
     const nameEl = document.getElementById('owner-name-display');
@@ -3264,7 +3277,10 @@
     if (loginScreen) loginScreen.style.display = '';
 
     const app = document.getElementById('owner-app');
-    if (app) app.classList.add('hidden');
+    if (app) {
+      app.classList.add('hidden');
+      app.style.display = 'none';
+    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
