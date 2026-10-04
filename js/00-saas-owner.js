@@ -14,12 +14,38 @@
      • تسجيل المدفوعات
      • سجل الحركات (Audit Log)
      • الإعدادات العامة
-     • 🆕 إعدادات Supabase قبل تسجيل الدخول (Chicken-and-egg fix)
-     • 🆕 Guard ضد الربط المزدوج لـ SBConfig
+     • إعدادات Supabase قبل تسجيل الدخول (Chicken-and-egg fix)
+     • 🆕 bcrypt resolver — يدعم أكثر من طريقة تصدير للمكتبة
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
   'use strict';
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §0 · 🔧 BCRYPT RESOLVER
+     ─────────────────────────────────────────────────────────────────────
+     مكتبة bcryptjs@2.x تصدّر نفسها كـ window.dcodeIO.bcrypt
+     بينما بعض الإصدارات تصدّرها كـ window.bcrypt مباشرة
+     هذا الـ helper يوحّد الوصول لكلا الحالتين
+     ═════════════════════════════════════════════════════════════════════ */
+  function getBcrypt() {
+    if (typeof window === 'undefined') return null;
+    return (
+      window.bcrypt ||
+      (window.dcodeIO && window.dcodeIO.bcrypt) ||
+      null
+    );
+  }
+
+  function requireBcrypt() {
+    const b = getBcrypt();
+    if (!b) {
+      throw new Error(
+        'مكتبة التحقق (bcrypt) غير محمَّلة — تأكد من تحميل bcryptjs في الصفحة'
+      );
+    }
+    return b;
+  }
 
   /* ═════════════════════════════════════════════════════════════════════
      §1 · CONSTANTS
@@ -268,18 +294,15 @@
         }, 160);
       };
 
-      // زر الإغلاق
       const closeBtn = overlay.querySelector('[data-modal-close]');
       if (closeBtn) closeBtn.onclick = close;
 
-      // النقر على الخلفية
       if (closable) {
         overlay.addEventListener('mousedown', (e) => {
           if (e.target === overlay) close();
         });
       }
 
-      // Escape
       const escHandler = (e) => {
         if (e.key === 'Escape' && closable) {
           close();
@@ -288,7 +311,6 @@
       };
       document.addEventListener('keydown', escHandler);
 
-      // Mount
       if (typeof onMount === 'function') {
         try { onMount(modalEl, close, overlay); }
         catch (e) { console.error('[OwnerModal.onMount]', e); }
@@ -307,10 +329,7 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · 🆕 SUPABASE CONFIG — داخل شاشة الدخول
-     ─────────────────────────────────────────────────────────────────────
-     يسمح بإدخال بيانات Supabase قبل تسجيل الدخول
-     (حل مشكلة chicken-and-egg)
+     §7 · SUPABASE CONFIG — داخل شاشة الدخول
      ═════════════════════════════════════════════════════════════════════ */
 
   const SBConfig = {
@@ -352,12 +371,6 @@
   };
 
   function bindSupabaseConfig() {
-    /* 🛡️ Guard: امنع الربط المزدوج */
-    if (window._gms_owner_sbconfig_bound) {
-      console.log('[SBConfig] Already bound — skip');
-      return;
-    }
-
     const toggle   = document.getElementById('sb-config-toggle');
     const panel    = document.getElementById('sb-config-panel');
     const urlInput = document.getElementById('sb-config-url');
@@ -374,10 +387,6 @@
       return;
     }
 
-    /* ✅ علّم كـ مُربّط بعد التأكد من وجود العناصر */
-    window._gms_owner_sbconfig_bound = true;
-
-    /* ─── تحميل القيم الحالية ─── */
     urlInput.value = SBConfig.url;
     keyInput.value = SBConfig.key;
 
@@ -390,13 +399,11 @@
     };
     updateStatus();
 
-    /* ─── Toggle Panel ─── */
     if (toggle && panel) {
       toggle.onclick = () => {
         const isHidden = panel.classList.contains('hidden');
 
         if (isHidden && !SBConfig.isConfigured) {
-          /* أول مرة — افتح تلقائياً */
           panel.classList.remove('hidden');
         } else {
           panel.classList.toggle('hidden');
@@ -404,13 +411,11 @@
         window.lucide?.createIcons();
       };
 
-      /* افتح تلقائياً لو مش مُهيّأ */
       if (!SBConfig.isConfigured) {
         panel.classList.remove('hidden');
       }
     }
 
-    /* ─── Show/Hide Key ─── */
     if (keyTgl) {
       keyTgl.onclick = () => {
         const isText = keyInput.type === 'text';
@@ -422,7 +427,6 @@
       };
     }
 
-    /* ─── Helpers ─── */
     function showErr(msg) {
       if (!errEl) return;
       errEl.textContent = msg;
@@ -450,7 +454,6 @@
       }
     }
 
-    /* ─── SAVE ─── */
     if (saveBtn) {
       saveBtn.onclick = () => {
         clearErr();
@@ -484,7 +487,6 @@
       };
     }
 
-    /* ─── TEST ─── */
     if (testBtn) {
       testBtn.onclick = async () => {
         clearErr();
@@ -505,14 +507,12 @@
             auth: { persistSession: false, autoRefreshToken: false },
           });
 
-          /* اختبار الجدول الرئيسي */
           const { error } = await testClient
             .from('saas_owners')
             .select('id', { count: 'exact', head: true })
             .limit(1);
 
           if (error) {
-            /* جرّب جدول بديل */
             const { error: err2 } = await testClient
               .from('businesses')
               .select('id', { count: 'exact', head: true })
@@ -523,7 +523,6 @@
 
           Toast.ok('✅ الاتصال ناجح', 'تم الوصول لقاعدة البيانات');
 
-          /* علّم كمُهيّأ */
           if (statusDt) statusDt.classList.add('connected');
 
         } catch (e) {
@@ -535,7 +534,6 @@
       };
     }
 
-    /* ─── CLEAR ─── */
     if (clearBtn) {
       clearBtn.onclick = () => {
         if (!confirm('⚠️ سيتم حذف إعدادات Supabase من هذا الجهاز.\n\nمتابعة؟')) return;
@@ -556,7 +554,6 @@
       };
     }
 
-    /* ─── Enter key: Focus flow ─── */
     urlInput.onkeydown = (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -585,7 +582,6 @@
       return null;
     }
 
-    /* ✅ نستخدم SBConfig كمصدر موحّد */
     const url = SBConfig.url;
     const key = SBConfig.key;
 
@@ -641,6 +637,9 @@
     const client = getSb();
     if (!client) throw new Error('لا يوجد اتصال بـ Supabase — أضف الإعدادات أولاً');
 
+    /* ✅ التحقق من وجود bcrypt قبل أي شيء */
+    const bcrypt = requireBcrypt();
+
     const { data: rows, error } = await client
       .from('saas_owners')
       .select('id, username, full_name, password_hash, is_active, locked_until, failed_attempts')
@@ -657,9 +656,7 @@
       throw new Error('الحساب مقفل مؤقتاً — حاول بعد قليل');
     }
 
-    if (!window.bcrypt) throw new Error('مكتبة التحقق غير محمَّلة');
-
-    const ok = window.bcrypt.compareSync(password, owner.password_hash);
+    const ok = bcrypt.compareSync(password, owner.password_hash);
 
     if (!ok) {
       await client
@@ -867,13 +864,11 @@
     ).length;
     const suspended = State.businesses.filter(b => b.is_suspended).length;
 
-    // إيرادات الشهر الحالي
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const thisMonthRevenue = State.payments
       .filter(p => new Date(p.created_at) >= thisMonthStart)
       .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
-    // إجمالي الإيرادات
     const totalRevenue = State.payments
       .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
@@ -1435,7 +1430,7 @@
                 إصدار لوحة المالك
               </div>
               <div class="mono" style="font-size:20px;font-weight:900;margin-top:4px">
-                v1.1.0
+                v1.1.1
               </div>
             </div>
           </div>
@@ -1464,12 +1459,10 @@
     host.innerHTML = html;
     window.lucide?.createIcons();
 
-    // bind dynamic events
     if (State.activeTab === 'settings') {
       bindSettingsEvents();
     }
 
-    // تحديث tab النشط
     $$('.otab').forEach(tab => {
       tab.classList.toggle('active', tab.dataset.ownerTab === State.activeTab);
     });
@@ -1655,12 +1648,10 @@
       onMount: (el, close) => {
         el.querySelector('[data-cancel]').onclick = close;
 
-        // زر توليد كلمة مرور جديدة
         el.querySelector('#nb-gen-pass').onclick = () => {
           el.querySelector('#nb-owner-password').value = generatePassword();
         };
 
-        // recalc end date
         const subType = el.querySelector('#nb-sub-type');
         const start = el.querySelector('#nb-sub-start');
         const end = el.querySelector('#nb-sub-end');
@@ -1674,7 +1665,6 @@
         subType.onchange = recalcEnd;
         start.onchange = recalcEnd;
 
-        // submit
         el.querySelector('#nb-submit').onclick = async () => {
           const get = (id) => el.querySelector('#' + id).value.trim();
           const errEl = el.querySelector('#nb-error');
@@ -1716,7 +1706,6 @@
 
           const amount = parseFloat(get('nb-amount')) || 0;
 
-          // Validation
           if (!payload.name) return showErr('اسم النشاط مطلوب');
           if (!owner.full_name) return showErr('اسم صاحب المحل مطلوب');
           if (!owner.username || owner.username.length < 3)
@@ -1732,7 +1721,8 @@
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال بـ Supabase');
 
-            // 1) إنشاء النشاط
+            const bcrypt = requireBcrypt();
+
             const { data: biz, error: bizErr } = await client
               .from('businesses')
               .insert(payload)
@@ -1746,8 +1736,7 @@
               throw bizErr;
             }
 
-            // 2) إنشاء حساب Owner
-            const passwordHash = window.bcrypt.hashSync(owner.password, 10);
+            const passwordHash = bcrypt.hashSync(owner.password, 10);
 
             const { error: userErr } = await client
               .from('business_users')
@@ -1763,12 +1752,10 @@
               });
 
             if (userErr) {
-              // rollback
               await client.from('businesses').delete().eq('id', biz.id);
               throw userErr;
             }
 
-            // 3) توليد رمز تحقق
             const vcode = genVCode();
             const expiresAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
 
@@ -1784,7 +1771,6 @@
 
             if (vErr) throw vErr;
 
-            // 4) تسجيل دفعة (لو فيه مبلغ)
             if (amount > 0) {
               try {
                 await client.from('subscription_payments').insert({
@@ -1804,7 +1790,6 @@
             close();
             Toast.ok('✅ تم إنشاء النشاط', biz.name);
 
-            // تحديث البيانات + إظهار الكود
             await refreshAll();
             showSuccessCodes(biz, vcode, owner);
 
@@ -1821,7 +1806,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §21 · MODAL — SUCCESS CODES (بعد إنشاء النشاط)
+     §21 · MODAL — SUCCESS CODES
      ═════════════════════════════════════════════════════════════════════ */
   function showSuccessCodes(biz, vcode, owner) {
     Modal.show({
@@ -2137,7 +2122,6 @@
       },
     });
 
-    // جلب المستخدمين
     try {
       const users = await loadBusinessUsers(bizId);
       const loadingEl = el.querySelector('#u-loading');
@@ -2326,27 +2310,29 @@
           }
           errEl.classList.add('hidden');
 
-          const payload = {
-            business_id: bizId,
-            full_name: get('au-name'),
-            username: get('au-username'),
-            password_hash: window.bcrypt.hashSync(get('au-password'), 10),
-            role: get('au-role'),
-            phone: get('au-phone') || null,
-            email: get('au-email') || null,
-            is_owner: get('au-owner') === 'true',
-            created_by: State.owner?.id || null,
-          };
-
-          if (!payload.full_name) return showErr('الاسم مطلوب');
-          if (payload.username.length < 3)
-            return showErr('Username يجب أن يكون 3 أحرف على الأقل');
-
-          btn.disabled = true;
-          btn.innerHTML = '<i data-lucide="loader-circle"></i> جارٍ الإضافة…';
-          window.lucide?.createIcons();
-
           try {
+            const bcrypt = requireBcrypt();
+
+            const payload = {
+              business_id: bizId,
+              full_name: get('au-name'),
+              username: get('au-username'),
+              password_hash: bcrypt.hashSync(get('au-password'), 10),
+              role: get('au-role'),
+              phone: get('au-phone') || null,
+              email: get('au-email') || null,
+              is_owner: get('au-owner') === 'true',
+              created_by: State.owner?.id || null,
+            };
+
+            if (!payload.full_name) return showErr('الاسم مطلوب');
+            if (payload.username.length < 3)
+              return showErr('Username يجب أن يكون 3 أحرف على الأقل');
+
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader-circle"></i> جارٍ الإضافة…';
+            window.lucide?.createIcons();
+
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال');
 
@@ -2397,7 +2383,6 @@
       if (error) throw error;
 
       Toast.ok('تم حذف المستخدم');
-      // إعادة فتح المودال
       Modal.closeAll();
       setTimeout(() => openUsers(bizId), 200);
 
@@ -2478,11 +2463,12 @@
           window.lucide?.createIcons();
 
           try {
+            const bcrypt = requireBcrypt();
             const client = getSb();
             const { error } = await client
               .from('business_users')
               .update({
-                password_hash: window.bcrypt.hashSync(pass, 10),
+                password_hash: bcrypt.hashSync(pass, 10),
                 failed_attempts: 0,
                 locked_until: null,
               })
@@ -2761,14 +2747,12 @@
       onMount: (el, close) => {
         el.querySelector('[data-cancel]').onclick = close;
 
-        // custom days
         const select = el.querySelector('#sb-extend-days');
         const customWrap = el.querySelector('#sb-custom-wrap');
         select.onchange = () => {
           customWrap.classList.toggle('hidden', select.value !== 'custom');
         };
 
-        // تعليق
         el.querySelector('#sb-toggle-suspend').onclick = async () => {
           const newVal = !biz.is_suspended;
           const reason = newVal ? (prompt('سبب التعليق؟') || 'بدون سبب') : null;
@@ -2780,7 +2764,6 @@
           setTimeout(() => openSubscription(bizId), 200);
         };
 
-        // تعطيل
         el.querySelector('#sb-toggle-active').onclick = async () => {
           const newVal = !biz.is_active;
           const ok = confirm(newVal ? 'تنشيط النشاط؟' : '⚠️ تعطيل النشاط؟');
@@ -2790,7 +2773,6 @@
           setTimeout(() => openSubscription(bizId), 200);
         };
 
-        // Submit
         el.querySelector('#sb-submit').onclick = async () => {
           const errEl = el.querySelector('#sb-error');
           const btn = el.querySelector('#sb-submit');
@@ -2820,12 +2802,10 @@
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال');
 
-            // حساب التاريخ الجديد
             const currentEnd = new Date(biz.subscription_end);
             const baseDate = currentEnd > new Date() ? currentEnd : new Date();
             const newEnd = new Date(baseDate.getTime() + days * 86400000);
 
-            // تحديث النشاط
             const { error: bizErr } = await client
               .from('businesses')
               .update({
@@ -2838,7 +2818,6 @@
 
             if (bizErr) throw bizErr;
 
-            // تسجيل الدفعة (لو فيه مبلغ)
             if (amount > 0) {
               const { error: payErr } = await client
                 .from('subscription_payments')
@@ -3045,7 +3024,6 @@
      §32 · SETTINGS EVENTS
      ═════════════════════════════════════════════════════════════════════ */
   function bindSettingsEvents() {
-    // حفظ كلمة المرور
     const savePass = document.getElementById('set-save-pass');
     if (savePass) {
       savePass.onclick = async () => {
@@ -3070,6 +3048,7 @@
         window.lucide?.createIcons();
 
         try {
+          const bcrypt = requireBcrypt();
           const client = getSb();
           const { data: rows } = await client
             .from('saas_owners')
@@ -3079,7 +3058,7 @@
 
           if (!rows) throw new Error('المالك غير موجود');
 
-          const ok = window.bcrypt.compareSync(current, rows.password_hash);
+          const ok = bcrypt.compareSync(current, rows.password_hash);
           if (!ok) {
             showErr('كلمة المرور الحالية غير صحيحة');
             btn.disabled = false;
@@ -3088,7 +3067,7 @@
             return;
           }
 
-          const newHash = window.bcrypt.hashSync(newPass, 10);
+          const newHash = bcrypt.hashSync(newPass, 10);
           const { error } = await client
             .from('saas_owners')
             .update({ password_hash: newHash })
@@ -3112,7 +3091,6 @@
       };
     }
 
-    // حفظ Supabase
     const saveSb = document.getElementById('set-save-sb');
     if (saveSb) {
       saveSb.onclick = () => {
@@ -3139,7 +3117,6 @@
       };
     }
 
-    // اختبار الاتصال
     const testSb = document.getElementById('set-test-sb');
     if (testSb) {
       testSb.onclick = async () => {
@@ -3182,7 +3159,6 @@
       };
     }
 
-    // حذف الإعدادات
     const clearSb = document.getElementById('set-clear-sb');
     if (clearSb) {
       clearSb.onclick = () => {
@@ -3208,7 +3184,6 @@
 
     if (!form) return;
 
-    /* 🆕 اربط إعدادات Supabase أولاً */
     bindSupabaseConfig();
 
     form.onsubmit = async (e) => {
@@ -3257,18 +3232,13 @@
     if (loginScreen) loginScreen.style.display = 'none';
 
     const app = document.getElementById('owner-app');
-    if (app) {
-      app.classList.remove('hidden');
-      app.style.display = 'flex';
-    }
+    if (app) app.classList.remove('hidden');
 
-    // تحديث اسم المالك
     const nameEl = document.getElementById('owner-name-display');
     if (nameEl && State.owner) {
       nameEl.textContent = State.owner.full_name || State.owner.username;
     }
 
-    // تحميل البيانات وعرض dashboard
     refreshAll();
   }
 
@@ -3277,10 +3247,7 @@
     if (loginScreen) loginScreen.style.display = '';
 
     const app = document.getElementById('owner-app');
-    if (app) {
-      app.classList.add('hidden');
-      app.style.display = 'none';
-    }
+    if (app) app.classList.add('hidden');
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -3324,10 +3291,22 @@
       'color:#D4A017;font-weight:900;font-size:13px;'
     );
 
-    /* 🆕 اربط إعدادات Supabase (حتى قبل تسجيل الدخول) */
+    /* تحقق من bcrypt */
+    const b = getBcrypt();
+    if (b) {
+      console.log(
+        '%c✅ bcrypt resolved',
+        'color:#0f7a43;font-weight:700;font-size:11px;'
+      );
+    } else {
+      console.warn(
+        '%c⚠️ bcrypt غير محمَّل — تأكد من تحميل bcryptjs في owner.html',
+        'color:#b3261e;font-weight:900;font-size:12px;'
+      );
+    }
+
     bindSupabaseConfig();
 
-    // استرجاع الجلسة
     const session = restoreOwnerSession();
 
     if (session && State.owner) {
@@ -3340,7 +3319,6 @@
     bindTopbar();
     bindTabs();
 
-    // تحديث أيقونات lucide
     if (window.lucide) {
       setTimeout(() => window.lucide.createIcons(), 100);
     }
@@ -3380,9 +3358,12 @@
     copyText,
     copyAllCodes,
 
-    /* 🆕 Supabase Config */
+    /* Supabase Config */
     SBConfig,
     bindSupabaseConfig,
+
+    /* bcrypt helper (للاستخدام الخارجي إن احتجت) */
+    getBcrypt,
 
     /* State (للتصحيح فقط) */
     getState: () => ({ ...State }),
@@ -3403,7 +3384,7 @@
      §39 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c👑 SaaS Owner Panel v1.1.0 loaded · Supabase Config in Login Screen',
+    '%c👑 SaaS Owner Panel v1.1.1 loaded · bcrypt resolver + Supabase Config',
     'color:#D4A017;font-weight:900;font-size:13px;padding:3px 8px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
@@ -3411,11 +3392,6 @@
   console.log(
     '%c🌐 Available on: /owner.html · API: window.OwnerPanel',
     'color:#6b7a95;font-weight:700;font-size:11px;'
-  );
-
-  console.log(
-    '%c🆕 v1.1.0: SBConfig + bindSupabaseConfig() — إعداد Supabase قبل تسجيل الدخول',
-    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 
 })();
