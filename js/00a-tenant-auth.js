@@ -14,6 +14,11 @@
      • Fallback كامل لاستعلامات مباشرة
      • حفظ آخر كود نشاط تلقائياً
      • failed_attempts + قفل 15 دقيقة
+   ✅ v1.2.1:
+     • FIX — مزامنة GMS.Auth.profile قبل startApp()
+       (يحل مشكلة: TypeError: Cannot read properties of null reading 'full_name')
+     • Auto-recovery من gms.tenant.session
+     • Null-safe profile access
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -641,6 +646,102 @@
         } catch (_) {}
       }
 
+      /* ═════════════════════════════════════════════════════════════════
+         ✅ FIX v1.2.1: مزامنة GMS.Auth مع الـ Tenant Session
+         ─────────────────────────────────────────────────────────────────
+         السبب: GMS.Boot.startApp() بيقرأ GMS.Auth.profile، ولو مش
+         موجود بيرمي: TypeError: Cannot read properties of null
+         (reading 'full_name').
+
+         الحل: نبني profile متوافق مع 06-auth.js ونحقنه في AuthState
+         قبل استدعاء startApp() مباشرة.
+         ═════════════════════════════════════════════════════════════════ */
+      if (GMS.Auth && GMS.AuthState) {
+        try {
+          const authProfile = {
+            id: user.id,
+            email: user.email || null,
+            username: user.username,
+            full_name: user.full_name || user.username,
+            phone: user.phone || null,
+            role: user.role || 'SALESPERSON',
+            branch_id: user.branch_id || null,
+            rep_id: user.rep_id || null,
+            is_owner: Boolean(user.is_owner),
+            is_active: user.is_active !== false,
+            last_login: now,
+            created_at: user.created_at || null,
+            _source: 'tenant.wizard',
+          };
+
+          // احقن في AuthState مباشرة
+          GMS.AuthState.user = {
+            id: authProfile.id,
+            email: authProfile.email || authProfile.username,
+          };
+          GMS.AuthState.profile = authProfile;
+          GMS.AuthState.signedIn = true;
+          GMS.AuthState.sessionStartedAt = Date.now();
+
+          // احسب الصلاحيات
+          try {
+            if (typeof GMS.Auth._computePermissions === 'function') {
+              GMS.Auth._computePermissions();
+            } else {
+              GMS.AuthState.permissions.clear();
+              const rolePerms = GMS.PERMISSIONS?.[authProfile.role];
+              if (Array.isArray(rolePerms)) {
+                rolePerms.forEach(p => GMS.AuthState.permissions.add(p));
+              }
+            }
+          } catch (permErr) {
+            console.warn('[Wizard.step4] Permissions compute failed:', permErr);
+          }
+
+          // نحفظ gms.session كمان (مزامنة كاملة مع 06-auth.js)
+          try {
+            localStorage.setItem(
+              (GMS.LS_KEYS && GMS.LS_KEYS.SESSION) || 'gms.session',
+              JSON.stringify({
+                userId: authProfile.id,
+                email: authProfile.email || authProfile.username,
+                rep_id: authProfile.rep_id || null,
+                startedAt: Date.now(),
+              })
+            );
+          } catch (_) {}
+
+          // نضيف الموظف في employees لو مش موجود
+          try {
+            const exists = GMS.AuthState.employees.find(e => e.id === authProfile.id);
+            if (!exists) {
+              GMS.AuthState.employees.push({
+                ...authProfile,
+                password: '__REDACTED__',
+              });
+            }
+          } catch (_) {}
+
+          console.log(
+            '%c[Wizard.step4] ✅ Auth synchronized:',
+            'color:#0f7a43;font-weight:900;font-size:13px;',
+            {
+              username: authProfile.username,
+              role: authProfile.role,
+              permissions: GMS.AuthState.permissions.size,
+            }
+          );
+        } catch (syncErr) {
+          console.error('[Wizard.step4] Auth sync failed:', syncErr);
+        }
+      } else {
+        console.warn(
+          '[Wizard.step4] ⚠️ GMS.Auth or GMS.AuthState not available — ' +
+          'profile will be null in startApp(). ' +
+          '23-boot.js has auto-recovery fallback.'
+        );
+      }
+
       // تهيئة DB Wrapper
       if (GMS.DB && typeof GMS.DB.init === 'function') {
         GMS.DB.init(client, bizId);
@@ -1043,7 +1144,7 @@
      §15 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🚪 TenantAuth Wizard v1.2.0 loaded · bcrypt dual-namespace support',
+    '%c🚪 TenantAuth Wizard v1.2.1 loaded · Auth sync before startApp()',
     'color:#1c4fd8;font-weight:900;font-size:12px;padding:2px 6px;' +
     'background:#e9efff;border-radius:4px;'
   );
@@ -1051,5 +1152,10 @@
   console.log(
     '%c🔐 Step 1 (code) → Step 2 (vcode) → Step 3 (type) → Step 4 (login)',
     'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🆕 v1.2.1: Syncs GMS.Auth.profile + computes permissions before startApp()',
+    'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 })();
