@@ -1,15 +1,23 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ENTERPRISE — js/32-base-karat-ui.js
-   Base Karat UI — v4.1 (FINAL — User-Typing Safe)
+   Base Karat UI — v4.2 (FINAL — Ultimate Typing Safe)
    ─────────────────────────────────────────────────────────────────────
-   ✅ v4.1 التحديثات:
+   ✅ v4.2 التحديثات (NEW):
+     • Pointer tracker (pointerdown + mousedown + touchstart)
+     • Selection tracker (selectionchange)
+     • Guards موسّعة: pointer + selection + typing + modal + interaction
+     • Auto-refresh: 30s بدل 10s (تقليل الحمل)
+     • حماية مطلقة ضد أي render أثناء الكتابة أو highlight
+     • cleanText + convertNumbers بيتجاهلوا [data-no-karat-ui]
+
+   ✅ v4.1:
      • FIX: تجاهل عملية التحويل أثناء الكتابة في الحقول
      • FIX: isUserTyping() + hasRecentInteraction() guards
      • FIX: MutationObserver يتجاهل التغييرات أثناء الكتابة
-     • FIX: Auto-refresh (10s) يحترم حالة الكتابة
      • FIX: convertNumbers يستثني input/textarea/select
      • FIX: cleanTextNodes يتجاهل [data-no-karat-ui]
-   ✅ v4.0 المزايا الأساسية:
+
+   ✅ v4.0:
      • Direct Number Conversion — KPI values
      • Clean Text — إزالة "بندق" واستبدال 24K/21K
      • Charts label cleaning
@@ -103,11 +111,14 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3 · ✅ v4.1: USER TYPING GUARDS
+     §3 · ✅ v4.2: ULTIMATE TYPING GUARDS
      ─────────────────────────────────────────────────────────────────────
-     Guards لمنع الخروج من الحقول أثناء الكتابة:
+     Guards لمنع أي render أثناء الكتابة:
        • isUserTyping()         → هل المستخدم يكتب في input حالياً؟
+       • hasSelection()         → هل فيه نص محدد (highlight)؟
        • hasRecentInteraction() → هل تفاعل خلال آخر 5 ثواني؟
+       • hasRecentPointer()     → هل ضغط على أي عنصر خلال 1.5 ثانية؟
+       • isModalOpen()          → هل فيه modal مفتوح؟
      ═════════════════════════════════════════════════════════════════════ */
 
   /**
@@ -132,6 +143,21 @@
   }
 
   /**
+   * هل فيه نص محدد (highlight)؟
+   * @returns {boolean}
+   */
+  function hasSelection() {
+    try {
+      const sel = window.getSelection?.();
+      if (!sel || sel.isCollapsed) return false;
+      const text = sel.toString().trim();
+      return text.length > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
    * هل كان فيه تفاعل حديث (آخر 5 ثواني)؟
    * @returns {boolean}
    */
@@ -148,7 +174,21 @@
   }
 
   /**
-   * هل Modal مفتوح حالياً؟ (لو أيوه، نتجاهل كل شيء)
+   * هل ضغط على أي عنصر خلال آخر 1.5 ثانية؟
+   * @returns {boolean}
+   */
+  function hasRecentPointer() {
+    try {
+      const lastPointer = window.GMS?._lastPointer || 0;
+      if (!lastPointer) return false;
+      return (Date.now() - lastPointer) < 1500;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * هل Modal مفتوح حالياً؟
    * @returns {boolean}
    */
   function isModalOpen() {
@@ -160,6 +200,50 @@
       return false;
     }
   }
+
+  /**
+   * ✅ v4.2: فحص شامل — هل نتجاهل العملية؟
+   * @returns {boolean}
+   */
+  function shouldSkipEverything() {
+    if (isUserTyping()) return true;
+    if (hasSelection()) return true;
+    if (isModalOpen()) return true;
+    if (hasRecentPointer()) return true;
+    if (hasRecentInteraction()) return true;
+    return false;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §3.1 · ✅ v4.2: POINTER + SELECTION TRACKER
+     ─────────────────────────────────────────────────────────────────────
+     بنسجّل pointerdown + selectionchange في GMS
+     عشان الـ guards تقدر تستخدمها
+     ═════════════════════════════════════════════════════════════════════ */
+  (function installPointerTracker() {
+    if (window.GMS?._bkPointerTrackerInstalledV42) return;
+    window.GMS = window.GMS || {};
+    window.GMS._bkPointerTrackerInstalledV42 = true;
+
+    const markPointer = () => {
+      window.GMS._lastPointer = Date.now();
+      window.GMS._lastInteraction = Date.now();
+    };
+
+    const markSelection = () => {
+      window.GMS._lastInteraction = Date.now();
+    };
+
+    document.addEventListener('pointerdown', markPointer, true);
+    document.addEventListener('mousedown', markPointer, true);
+    document.addEventListener('touchstart', markPointer, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener('selectionchange', markSelection, true);
+
+    console.log('[BaseKaratUI] ✅ v4.2 Pointer tracker installed');
+  })();
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · CLEAN TEXT — إزالة "بندق" + استبدال 24K/21K
@@ -219,7 +303,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §5 · CONVERT NUMBERS — ✅ v4.1 مع الحمايات
+     §5 · CONVERT NUMBERS — ✅ v4.2 مع الحمايات
      ─────────────────────────────────────────────────────────────────────
      يستهدف كل KPI value في كل الصفحات بشكل مباشر
      ✅ يستثني input/textarea/select لمنع الخروج من الحقول
@@ -291,7 +375,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §6 · CLEAN TEXT NODES — ✅ v4.1 مع الاستثناءات
+     §6 · CLEAN TEXT NODES — ✅ v4.2 مع الاستثناءات
      ═════════════════════════════════════════════════════════════════════ */
 
   function cleanTextNodes(root) {
@@ -381,7 +465,13 @@
   /* ═════════════════════════════════════════════════════════════════════
      §8 · MAIN — processPage
      ─────────────────────────────────────────────────────────────────────
-     ✅ v4.1: يحترم حالة الكتابة + Modal مفتوح + التفاعل الحديث
+     ✅ v4.2: يحترم كل الحالات:
+       • user typing
+       • text selection
+       • modal open
+       • recent pointer
+       • recent interaction
+       • skip route
      ═════════════════════════════════════════════════════════════════════ */
 
   function processPage(opts = {}) {
@@ -392,31 +482,35 @@
       return { skipped: true, reason: 'skip-route' };
     }
 
-    /* ✅ فحص الكتابة الحالية */
+    /* ✅ v4.2: فحص شامل — كل الـ guards */
     if (isUserTyping()) {
       State._stats.skipped++;
-      if (!silent) {
-        console.log('[BaseKaratUI] ⛔ Skipped — user is typing');
-      }
+      if (!silent) console.log('[BaseKaratUI] ⛔ Skipped — user is typing');
       return { skipped: true, reason: 'user-typing' };
     }
 
-    /* ✅ فحص التفاعل الحديث */
-    if (hasRecentInteraction()) {
+    if (hasSelection()) {
       State._stats.skipped++;
-      if (!silent) {
-        console.log('[BaseKaratUI] ⛔ Skipped — recent interaction');
-      }
-      return { skipped: true, reason: 'recent-interaction' };
+      if (!silent) console.log('[BaseKaratUI] ⛔ Skipped — text selected');
+      return { skipped: true, reason: 'text-selected' };
     }
 
-    /* ✅ فحص Modal مفتوح */
     if (isModalOpen()) {
       State._stats.skipped++;
-      if (!silent) {
-        console.log('[BaseKaratUI] ⛔ Skipped — modal is open');
-      }
+      if (!silent) console.log('[BaseKaratUI] ⛔ Skipped — modal is open');
       return { skipped: true, reason: 'modal-open' };
+    }
+
+    if (hasRecentPointer()) {
+      State._stats.skipped++;
+      if (!silent) console.log('[BaseKaratUI] ⛔ Skipped — recent pointer');
+      return { skipped: true, reason: 'recent-pointer' };
+    }
+
+    if (hasRecentInteraction()) {
+      State._stats.skipped++;
+      if (!silent) console.log('[BaseKaratUI] ⛔ Skipped — recent interaction');
+      return { skipped: true, reason: 'recent-interaction' };
     }
 
     const page = document.getElementById('page');
@@ -438,7 +532,7 @@
 
     if (!silent) {
       console.log(
-        `%c🏷️ BaseKaratUI v4.1 [#${State._stats.runs}]: ${nums} numbers, ${texts} texts, ${charts} charts (${ms}ms) → ${getLabel()}`,
+        `%c🏷️ BaseKaratUI v4.2 [#${State._stats.runs}]: ${nums} numbers, ${texts} texts, ${charts} charts (${ms}ms) → ${getLabel()}`,
         'color:#0f7a43;font-weight:800;font-size:12px;'
       );
     }
@@ -468,8 +562,8 @@
       setTimeout(hookRouter, 500);
       return;
     }
-    if (GMS.Router._bkUIV41) return;
-    GMS.Router._bkUIV41 = true;
+    if (GMS.Router._bkUIV42) return;
+    GMS.Router._bkUIV42 = true;
 
     try {
       GMS.Router.on('afterNavigate', (data) => {
@@ -508,7 +602,7 @@
     }
   }
 
-  /* ─── MutationObserver — ✅ v4.1 مع Guards ─── */
+  /* ─── MutationObserver — ✅ v4.2 مع Guards ─── */
   function startObserver() {
     const target = document.getElementById('page') || document.body;
     if (!target) {
@@ -519,14 +613,8 @@
     State._observer = new MutationObserver((mutations) => {
       if (isSkipRoute()) return;
 
-      /* ✅ تجاهل لو المستخدم بيكتب */
-      if (isUserTyping()) return;
-
-      /* ✅ تجاهل لو فيه تفاعل حديث */
-      if (hasRecentInteraction()) return;
-
-      /* ✅ تجاهل لو Modal مفتوح */
-      if (isModalOpen()) return;
+      /* ✅ v4.2: تجاهل لو فيه أي guard نشط */
+      if (shouldSkipEverything()) return;
 
       let hasNew = false;
       for (const m of mutations) {
@@ -561,7 +649,7 @@
     if (State.installed) return;
 
     console.log(
-      '%c🏷️ BaseKarat UI v4.1 initializing…',
+      '%c🏷️ BaseKarat UI v4.2 initializing…',
       'color:#a55a00;font-weight:800;font-size:13px;'
     );
 
@@ -575,27 +663,21 @@
     setTimeout(() => processPage(), 2000);
     setTimeout(() => processPage(), 4000);
 
-    /* ✅ v4.1: Auto-refresh كل 10 ثواني — مع احترام Guards */
+    /* ✅ v4.2: Auto-refresh كل 30 ثواني — مع احترام Guards */
     State._interval = setInterval(() => {
       if (document.hidden) return;
       if (isSkipRoute()) return;
 
-      /* ✅ تجاهل لو المستخدم بيكتب */
-      if (isUserTyping()) return;
-
-      /* ✅ تجاهل لو فيه تفاعل حديث */
-      if (hasRecentInteraction()) return;
-
-      /* ✅ تجاهل لو Modal مفتوح */
-      if (isModalOpen()) return;
+      /* ✅ v4.2: فحص شامل */
+      if (shouldSkipEverything()) return;
 
       processPage({ silent: true });
-    }, 10000);
+    }, 30000);   /* ✅ من 10s إلى 30s */
 
     State.installed = true;
 
     console.log(
-      `%c✅ BaseKarat UI v4.1 ready → ${getLabel()}`,
+      `%c✅ BaseKarat UI v4.2 ready → ${getLabel()}`,
       'color:#0f7a43;font-weight:800;font-size:13px;'
     );
   }
@@ -620,10 +702,13 @@
     cleanText,
     isSkipRoute,
 
-    /* ✅ v4.1: الحمايات الجديدة */
+    /* ✅ v4.2: كل الحمايات معرّضة */
     isUserTyping,
+    hasSelection,
     hasRecentInteraction,
+    hasRecentPointer,
     isModalOpen,
+    shouldSkipEverything,
 
     /* تشخيص */
     diagnostics: () => ({
@@ -633,8 +718,11 @@
       karat: getKarat(),
       label: getLabel(),
       isUserTyping: isUserTyping(),
+      hasSelection: hasSelection(),
       hasRecentInteraction: hasRecentInteraction(),
+      hasRecentPointer: hasRecentPointer(),
       isModalOpen: isModalOpen(),
+      shouldSkipEverything: shouldSkipEverything(),
       stats: { ...State._stats },
     }),
 
@@ -657,19 +745,24 @@
      §13 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🏷️ BaseKarat UI v4.1 LOADED · User-Typing Safe',
+    '%c🏷️ BaseKarat UI v4.2 LOADED · Ultimate Typing Safe',
     'color:#a55a00;font-weight:900;font-size:14px;padding:3px 8px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
   );
 
   console.log(
-    '%c🛡️ Guards: isUserTyping() + hasRecentInteraction() + isModalOpen()',
+    '%c🛡️ Guards: isUserTyping() + hasSelection() + hasRecentPointer() + isModalOpen() + hasRecentInteraction()',
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    '%c⚡ Auto-refresh (10s) respects typing state · No more focus loss',
+    '%c⚡ Auto-refresh (30s) respects typing & highlight · No more focus loss',
     'color:#1c4fd8;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🎯 Pointer tracker + Selection tracker installed',
+    'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
   /* ═════════════════════════════════════════════════════════════════════
