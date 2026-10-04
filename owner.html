@@ -1,9 +1,6 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      GOLD MS ENTERPRISE — owner.html
      لوحة مالك النظام (SaaS Owner Panel)
-     ─────────────────────────────────────────────────────────────────
-     ⚠️ هذا الملف منفصل تماماً عن التطبيق الرئيسي
-     ⚠️ لا تشارك رابط هذه الصفحة مع أحد غير مالك النظام
      ═══════════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="dark">
@@ -46,6 +43,102 @@
       </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════════════════════════
+         🆕 قسم الاتصال بـ Supabase (قبل تسجيل الدخول)
+         ═══════════════════════════════════════════════════════════════ -->
+    <div class="sb-config-section" id="sb-config-section">
+
+      <button type="button" class="sb-config-toggle" id="sb-config-toggle">
+        <i data-lucide="database"></i>
+        <span>إعدادات الاتصال بـ Supabase</span>
+        <span class="sb-status-dot" id="sb-status-dot"></span>
+      </button>
+
+      <div class="sb-config-panel hidden" id="sb-config-panel">
+
+        <div class="sb-config-note">
+          <i data-lucide="info"></i>
+          <div>
+            أدخل بيانات مشروع Supabase الخاص بك للربط مع قاعدة البيانات.
+            القيم تُحفظ في <code>localStorage</code> على هذا الجهاز فقط.
+          </div>
+        </div>
+
+        <div class="field">
+          <label>
+            <i data-lucide="link"></i>
+            Project URL
+            <span class="req">*</span>
+          </label>
+          <input type="text"
+                 id="sb-config-url"
+                 dir="ltr"
+                 class="mono"
+                 placeholder="https://xxxxxxxx.supabase.co"
+                 autocomplete="off"
+                 autocapitalize="off"
+                 spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label>
+            <i data-lucide="key"></i>
+            Anon Public Key
+            <span class="req">*</span>
+          </label>
+          <div class="password-wrap">
+            <input type="password"
+                   id="sb-config-key"
+                   dir="ltr"
+                   class="mono"
+                   placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+                   autocomplete="off"
+                   autocapitalize="off"
+                   spellcheck="false">
+            <button type="button"
+                    class="password-toggle"
+                    id="sb-config-key-toggle"
+                    aria-label="إظهار المفتاح">
+              <i data-lucide="eye"></i>
+            </button>
+          </div>
+          <span class="hint">
+            استخدم مفتاح <b>anon public</b> فقط — لا تستخدم service_role
+          </span>
+        </div>
+
+        <div class="sb-config-actions">
+          <button type="button" class="btn btn-primary" id="sb-config-save">
+            <i data-lucide="save"></i>
+            حفظ وإعادة التحميل
+          </button>
+
+          <button type="button" class="btn btn-info" id="sb-config-test">
+            <i data-lucide="plug-zap"></i>
+            اختبار الاتصال
+          </button>
+
+          <button type="button" class="btn btn-danger" id="sb-config-clear">
+            <i data-lucide="trash-2"></i>
+            حذف
+          </button>
+        </div>
+
+        <div class="sb-config-error hidden" id="sb-config-error"></div>
+
+        <div class="sb-config-footer">
+          <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">
+            <i data-lucide="external-link"></i>
+            فتح Supabase Dashboard
+          </a>
+        </div>
+
+      </div>
+    </div>
+    <!-- ═══════════════════════════════════════════════════════════════
+         نهاية قسم Supabase
+         ═══════════════════════════════════════════════════════════════ -->
+
     <form id="owner-login-form" autocomplete="on">
       <div class="field">
         <label>Username</label>
@@ -68,7 +161,7 @@
                placeholder="••••••••">
       </div>
 
-      <button type="submit" class="btn btn-primary btn-lg btn-block">
+      <button type="submit" class="btn btn-primary btn-lg btn-block" id="owner-login-btn">
         <i data-lucide="log-in"></i>
         تسجيل الدخول
       </button>
@@ -88,7 +181,6 @@
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="owner-app" class="hidden">
 
-  <!-- Topbar -->
   <header class="owner-topbar">
     <div class="brand">
       <div class="brand-logo">Au</div>
@@ -100,46 +192,33 @@
 
     <div class="spacer"></div>
 
-    <button class="icon-btn" id="owner-refresh-btn" title="تحديث البيانات"
-            type="button">
+    <button class="icon-btn" id="owner-refresh-btn" title="تحديث البيانات" type="button">
       <i data-lucide="refresh-cw"></i>
     </button>
 
-    <button class="icon-btn" id="owner-logout-btn" title="خروج"
-            type="button">
+    <button class="icon-btn" id="owner-logout-btn" title="خروج" type="button">
       <i data-lucide="log-out"></i>
     </button>
   </header>
 
-  <!-- Tabs -->
   <nav class="owner-tabs">
     <button class="otab active" data-owner-tab="dashboard" type="button">
-      <i data-lucide="layout-dashboard"></i>
-      لوحة التحكم
+      <i data-lucide="layout-dashboard"></i> لوحة التحكم
     </button>
-
     <button class="otab" data-owner-tab="businesses" type="button">
-      <i data-lucide="building-2"></i>
-      الأنشطة
+      <i data-lucide="building-2"></i> الأنشطة
     </button>
-
     <button class="otab" data-owner-tab="payments" type="button">
-      <i data-lucide="banknote"></i>
-      المدفوعات
+      <i data-lucide="banknote"></i> المدفوعات
     </button>
-
     <button class="otab" data-owner-tab="audit" type="button">
-      <i data-lucide="scroll-text"></i>
-      السجل
+      <i data-lucide="scroll-text"></i> السجل
     </button>
-
     <button class="otab" data-owner-tab="settings" type="button">
-      <i data-lucide="settings"></i>
-      الإعدادات
+      <i data-lucide="settings"></i> الإعدادات
     </button>
   </nav>
 
-  <!-- Content -->
   <main id="owner-content">
     <div style="padding:60px;text-align:center">
       <div class="spinner" style="margin:0 auto 14px;
@@ -161,10 +240,7 @@
 <div id="owner-modal-root"></div>
 
 <style>
-/* Progress spinner fallback (لو ما كانش في owner-style.css) */
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
 
 </body>
