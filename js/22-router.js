@@ -13,6 +13,10 @@
      - ✅ Form Interaction Tracker (يحمي النماذج والفلاتر أثناء التفاعل)
      - ✅ v2: reload({force}) + renderView backup/restore (منع الشاشة البيضاء)
      - ✅ v3: إضافة مسار b2b (بياعي الجملة المستقلين)
+     - ✅ v4 (NEW): Pointer + Selection guards
+       • shouldSkipRerender يحترم highlight + pointerdown حديث
+       • Form tracker يسجّل pointerdown + selectionchange
+       • Guards أقوى (3000ms من pointer، 5000ms من form)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -281,7 +285,12 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §3.5 · FORM INTERACTION TRACKER
+     §3.5 · FORM INTERACTION TRACKER — ✅ v4 (Pointer + Selection)
+     ─────────────────────────────────────────────────────────────────────
+     بيسجّل:
+       • focusin / keydown / input / change (الحقول)
+       • pointerdown / mousedown / touchstart (أي عنصر)
+       • selectionchange (highlight بالماوس)
      ═════════════════════════════════════════════════════════════════════ */
   (function initFormTracker() {
     const markInteraction = () => {
@@ -290,7 +299,14 @@
       window.GMS._lastInteraction = Date.now();
     };
 
-    ['focusin', 'keydown', 'pointerdown', 'input', 'change'].forEach(evt => {
+    const markPointer = () => {
+      window.GMS = window.GMS || {};
+      window.GMS._lastPointer = Date.now();
+      window.GMS._lastInteraction = Date.now();
+    };
+
+    /* ─── الحقول ─── */
+    ['focusin', 'keydown', 'input', 'change'].forEach(evt => {
       document.addEventListener(evt, (e) => {
         const target = e.target;
         if (!target) return;
@@ -307,7 +323,18 @@
       }, true);
     });
 
-    console.log('[Router] ✅ Form interaction tracker active');
+    /* ─── ✅ NEW: pointerdown/mousedown على أي عنصر ─── */
+    document.addEventListener('pointerdown', markPointer, true);
+    document.addEventListener('mousedown', markPointer, true);
+    document.addEventListener('touchstart', markPointer, {
+      capture: true,
+      passive: true,
+    });
+
+    /* ─── ✅ NEW: selectionchange (highlight بالماوس) ─── */
+    document.addEventListener('selectionchange', markInteraction, true);
+
+    console.log('[Router] ✅ Form interaction tracker active (v4 — pointer + selection)');
   })();
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -546,11 +573,22 @@
      §5 · SCHEDULED RERENDER
      ═════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * ✅ v4: guards أقوى
+   *   1. Modal مفتوح
+   *   2. حقل عليه focus
+   *   3. نص محدد (highlight)
+   *   4. pointerdown حديث (< 3000ms)
+   *   5. form interaction حديث (< 5000ms)
+   *   6. أي interaction حديث (< 3000ms)
+   */
   function shouldSkipRerender() {
+    /* 1 · Modal مفتوح */
     if (GMS.Modal && typeof GMS.Modal.count === 'function' && GMS.Modal.count() > 0) {
       return true;
     }
 
+    /* 2 · حقل عليه focus */
     const active = document.activeElement;
     if (active) {
       const tag = active.tagName;
@@ -562,11 +600,27 @@
       }
     }
 
+    /* 3 · ✅ NEW: نص محدد (highlight) */
+    try {
+      const sel = window.getSelection?.();
+      if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) {
+        return true;
+      }
+    } catch (_) {}
+
+    /* 4 · ✅ NEW: pointerdown حديث (< 3000ms) */
+    if (window.GMS?._lastPointer) {
+      const elapsed = Date.now() - window.GMS._lastPointer;
+      if (elapsed < 3000) return true;
+    }
+
+    /* 5 · form interaction حديث (< 5000ms) */
     if (window.GMS && window.GMS._lastFormInteraction) {
       const elapsed = Date.now() - window.GMS._lastFormInteraction;
       if (elapsed < 5000) return true;
     }
 
+    /* 6 · أي interaction حديث (< 3000ms) */
     if (window.GMS && window.GMS._lastInteraction) {
       const elapsed = Date.now() - window.GMS._lastInteraction;
       if (elapsed < 3000) return true;
@@ -944,6 +998,7 @@
       shouldSkipRerender: shouldSkipRerender(),
       lastFormInteraction: window.GMS?._lastFormInteraction || null,
       lastInteraction: window.GMS?._lastInteraction || null,
+      lastPointer: window.GMS?._lastPointer || null,
     };
   }
 
@@ -996,18 +1051,18 @@
   GMS.navTo = go;
 
   console.log(
-    '%c🧭 Router v3 loaded · Hash-based SPA navigation + B2B route',
+    '%c🧭 Router v4 loaded · Pointer + Selection Guards',
     'color:#1c4fd8;font-weight:800;font-size:12px;padding:1px 5px;' +
     'background:#e9efff;border-radius:4px;'
   );
 
   console.log(
-    `%c📍 ${TAB_ORDER.length} routes (incl. b2b) · Guards · Scheduled rerender`,
+    `%c📍 ${TAB_ORDER.length} routes · Guards · Scheduled rerender · Pointer-aware`,
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    `%c🛡️  Form-aware: rerender يُؤجَّل عند الكتابة في حقول أو فتح Modal`,
+    `%c🛡️  Form-aware: rerender يُؤجَّل عند الكتابة · highlight · pointerdown`,
     'color:#0f7a43;font-weight:700;font-size:11px;'
   );
 
