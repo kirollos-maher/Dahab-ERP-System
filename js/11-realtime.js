@@ -683,6 +683,7 @@
 
     const row = eventType === 'DELETE' ? oldRow : newRow;
     if (!row) return;
+    if (GMS.isForeignTenantRow && GMS.isForeignTenantRow(row)) return; // 🔒 نشاط تاني
 
     /* أضف flag source */
     const realtimePayload = {
