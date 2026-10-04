@@ -89,7 +89,14 @@
      ═══════════════════════════════════════════════════════════════════ -->
 
 <!-- Level 0 · Multi-Tenant SaaS Layer -->
-<script defer src="https://cdn.jsdelivr.net/npm/bcryptjs@2.4.3/dist/bcrypt.min.js"></script>
+<!-- ✅ bcrypt محلي (لا CDN) + shim لدعم window.bcrypt -->
+<script src="bcrypt.min.js"></script>
+<script>
+  // shim: bcryptjs v2.4.3 يصدّر نفسه كـ dcodeIO.bcrypt
+  if (!window.bcrypt && window.dcodeIO && window.dcodeIO.bcrypt) {
+    window.bcrypt = window.dcodeIO.bcrypt;
+  }
+</script>
 <script defer src="js/00c-rls-wrapper.js"></script>
 <script defer src="js/00a-tenant-auth.js"></script>
 
