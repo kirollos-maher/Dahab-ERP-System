@@ -1,6 +1,9 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      GOLD MS ENTERPRISE — owner.html
      لوحة مالك النظام (SaaS Owner Panel)
+     ─────────────────────────────────────────────────────────────────
+     ⚠️ هذا الملف منفصل تماماً عن التطبيق الرئيسي
+     ⚠️ لا تشارك رابط هذه الصفحة مع أحد غير مالك النظام
      ═══════════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="dark">
@@ -10,6 +13,14 @@
 <meta name="theme-color" content="#D4A017">
 <meta name="robots" content="noindex, nofollow">
 <title>SaaS Owner Panel — Gold MS</title>
+
+<!-- Favicon -->
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="application-name" content="SaaS Owner Panel" />
+<meta name="msapplication-TileColor" content="#D4A017" />
 
 <!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -141,7 +152,7 @@
 
     <form id="owner-login-form" autocomplete="on">
       <div class="field">
-        <label>Username</label>
+        <label for="owner-username">Username</label>
         <input type="text" id="owner-username"
                required
                dir="ltr"
@@ -152,7 +163,7 @@
       </div>
 
       <div class="field">
-        <label>Password</label>
+        <label for="owner-password">Password</label>
         <input type="password" id="owner-password"
                required
                dir="ltr"
@@ -179,8 +190,9 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      OWNER APP SHELL
      ═══════════════════════════════════════════════════════════════════ -->
-<div id="owner-app" class="hidden">
+<div id="owner-app" class="hidden" style="display:none">
 
+  <!-- Topbar -->
   <header class="owner-topbar">
     <div class="brand">
       <div class="brand-logo">Au</div>
@@ -192,33 +204,46 @@
 
     <div class="spacer"></div>
 
-    <button class="icon-btn" id="owner-refresh-btn" title="تحديث البيانات" type="button">
+    <button class="icon-btn" id="owner-refresh-btn" title="تحديث البيانات"
+            type="button">
       <i data-lucide="refresh-cw"></i>
     </button>
 
-    <button class="icon-btn" id="owner-logout-btn" title="خروج" type="button">
+    <button class="icon-btn" id="owner-logout-btn" title="خروج"
+            type="button">
       <i data-lucide="log-out"></i>
     </button>
   </header>
 
+  <!-- Tabs -->
   <nav class="owner-tabs">
     <button class="otab active" data-owner-tab="dashboard" type="button">
-      <i data-lucide="layout-dashboard"></i> لوحة التحكم
+      <i data-lucide="layout-dashboard"></i>
+      لوحة التحكم
     </button>
+
     <button class="otab" data-owner-tab="businesses" type="button">
-      <i data-lucide="building-2"></i> الأنشطة
+      <i data-lucide="building-2"></i>
+      الأنشطة
     </button>
+
     <button class="otab" data-owner-tab="payments" type="button">
-      <i data-lucide="banknote"></i> المدفوعات
+      <i data-lucide="banknote"></i>
+      المدفوعات
     </button>
+
     <button class="otab" data-owner-tab="audit" type="button">
-      <i data-lucide="scroll-text"></i> السجل
+      <i data-lucide="scroll-text"></i>
+      السجل
     </button>
+
     <button class="otab" data-owner-tab="settings" type="button">
-      <i data-lucide="settings"></i> الإعدادات
+      <i data-lucide="settings"></i>
+      الإعدادات
     </button>
   </nav>
 
+  <!-- Content -->
   <main id="owner-content">
     <div style="padding:60px;text-align:center">
       <div class="spinner" style="margin:0 auto 14px;
@@ -240,7 +265,10 @@
 <div id="owner-modal-root"></div>
 
 <style>
-@keyframes spin { to { transform: rotate(360deg); } }
+/* Progress spinner fallback (لو ما كانش في owner-style.css) */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 </style>
 
 </body>
