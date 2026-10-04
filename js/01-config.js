@@ -1517,8 +1517,8 @@
      §42 · Supabase Credentials
      ═════════════════════════════════════════════════════════════════════ */
   GMS.SUPABASE_CREDENTIALS = Object.freeze({
-    URL: '',
-    ANON_KEY: '',
+    URL: 'https://xowrtwvsphfotxlirema.supabase.co',
+    ANON_KEY: 'sb_publishable_EdoY07-60rV86xYaaBVRyg_4moKSFc-',
   });
 
   /* ═════════════════════════════════════════════════════════════════════
