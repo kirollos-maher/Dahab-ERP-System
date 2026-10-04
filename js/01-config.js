@@ -902,7 +902,7 @@
       WHOLESALE_INVOICES: 'wholesale-invoices-changes',
     },
     INVENTORY_COLUMNS: [
-      'id', 'sku', 'category', 'karat', 'custom_karat', 'purity_ratio',
+      'id', 'business_id', 'sku', 'category', 'karat', 'custom_karat', 'purity_ratio',
       'is_custom_karat',
       'weight_grams', 'stone_weight', 'net_weight', 'pure_weight',
       'workmanship_per_gram', 'workmanship_value', 'gold_value',
