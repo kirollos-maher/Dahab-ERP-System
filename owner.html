@@ -12,6 +12,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#D4A017">
 <meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
 <title>SaaS Owner Panel — Gold MS</title>
 
 <!-- Favicon -->
@@ -63,7 +65,7 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════
-         🆕 قسم الاتصال بـ Supabase (قبل تسجيل الدخول)
+         قسم الاتصال بـ Supabase (قبل تسجيل الدخول)
          ═══════════════════════════════════════════════════════════════ -->
     <div class="sb-config-section" id="sb-config-section">
 
@@ -146,7 +148,7 @@
         <div class="sb-config-error hidden" id="sb-config-error"></div>
 
         <div class="sb-config-footer">
-          <a href="https://supabase.com/dashboard" target="_blank" rel="noopener">
+          <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer">
             <i data-lucide="external-link"></i>
             فتح Supabase Dashboard
           </a>
@@ -277,7 +279,38 @@
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Fallback: لو lucide فشل التحميل من CDN */
+[data-lucide]:not(svg):empty {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background: currentColor;
+  opacity: 0.15;
+  border-radius: 2px;
+}
 </style>
+
+<!-- ✅ فحص تحميل المكتبات + تحذير صريح -->
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      const missing = [];
+      if (!window.supabase) missing.push('@supabase/supabase-js');
+      if (!window.lucide) missing.push('lucide');
+      if (!window.bcrypt && !(window.dcodeIO && window.dcodeIO.bcrypt)) {
+        missing.push('bcryptjs');
+      }
+
+      if (missing.length) {
+        console.error(
+          '%c⚠️ مكتبات مفقودة: ' + missing.join(', '),
+          'color:#b3261e;font-weight:900;font-size:13px;'
+        );
+      }
+    }, 1500);
+  });
+</script>
 
 </body>
 </html>
