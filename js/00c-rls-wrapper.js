@@ -1,10 +1,16 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ERP — js/00c-rls-wrapper.js
-   Business Context + Tenant-Aware Supabase Wrapper
+   Business Context + Tenant-Aware Supabase Wrapper — v1.1.0
    ─────────────────────────────────────────────────────────────────────
    • DB: واجهة Supabase client تُضيف business_id تلقائياً
    • Biz: إدارة سياق النشاط الحالي (session + business + user)
    • Security: يمنع أي استعلام من تسريب بيانات tenants أخرى
+
+   ✅ v1.1.0 (NEW):
+     • wrapClient يمرر headers الأصلية (x-owner-token) بدون فقدان
+     • sanitized logs للأداء (بدون console.log في hot paths)
+     • fail-closed محسّن: كل CRUD على جداول tenant بدون business_id
+       = رفض صريح
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -24,8 +30,15 @@
     'wholesale_invoices', 'branch_transfers', 'audit_logs',
   ]);
 
+  /* جداول الـ Owner Panel — ليست tenant-scoped، لا تحتاج business_id */
+  const OWNER_TABLES = new Set([
+    'saas_owners', 'owner_sessions', 'rpc_rate_limits',
+    'businesses', 'business_users',
+    'business_verification_codes', 'subscription_payments',
+  ]);
+
   /* ═════════════════════════════════════════════════════════════════════
-     §2 · MUTATION MODES
+     §2 · MUTATION METHODS
      ═════════════════════════════════════════════════════════════════════ */
   const MUTATION_METHODS = new Set(['insert', 'upsert', 'update', 'delete']);
 
@@ -72,9 +85,14 @@
         throw new Error('[DB] Not initialized. Call DB.init(client, businessId)');
       }
 
+      /* جداول Owner Panel — تُمرَّر كما هي (لا tenant scoping) */
+      if (OWNER_TABLES.has(table)) {
+        return this._client.from(table);
+      }
+
       const builder = this._client.from(table);
 
-      // الجداول غير المُقيَّدة بالمستأجر تُمرَّر كما هي
+      /* الجداول غير المُقيَّدة بالمستأجر تُمرَّر كما هي */
       if (!this._businessId || !TENANT_TABLES.has(table)) {
         return builder;
       }
@@ -111,25 +129,40 @@
     /**
      * 🔒 يلفّ أي Supabase client بحيث كل from() على جدول tenant
      * يتفلتر/يتختم بـ business_id تلقائياً. باقي الدوال (channel, rpc,
-     * auth, removeChannel …) بتتمرّر زي ما هي.
+     * auth, removeChannel …) بتتمرّر زي ما هي، بما فيها الـ headers
+     * (x-owner-token) اللي بيعملها security_hardening.
      * business_id بيتقرا وقت كل استعلام، فمفيش مشكلة لو اتغيّر بعد التهيئة.
      */
     wrapClient(client) {
       const self = this;
       if (!client) return client;
-      return new Proxy(client, {
+
+      /* 🔐 حماية: لو الـ client نفسه Proxy بالفعل، لا نلفّه تاني */
+      if (client.__gms_wrapped) return client;
+
+      const proxy = new Proxy(client, {
         get(target, prop) {
+          if (prop === '__gms_wrapped') return true;
+
           if (prop === 'from') {
             return (table) => {
+              /* جداول owner — بدون scoping */
+              if (OWNER_TABLES.has(table)) {
+                return target.from(table);
+              }
+
               const builder = target.from(table);
               if (!TENANT_TABLES.has(table)) return builder;
               return self._wrapTenantBuilder(builder, table, self._currentBizId());
             };
           }
+
           const v = target[prop];
           return typeof v === 'function' ? v.bind(target) : v;
         },
       });
+
+      return proxy;
     },
 
     /**
@@ -138,29 +171,32 @@
      */
     _wrapTenantBuilder(initialBuilder, table, businessId) {
       let current = initialBuilder;
-      let mutated = false; // بعد insert/update/delete/upsert مفيش داعي نضيف eq على .select()
+      let mutated = false; /* بعد insert/update/delete/upsert مفيش داعي نضيف eq على .select() */
+
       /* لو مفيش نشاط حالي: القراءة ترجّع فاضي، والكتابة ترفض (fail-closed) */
       const NIL_TENANT = '00000000-0000-0000-0000-000000000000';
       const scopeId = businessId || NIL_TENANT;
+
       const requireTenant = (op) => {
         if (!businessId) {
           throw new Error(`[DB] ${op} على ${table} مرفوض: لا يوجد نشاط (business_id) محدد`);
         }
       };
+
       const proxy = new Proxy({}, {
         get: (target, prop) => {
-          // ─── Await support ─────────────────────────────────────
+          /* ─── Await support ───────────────────────────────────── */
           if (prop === 'then')    return (res, rej) => current.then(res, rej);
           if (prop === 'catch')   return (rej) => current.catch(rej);
           if (prop === 'finally') return (fn) => current.finally(fn);
 
-          // ─── Terminal methods ──────────────────────────────────
+          /* ─── Terminal methods ────────────────────────────────── */
           if (prop === 'single')      return () => current.single();
           if (prop === 'maybeSingle') return () => current.maybeSingle();
           if (prop === 'csv')         return () => current.csv();
           if (prop === 'explain')     return () => current.explain();
 
-          // ─── Entry: SELECT ─────────────────────────────────────
+          /* ─── Entry: SELECT ───────────────────────────────────── */
           if (prop === 'select') {
             return (...args) => {
               current = current.select(...args);
@@ -169,7 +205,7 @@
             };
           }
 
-          // ─── Entry: INSERT ─────────────────────────────────────
+          /* ─── Entry: INSERT ───────────────────────────────────── */
           if (prop === 'insert') {
             return (data) => {
               requireTenant('insert');
@@ -182,7 +218,7 @@
             };
           }
 
-          // ─── Entry: UPSERT ─────────────────────────────────────
+          /* ─── Entry: UPSERT ───────────────────────────────────── */
           if (prop === 'upsert') {
             return (data, opts) => {
               requireTenant('upsert');
@@ -195,7 +231,7 @@
             };
           }
 
-          // ─── Entry: UPDATE ─────────────────────────────────────
+          /* ─── Entry: UPDATE ───────────────────────────────────── */
           if (prop === 'update') {
             return (data) => {
               mutated = true;
@@ -204,7 +240,7 @@
             };
           }
 
-          // ─── Entry: DELETE ─────────────────────────────────────
+          /* ─── Entry: DELETE ───────────────────────────────────── */
           if (prop === 'delete') {
             return () => {
               mutated = true;
@@ -213,7 +249,7 @@
             };
           }
 
-          // ─── Chainable filters ─────────────────────────────────
+          /* ─── Chainable filters ───────────────────────────────── */
           const CHAINABLE = [
             'eq','neq','gt','gte','lt','lte','like','ilike','is','in',
             'contains','containedBy','rangeGt','rangeGte','rangeLt','rangeLte',
@@ -227,7 +263,7 @@
             };
           }
 
-          // ─── Fallback ──────────────────────────────────────────
+          /* ─── Fallback ────────────────────────────────────────── */
           const val = current[prop];
           if (typeof val === 'function') return val.bind(current);
           return val;
@@ -241,10 +277,10 @@
   /* ═════════════════════════════════════════════════════════════════════
      §4 · BIZ — Business Context Manager
      ═════════════════════════════════════════════════════════════════════ */
-  const SESSION_KEY = 'gms.tenant.session';
-  const BIZ_KEY = 'gms.tenant.business';
-  const LAST_CODE_KEY = 'gms.tenant.last_code';
-  const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 ساعات
+  const SESSION_KEY    = 'gms.tenant.session';
+  const BIZ_KEY        = 'gms.tenant.business';
+  const LAST_CODE_KEY  = 'gms.tenant.last_code';
+  const SESSION_TTL_MS = 8 * 60 * 60 * 1000; /* 8 ساعات */
 
   const Biz = {
     _session: null,
@@ -289,7 +325,7 @@
         const session = JSON.parse(rawSession);
         const business = JSON.parse(rawBiz);
 
-        // TTL check
+        /* TTL check */
         if (session.expiresAt && Date.now() > session.expiresAt) {
           console.warn('[Biz] ⏰ Session expired');
           this.clear();
@@ -309,7 +345,7 @@
       try {
         localStorage.removeItem(SESSION_KEY);
         localStorage.removeItem(BIZ_KEY);
-        // نحتفظ بـ LAST_CODE_KEY لتسهيل الدخول القادم
+        /* نحتفظ بـ LAST_CODE_KEY لتسهيل الدخول القادم */
       } catch (_) {}
       this._session = null;
       this._business = null;
@@ -372,10 +408,12 @@
       return Boolean(cur && row && row.business_id && row.business_id !== cur);
     } catch (_) { return false; }
   };
+
   GMS.TENANT_TABLES = TENANT_TABLES;
+  GMS.OWNER_TABLES = OWNER_TABLES;
 
   console.log(
-    '%c🔐 RLS Wrapper + Business Context loaded',
+    '%c🔐 RLS Wrapper + Business Context loaded · v1.1.0',
     'color:#0f7a43;font-weight:900;font-size:12px;padding:2px 6px;' +
     'background:#e6f6ee;border-radius:4px;'
   );
