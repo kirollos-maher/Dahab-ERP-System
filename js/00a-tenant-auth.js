@@ -1,24 +1,27 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ERP — js/00a-tenant-auth.js
-   Tenant Login Wizard (4 خطوات) + Auth
+   Tenant Login Wizard (4 خطوات) + Auth — v2.0.0
    ─────────────────────────────────────────────────────────────────────
    Step 1: Business Code
    Step 2: Verification Code (أول مرة فقط)
    Step 3: Owner / Employee
    Step 4: Username + Password
 
-   ✅ v1.2.0:
-     • AUTO-INIT في نهاية الملف
-     • bcrypt dual-namespace (window.bcrypt / dcodeIO.bcrypt)
-     • bcrypt.compareSync محلياً
-     • Fallback كامل لاستعلامات مباشرة
-     • حفظ آخر كود نشاط تلقائياً
-     • failed_attempts + قفل 15 دقيقة
-   ✅ v1.2.1:
-     • FIX — مزامنة GMS.Auth.profile قبل startApp()
-       (يحل مشكلة: TypeError: Cannot read properties of null reading 'full_name')
+   ✅ v2.0.0 (SECURITY HARDENING COMPLIANT):
+     • Step 1 يعتمد على RPC check_business_access (المصدر الأساسي)
+     • Fallback: RPC get_business_public (لو check_business_access فشل)
+     • لا Direct Select على businesses — يحترم RLS
+     • Step 2 يستخدم RPC consume_verification_code حصرياً
+     • لا Direct Update على business_verification_codes
+     • Step 4 يستخدم Direct Select على business_users (آمن)
+       → لأن business_users مش محمي بـ owner_sessions RLS
      • Auto-recovery من gms.tenant.session
-     • Null-safe profile access
+     • bcrypt dual-namespace (window.bcrypt / dcodeIO.bcrypt)
+
+   ⚠️  يَعتمد على RPCs مُعرَّفة في:
+     • check_business_access  → main.sql
+     • consume_verification_code → main.sql
+     • get_business_public → NEW SQL (يُطبَّق منفصلاً)
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -40,7 +43,6 @@
      bcryptjs v2.4.3 يصدّر نفسه كـ:
        • window.bcrypt          (بعض الإصدارات)
        • window.dcodeIO.bcrypt  (v2.4.3 الرسمي)
-     هذا الـ helper يوحّد الوصول لكلا الحالتين
      ═════════════════════════════════════════════════════════════════════ */
   function getBcrypt() {
     if (typeof window === 'undefined') return null;
@@ -61,7 +63,6 @@
     return b;
   }
 
-  // فحص أولي عند التحميل
   const initialBcrypt = getBcrypt();
   if (initialBcrypt) {
     console.log('[TenantAuth] ✅ bcrypt resolved',
@@ -86,6 +87,7 @@
     busy: false,
     initialized: false,
     bound: false,
+    _lastRpcError: null,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -220,6 +222,8 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §4 · STEP 1 — Business Code
+     ─────────────────────────────────────────────────────────────────────
+     ✅ v2.0.0: يعتمد كلياً على RPCs (لا Direct Select على businesses)
      ═════════════════════════════════════════════════════════════════════ */
   async function submitStep1() {
     const input = $('#login-biz-code');
@@ -249,81 +253,92 @@
       let data = null;
       let usedRpc = false;
 
-      // محاولة RPC
+      /* ─── 1 · RPC الأساسي: check_business_access ─── */
       try {
         const rpcResult = await client.rpc('check_business_access', { p_code: code });
+
         if (!rpcResult.error && rpcResult.data) {
           data = rpcResult.data;
           usedRpc = true;
+
+          /* تحويل الاستجابة لو الشكل قديم */
+          if (data && data.ok === undefined && data.business_id) {
+            data.ok = true;
+          }
         } else if (rpcResult.error) {
-          console.warn('[Wizard.step1] RPC failed:', rpcResult.error.message);
+          console.warn('[Wizard.step1] check_business_access failed:', rpcResult.error.message);
+          WizState._lastRpcError = rpcResult.error;
         }
       } catch (rpcErr) {
-        console.warn('[Wizard.step1] RPC exception:', rpcErr.message);
+        console.warn('[Wizard.step1] check_business_access exception:', rpcErr.message);
+        WizState._lastRpcError = rpcErr;
       }
 
-      // Fallback: استعلام مباشر
-      if (!usedRpc) {
-        console.log('[Wizard.step1] Falling back to direct query');
-        const { data: rows, error } = await client
-          .from('businesses')
-          .select('id, code, name, is_active, is_suspended, subscription_end, suspension_reason')
-          .eq('code', code)
-          .limit(1);
+      /* ─── 2 · Fallback RPC: get_business_public ─── */
+      if (!usedRpc || !data || (!data.ok && !data.business_id)) {
+        console.log('[Wizard.step1] Trying fallback RPC: get_business_public');
 
-        if (error) throw error;
-
-        if (!rows || !rows.length) {
-          return showError('login-step1-error', 'الكود غير صحيح — تأكد من الكود التعريفي');
-        }
-
-        const biz = rows[0];
-
-        if (!biz.is_active) {
-          return showError('login-step1-error', 'هذا النشاط غير مُفعَّل — تواصل مع الإدارة');
-        }
-        if (biz.is_suspended) {
-          return showError(
-            'login-step1-error',
-            'النشاط موقوف مؤقتاً' +
-            (biz.suspension_reason ? `: ${biz.suspension_reason}` : '')
-          );
-        }
-        if (biz.subscription_end) {
-          const end = new Date(biz.subscription_end);
-          if (end < new Date()) {
-            return showError(
-              'login-step1-error',
-              'انتهى اشتراك هذا النشاط — تواصل مع الإدارة للتجديد'
-            );
-          }
-        }
-
-        let needsActivation = false;
         try {
-          const { data: vcodes } = await client
-            .from('business_verification_codes')
-            .select('id, expires_at, used_at')
-            .eq('business_id', biz.id)
-            .eq('purpose', 'activation')
-            .is('used_at', null)
-            .gt('expires_at', new Date().toISOString())
-            .limit(1);
+          const pubResult = await client.rpc('get_business_public', { p_code: code });
 
-          needsActivation = Array.isArray(vcodes) && vcodes.length > 0;
-        } catch (_) {
-          needsActivation = true;
+          if (!pubResult.error && pubResult.data) {
+            const pubData = pubResult.data;
+
+            if (pubData.found && pubData.business) {
+              const b = pubData.business;
+
+              /* نُطبّع الشكل للاستجابة الموحّدة */
+              data = {
+                ok: b.is_active && !b.is_suspended,
+                business_id: b.id,
+                business_code: b.code,
+                business_name: b.name,
+                base_karat: b.base_karat,
+                currency: b.currency,
+                needs_activation: b.activated_at === null,
+                _source: 'get_business_public',
+              };
+
+              /* فحص الحالات الخاصة */
+              if (!b.is_active) {
+                data.ok = false;
+                data.reason = 'INACTIVE';
+              } else if (b.is_suspended) {
+                data.ok = false;
+                data.reason = 'SUSPENDED';
+                data.message = b.suspension_reason;
+              } else if (b.subscription_end) {
+                const end = new Date(b.subscription_end);
+                if (end < new Date()) {
+                  data.ok = false;
+                  data.reason = 'EXPIRED';
+                }
+              }
+            } else {
+              data = { ok: false, reason: 'NOT_FOUND' };
+            }
+            usedRpc = true;
+          } else if (pubResult.error) {
+            console.warn('[Wizard.step1] get_business_public failed:', pubResult.error.message);
+          }
+        } catch (fallbackErr) {
+          console.warn('[Wizard.step1] get_business_public exception:', fallbackErr.message);
         }
-
-        data = {
-          ok: true,
-          business_id: biz.id,
-          business_code: biz.code,
-          business_name: biz.name,
-          needs_activation: needsActivation,
-        };
       }
 
+      /* ─── 3 · لا RPC متاح → نعطي المستخدم رسالة واضحة ─── */
+      if (!usedRpc) {
+        const errMsg = WizState._lastRpcError?.message || '';
+        console.error('[Wizard.step1] Both RPCs unavailable:', errMsg);
+
+        return showError(
+          'login-step1-error',
+          'خدمة التحقق من النشاط غير متاحة. تأكد من تطبيق SQL الجديد ' +
+          '(check_business_access / get_business_public)'
+        );
+      }
+
+      /* ─── 4 · تقييم النتيجة ─── */
       if (!data || !data.ok) {
         const messages = {
           NOT_FOUND: 'الكود غير صحيح — تأكد من الكود التعريفي',
@@ -343,7 +358,13 @@
         localStorage.setItem('gms.tenant.last_code', code);
       } catch (_) {}
 
-      console.log('[Wizard] ✅ Business resolved:', data);
+      console.log('[Wizard] ✅ Business resolved:', {
+        id: data.business_id,
+        code: data.business_code,
+        name: data.business_name,
+        needs_activation: data.needs_activation,
+        source: data._source || 'rpc',
+      });
 
       renderBusinessPreview();
 
@@ -352,6 +373,7 @@
       } else {
         setStep(3);
       }
+
     } catch (e) {
       console.error('[Wizard.step1]', e);
       showError('login-step1-error', `خطأ: ${e.message}`);
@@ -362,6 +384,8 @@
 
   /* ═════════════════════════════════════════════════════════════════════
      §5 · STEP 2 — Verification Code
+     ─────────────────────────────────────────────────────────────────────
+     ✅ v2.0.0: RPC consume_verification_code حصرياً
      ═════════════════════════════════════════════════════════════════════ */
   async function submitStep2() {
     const input = $('#login-vcode');
@@ -386,7 +410,7 @@
       const bizId = WizState.business.business_id;
       let ok = false;
 
-      // RPC أولاً
+      /* RPC consume_verification_code */
       try {
         const { data, error } = await client.rpc('consume_verification_code', {
           p_business_id: bizId,
@@ -404,50 +428,17 @@
         console.warn('[Wizard.step2] RPC exception:', rpcErr.message);
       }
 
-      // Fallback: استعلام مباشر
       if (!ok) {
-        console.log('[Wizard.step2] Falling back to direct query');
-
-        const { data: vcodes, error } = await client
-          .from('business_verification_codes')
-          .select('id, code, expires_at, used_at, purpose')
-          .eq('business_id', bizId)
-          .eq('code', code)
-          .is('used_at', null)
-          .gt('expires_at', new Date().toISOString())
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (error) throw error;
-
-        if (!vcodes || !vcodes.length) {
-          return showError('login-step2-error', 'الرمز غير صحيح أو منتهي أو مستخدم مسبقاً');
-        }
-
-        const vcode = vcodes[0];
-
-        const { error: updateError } = await client
-          .from('business_verification_codes')
-          .update({
-            used_at: new Date().toISOString(),
-            used_by: null,
-          })
-          .eq('id', vcode.id);
-
-        if (updateError) {
-          console.warn('[Wizard.step2] Failed to mark code used:', updateError.message);
-        }
-
-        ok = true;
-      }
-
-      if (!ok) {
-        return showError('login-step2-error', 'الرمز غير صحيح أو منتهي أو مستخدم مسبقاً');
+        return showError(
+          'login-step2-error',
+          'الرمز غير صحيح أو منتهي أو مستخدم مسبقاً'
+        );
       }
 
       WizState.verificationPassed = true;
       console.log('[Wizard] ✅ Verification passed');
       setStep(3);
+
     } catch (e) {
       console.error('[Wizard.step2]', e);
       showError('login-step2-error', `خطأ: ${e.message}`);
@@ -475,7 +466,10 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §7 · STEP 4 — Credentials (bcrypt.compareSync محلياً)
+     §7 · STEP 4 — Credentials
+     ─────────────────────────────────────────────────────────────────────
+     ✅ v2.0.0: Direct Select على business_users مقبول
+       (business_users مش محمي بـ owner_sessions RLS)
      ═════════════════════════════════════════════════════════════════════ */
   async function submitStep4() {
     const userInput = $('#login-username');
@@ -497,7 +491,6 @@
       return showError('login-step4-error', 'انتهت الجلسة — ابدأ من جديد');
     }
 
-    // ✅ استخدام getBcrypt() بدل window.bcrypt
     const bcrypt = getBcrypt();
     if (!bcrypt) {
       return showError(
@@ -514,13 +507,13 @@
     try {
       const bizId = WizState.business.business_id;
 
-      // ✅ جلب المستخدم من قاعدة البيانات
+      /* جلب المستخدم من business_users (direct select — آمن) */
       const { data: users, error } = await client
         .from('business_users')
         .select(
           'id, business_id, username, password_hash, full_name, role, ' +
           'is_owner, is_active, phone, email, failed_attempts, locked_until, ' +
-          'rep_id, branch_id, last_login'
+          'rep_id, branch_id, last_login, created_at'
         )
         .eq('business_id', bizId)
         .eq('username', username)
@@ -534,17 +527,17 @@
 
       const user = users[0];
 
-      // فحص الحساب نشط
+      /* فحص الحساب نشط */
       if (user.is_active === false) {
         return showError('login-step4-error', 'هذا الحساب موقوف — تواصل مع الإدارة');
       }
 
-      // فحص القفل
+      /* فحص القفل */
       if (user.locked_until && new Date(user.locked_until) > new Date()) {
         return showError('login-step4-error', 'الحساب مقفل مؤقتاً — حاول بعد قليل');
       }
 
-      // فحص نوع الحساب
+      /* فحص نوع الحساب */
       const isOwner = Boolean(user.is_owner);
       if (WizState.userType === 'owner' && !isOwner) {
         return showError(
@@ -559,7 +552,7 @@
         );
       }
 
-      // ✅ مقارنة كلمة المرور
+      /* مقارنة كلمة المرور عبر bcrypt */
       let passwordOk = false;
       try {
         passwordOk = bcrypt.compareSync(password, user.password_hash);
@@ -569,7 +562,7 @@
       }
 
       if (!passwordOk) {
-        // زوّد failed_attempts
+        /* زيادة failed_attempts */
         const newAttempts = (user.failed_attempts || 0) + 1;
         const shouldLock = newAttempts >= 5;
 
@@ -597,7 +590,7 @@
         );
       }
 
-      // ✅ نجاح — نصفّر failed_attempts ونحدّث last_login
+      /* ✅ نجاح — نصفّر failed_attempts ونحدّث last_login */
       const now = new Date().toISOString();
 
       try {
@@ -615,13 +608,13 @@
 
       console.log('[Wizard] ✅ Auth success:', user.username);
 
-      // حذف password_hash من الكائن
+      /* حذف password_hash من الكائن */
       const safeUser = { ...user };
       delete safeUser.password_hash;
       delete safeUser.failed_attempts;
       delete safeUser.locked_until;
 
-      // حفظ الجلسة
+      /* حفظ الجلسة */
       const session = {
         session_type: 'business_user',
         user: safeUser,
@@ -648,13 +641,6 @@
 
       /* ═════════════════════════════════════════════════════════════════
          ✅ FIX v1.2.1: مزامنة GMS.Auth مع الـ Tenant Session
-         ─────────────────────────────────────────────────────────────────
-         السبب: GMS.Boot.startApp() بيقرأ GMS.Auth.profile، ولو مش
-         موجود بيرمي: TypeError: Cannot read properties of null
-         (reading 'full_name').
-
-         الحل: نبني profile متوافق مع 06-auth.js ونحقنه في AuthState
-         قبل استدعاء startApp() مباشرة.
          ═════════════════════════════════════════════════════════════════ */
       if (GMS.Auth && GMS.AuthState) {
         try {
@@ -674,7 +660,7 @@
             _source: 'tenant.wizard',
           };
 
-          // احقن في AuthState مباشرة
+          /* حقن في AuthState مباشرة */
           GMS.AuthState.user = {
             id: authProfile.id,
             email: authProfile.email || authProfile.username,
@@ -683,7 +669,7 @@
           GMS.AuthState.signedIn = true;
           GMS.AuthState.sessionStartedAt = Date.now();
 
-          // احسب الصلاحيات
+          /* حساب الصلاحيات */
           try {
             if (typeof GMS.Auth._computePermissions === 'function') {
               GMS.Auth._computePermissions();
@@ -698,7 +684,7 @@
             console.warn('[Wizard.step4] Permissions compute failed:', permErr);
           }
 
-          // نحفظ gms.session كمان (مزامنة كاملة مع 06-auth.js)
+          /* حفظ gms.session */
           try {
             localStorage.setItem(
               (GMS.LS_KEYS && GMS.LS_KEYS.SESSION) || 'gms.session',
@@ -711,7 +697,7 @@
             );
           } catch (_) {}
 
-          // نضيف الموظف في employees لو مش موجود
+          /* إضافة الموظف في employees */
           try {
             const exists = GMS.AuthState.employees.find(e => e.id === authProfile.id);
             if (!exists) {
@@ -742,12 +728,12 @@
         );
       }
 
-      // تهيئة DB Wrapper
+      /* تهيئة DB Wrapper */
       if (GMS.DB && typeof GMS.DB.init === 'function') {
         GMS.DB.init(client, bizId);
       }
 
-      // تغيير الشاشة
+      /* تغيير الشاشة */
       const loginScreen = document.getElementById('login-screen');
       if (loginScreen) loginScreen.style.display = 'none';
 
@@ -761,7 +747,7 @@
         `${businessInfo.name} · ${isOwner ? 'صاحب المحل' : 'موظف'}`
       );
 
-      // بدء التطبيق
+      /* بدء التطبيق */
       if (GMS.Boot && typeof GMS.Boot.startApp === 'function') {
         try {
           await GMS.Boot.startApp();
@@ -771,7 +757,7 @@
         }
       }
 
-      // Audit log
+      /* Audit log */
       if (GMS.Audit && typeof GMS.Audit.log === 'function') {
         try {
           await GMS.Audit.log(
@@ -1044,7 +1030,7 @@
     WizState.initialized = true;
 
     console.log(
-      '%c[TenantAuth] ✅ Login Wizard initialized',
+      '%c[TenantAuth] ✅ Login Wizard v2.0.0 initialized',
       'color:#0f7a43;font-weight:800;font-size:12px;'
     );
   }
@@ -1144,18 +1130,28 @@
      §15 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c🚪 TenantAuth Wizard v1.2.1 loaded · Auth sync before startApp()',
+    '%c🚪 TenantAuth Wizard v2.0.0 loaded · RPC-Only (Hardening Compliant)',
     'color:#1c4fd8;font-weight:900;font-size:12px;padding:2px 6px;' +
     'background:#e9efff;border-radius:4px;'
   );
 
   console.log(
-    '%c🔐 Step 1 (code) → Step 2 (vcode) → Step 3 (type) → Step 4 (login)',
+    '%c🔐 Step 1 → RPC check_business_access + fallback get_business_public',
     'color:#6b7a95;font-weight:700;font-size:11px;'
   );
 
   console.log(
-    '%c🆕 v1.2.1: Syncs GMS.Auth.profile + computes permissions before startApp()',
+    '%c🔐 Step 2 → RPC consume_verification_code (لا direct update)',
+    'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c🔐 Step 4 → Direct select على business_users (آمن)',
+    'color:#6b7a95;font-weight:700;font-size:11px;'
+  );
+
+  console.log(
+    '%c✅ Syncs GMS.Auth.profile + permissions before startApp()',
     'color:#0f7a43;font-weight:900;font-size:11px;'
   );
 })();
