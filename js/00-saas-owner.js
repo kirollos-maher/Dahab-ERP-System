@@ -1,11 +1,23 @@
 /* ═══════════════════════════════════════════════════════════════════════
    GOLD MS ERP — js/00-saas-owner.js
-   Owner Panel — المنطق الكامل لمالك النظام (SaaS Owner)
+   Owner Panel — المنطق الكامل لمالك النظام (SaaS Owner) — v2.0.0
    ─────────────────────────────────────────────────────────────────────
    يعمل هذا الملف فقط داخل owner.html ولا يُحمَّل في index.html
 
+   ✅ v2.0.0 (SECURITY HARDENING COMPLIANT):
+     • تسجيل دخول عبر RPC authenticate_saas_owner (bcrypt على السيرفر)
+     • Session Token في localStorage → يُرسَل مع كل طلب عبر x-owner-token
+     • كل CRUD بيمر عبر RLS owner_sessions — بدون token صالح = رفض
+     • logout عبر RPC logout_saas_owner
+     • changePassword عبر RPC change_owner_password
+     • verifyToken عند الفتح + كل 5 دقائق
+     • handleAuthError موحّد — logout تلقائي لو الـ token انتهى
+     • لا Fallback مباشر — الأمان أولاً
+     • bcrypt محلي فقط للـ UX (validation قبل إرسال الطلب)، وليس للتحقق
+     • إزالة تخزين password_hash في المتصفح
+
    الوظائف:
-     • تسجيل دخول المالك + حفظ الجلسة
+     • تسجيل دخول المالك + حفظ الـ session token
      • لوحة تحكم بإحصائيات كل الأنشطة
      • إدارة الأنشطة (Create / Edit / Delete)
      • إدارة المستخدمين لكل نشاط
@@ -15,7 +27,8 @@
      • سجل الحركات (Audit Log)
      • الإعدادات العامة
      • إعدادات Supabase قبل تسجيل الدخول (Chicken-and-egg fix)
-     • 🆕 bcrypt resolver — يدعم أكثر من طريقة تصدير للمكتبة
+     • bcrypt resolver — يدعم أكثر من طريقة تصدير للمكتبة
+     • token auto-injection + auth error handling
    ═══════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -24,9 +37,8 @@
   /* ═════════════════════════════════════════════════════════════════════
      §0 · 🔧 BCRYPT RESOLVER
      ─────────────────────────────────────────────────────────────────────
-     مكتبة bcryptjs@2.x تصدّر نفسها كـ window.dcodeIO.bcrypt
-     بينما بعض الإصدارات تصدّرها كـ window.bcrypt مباشرة
-     هذا الـ helper يوحّد الوصول لكلا الحالتين
+     ملاحظة: bcrypt الآن يُستخدم فقط للـ client-side validation قبل
+     إرسال الطلب للسيرفر. التحقق الحقيقي بيحصل على السيرفر عبر crypt().
      ═════════════════════════════════════════════════════════════════════ */
   function getBcrypt() {
     if (typeof window === 'undefined') return null;
@@ -50,8 +62,11 @@
   /* ═════════════════════════════════════════════════════════════════════
      §1 · CONSTANTS
      ═════════════════════════════════════════════════════════════════════ */
-  const SESSION_KEY = 'gms.saas.owner.session';
-  const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 ساعات
+  const SESSION_KEY       = 'gms.saas.owner.session';
+  const TOKEN_KEY         = 'gms.saas.owner.token';
+  const TOKEN_EXPIRES_KEY = 'gms.saas.owner.tokenExpires';
+  const SESSION_TTL_MS    = 8 * 60 * 60 * 1000;   /* 8 ساعات */
+  const TOKEN_VERIFY_MS   = 5 * 60 * 1000;        /* كل 5 دقائق */
 
   const SUBSCRIPTION_PLANS = Object.freeze({
     monthly:   { days: 30,  label: 'شهري',     icon: 'calendar' },
@@ -82,6 +97,8 @@
      ═════════════════════════════════════════════════════════════════════ */
   const State = {
     owner: null,           // { id, username, full_name }
+    token: null,           // session token
+    tokenExpiresAt: null,
     businesses: [],
     payments: [],
     auditLogs: [],
@@ -90,6 +107,8 @@
     supabaseClient: null,
     initialized: false,
     loading: false,
+    _verifyTimer: null,
+    _authErrorShown: false,
   };
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -207,6 +226,10 @@
   function pct(v, total) {
     if (!total) return 0;
     return Math.round((v / total) * 100);
+  }
+
+  function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -572,7 +595,47 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §8 · SUPABASE CLIENT
+     §8 · TOKEN STORAGE
+     ═════════════════════════════════════════════════════════════════════ */
+  const TokenStore = {
+    get() {
+      try { return localStorage.getItem(TOKEN_KEY) || null; }
+      catch (_) { return null; }
+    },
+
+    set(token, expiresAt) {
+      try {
+        localStorage.setItem(TOKEN_KEY, String(token));
+        localStorage.setItem(TOKEN_EXPIRES_KEY, String(expiresAt || ''));
+        State.token = token;
+        State.tokenExpiresAt = expiresAt || null;
+        return true;
+      } catch (_) { return false; }
+    },
+
+    clear() {
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(TOKEN_EXPIRES_KEY);
+      } catch (_) {}
+      State.token = null;
+      State.tokenExpiresAt = null;
+    },
+
+    isExpired() {
+      const exp = State.tokenExpiresAt || (() => {
+        try { return localStorage.getItem(TOKEN_EXPIRES_KEY); }
+        catch (_) { return null; }
+      })();
+      if (!exp) return true;
+      const t = new Date(exp).getTime();
+      if (!isFinite(t)) return true;
+      return Date.now() >= t;
+    },
+  };
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §9 · SUPABASE CLIENT — Token-Aware
      ═════════════════════════════════════════════════════════════════════ */
   function getSb() {
     if (State.supabaseClient) return State.supabaseClient;
@@ -594,6 +657,14 @@
       State.supabaseClient = window.supabase.createClient(url, key, {
         auth: { persistSession: false, autoRefreshToken: false },
         realtime: { params: { eventsPerSecond: 10 } },
+        global: {
+          headers: {
+            /* ✅ يُرسَل تلقائياً مع كل طلب — RLS يقرأه في is_valid_owner_session() */
+            get 'x-owner-token'() {
+              return State.token || TokenStore.get() || '';
+            },
+          },
+        },
       });
       return State.supabaseClient;
     } catch (e) {
@@ -603,7 +674,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §9 · CODE GENERATORS
+     §10 · CODE GENERATORS
      ═════════════════════════════════════════════════════════════════════ */
   function genCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -631,54 +702,118 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §10 · AUTH
+     §11 · AUTH ERROR HANDLER
      ═════════════════════════════════════════════════════════════════════ */
+  function handleAuthError(error) {
+    if (!error) return false;
+
+    const msg = String(error.message || error.error || '').toLowerCase();
+    const code = String(error.code || '').toLowerCase();
+
+    const isAuthIssue =
+      msg.includes('not_authenticated') ||
+      msg.includes('not authenticated') ||
+      msg.includes('session_expired') ||
+      msg.includes('invalid_token') ||
+      msg.includes('token expired') ||
+      msg.includes('unauthorized') ||
+      msg.includes('jwt') ||
+      code === 'pgrst301' ||
+      code === '42501' ||
+      code === '28000';
+
+    if (isAuthIssue) {
+      if (!State._authErrorShown) {
+        State._authErrorShown = true;
+        Toast.err('انتهت جلسة المالك', 'سيتم تسجيل الخروج تلقائياً…');
+      }
+
+      setTimeout(() => {
+        logoutOwner({ silent: true });
+      }, 1200);
+      return true;
+    }
+
+    return false;
+  }
+
+  function wrapQuery(promise) {
+    return promise.then(res => {
+      if (res && res.error) handleAuthError(res.error);
+      return res;
+    }).catch(err => {
+      handleAuthError(err);
+      throw err;
+    });
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §12 · AUTH — RPC-Based
+     ═════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * تسجيل دخول المالك — يعتمد على RPC authenticate_saas_owner
+   * ملاحظة: كلمة السر تُرسل RAW (نص عادي) عبر HTTPS، والتحقق يتم على
+   * السيرفر عبر crypt(). bcrypt يُستخدم فقط للـ validation الأولي.
+   */
   async function loginOwner(username, password) {
     const client = getSb();
     if (!client) throw new Error('لا يوجد اتصال بـ Supabase — أضف الإعدادات أولاً');
 
-    /* ✅ التحقق من وجود bcrypt قبل أي شيء */
-    const bcrypt = requireBcrypt();
-
-    const { data: rows, error } = await client
-      .from('saas_owners')
-      .select('id, username, full_name, password_hash, is_active, locked_until, failed_attempts')
-      .eq('username', String(username).trim())
-      .limit(1);
-
-    if (error) throw error;
-    if (!rows || !rows.length) throw new Error('بيانات الدخول غير صحيحة');
-
-    const owner = rows[0];
-    if (!owner.is_active) throw new Error('الحساب موقوف');
-
-    if (owner.locked_until && new Date(owner.locked_until) > new Date()) {
-      throw new Error('الحساب مقفل مؤقتاً — حاول بعد قليل');
+    if (!username || !password) {
+      throw new Error('أدخل Username و Password');
     }
 
-    const ok = bcrypt.compareSync(password, owner.password_hash);
-
-    if (!ok) {
-      await client
-        .from('saas_owners')
-        .update({
-          failed_attempts: (owner.failed_attempts || 0) + 1,
-          locked_until: (owner.failed_attempts || 0) + 1 >= 5
-            ? new Date(Date.now() + 15 * 60 * 1000).toISOString()
-            : null,
-        })
-        .eq('id', owner.id);
-      throw new Error('بيانات الدخول غير صحيحة');
+    /* التحقق من وجود bcrypt (للـ UX فقط — تحقق أولي) */
+    try { requireBcrypt(); }
+    catch (e) {
+      console.warn('[Owner.login] bcrypt unavailable — proceeding with server-side verify');
     }
 
-    await client
-      .from('saas_owners')
-      .update({
-        last_login: new Date().toISOString(),
-        failed_attempts: 0,
-        locked_until: null,
-      })
-      .eq('id', owner.id);
+    /* جمع معلومات الجهاز */
+    const ip = null;   /* Supabase يعرف IP تلقائياً */
+    const userAgent = (typeof navigator !== 'undefined' && navigator.userAgent)
+      ? navigator.userAgent.slice(0, 500)
+      : null;
+
+    console.log('[Owner.login] Calling RPC authenticate_saas_owner…');
+
+    /* ✅ RPC — التحقق + إنشاء session token */
+    const { data, error } = await client.rpc('authenticate_saas_owner', {
+      p_username: String(username).trim(),
+      p_password: String(password),
+      p_ip: ip,
+      p_user_agent: userAgent,
+    });
+
+    if (error) {
+      console.error('[Owner.login] RPC error:', error);
+      throw new Error(error.message || 'فشل الاتصال بالخادم');
+    }
+
+    if (!data || !data.ok) {
+      const errorCode = data?.error || 'UNKNOWN';
+      const messages = {
+        USER_NOT_FOUND:     'اسم المستخدم غير موجود',
+        INVALID_PASSWORD:   'كلمة المرور غير صحيحة',
+        INACTIVE:           'الحساب موقوف',
+        LOCKED:             `الحساب مقفل مؤقتاً — حاول لاحقاً`,
+        RATE_LIMITED:       'محاولات كثيرة جداً — انتظر دقيقة',
+        UNKNOWN:            'فشل تسجيل الدخول',
+      };
+      throw new Error(messages[errorCode] || messages.UNKNOWN);
+    }
+
+    /* حفظ الـ session token */
+    const token = data.session_token;
+    const expiresAt = data.expires_at;
+    const owner = data.owner;
+
+    if (!token) {
+      throw new Error('الخادم لم يُرجع session token — راجع إعدادات Supabase');
+    }
+
+    TokenStore.set(token, expiresAt);
 
     const session = {
       session_type: 'saas_owner',
@@ -688,7 +823,7 @@
         full_name: owner.full_name,
       },
       startedAt: Date.now(),
-      expiresAt: Date.now() + SESSION_TTL_MS,
+      expiresAt: expiresAt ? new Date(expiresAt).getTime() : Date.now() + SESSION_TTL_MS,
     };
 
     try {
@@ -696,23 +831,46 @@
     } catch (_) {}
 
     State.owner = session.owner;
+    State._authErrorShown = false;
+
+    console.log('[Owner.login] ✅ Login successful:', owner.username);
     return session;
   }
 
+  /**
+   * استرجاع جلسة المالك من localStorage
+   */
   function restoreOwnerSession() {
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return null;
+      const rawSession = localStorage.getItem(SESSION_KEY);
+      const token = TokenStore.get();
 
-      const s = JSON.parse(raw);
+      if (!rawSession || !token) return null;
+
+      const s = JSON.parse(rawSession);
       if (!s || !s.owner) return null;
 
+      /* فحص انتهاء الـ session المحلية */
       if (s.expiresAt && Date.now() > s.expiresAt) {
-        localStorage.removeItem(SESSION_KEY);
+        console.warn('[Owner.restore] Local session expired');
+        clearOwnerSession();
+        return null;
+      }
+
+      /* فحص انتهاء الـ token */
+      if (TokenStore.isExpired()) {
+        console.warn('[Owner.restore] Token expired');
+        clearOwnerSession();
         return null;
       }
 
       State.owner = s.owner;
+      State.token = token;
+      State.tokenExpiresAt = (() => {
+        try { return localStorage.getItem(TOKEN_EXPIRES_KEY); }
+        catch (_) { return null; }
+      })();
+
       return s;
     } catch (e) {
       console.warn('[Owner.restore]', e);
@@ -720,23 +878,162 @@
     }
   }
 
-  function logoutOwner() {
+  /**
+   * التحقق من صلاحية الـ token عبر السيرفر
+   */
+  async function verifyToken() {
+    const client = getSb();
+    if (!client) return false;
+
+    const token = TokenStore.get();
+    if (!token) return false;
+
+    try {
+      /* نستخدم saas_owners table — RLS هيرفض لو الـ token غلط */
+      const { data, error } = await client
+        .from('saas_owners')
+        .select('id, username, full_name, is_active')
+        .limit(1);
+
+      if (error) {
+        console.warn('[Owner.verifyToken] RLS rejected:', error.message);
+        if (handleAuthError(error)) return false;
+        return false;
+      }
+
+      if (!data || !data.length) {
+        console.warn('[Owner.verifyToken] No owner returned — token invalid');
+        return false;
+      }
+
+      /* تحديث بيانات المالك */
+      State.owner = {
+        id: data[0].id,
+        username: data[0].username,
+        full_name: data[0].full_name,
+      };
+
+      return true;
+    } catch (e) {
+      console.warn('[Owner.verifyToken]', e);
+      return false;
+    }
+  }
+
+  function startTokenVerifyLoop() {
+    stopTokenVerifyLoop();
+    State._verifyTimer = setInterval(async () => {
+      if (document.hidden) return;
+      if (!State.owner) return;
+
+      const ok = await verifyToken();
+      if (!ok) {
+        clearOwnerSession();
+        Toast.err('انتهت الجلسة', 'جارٍ العودة لشاشة الدخول…');
+        setTimeout(() => location.reload(), 1500);
+      }
+    }, TOKEN_VERIFY_MS);
+  }
+
+  function stopTokenVerifyLoop() {
+    if (State._verifyTimer) {
+      clearInterval(State._verifyTimer);
+      State._verifyTimer = null;
+    }
+  }
+
+  function clearOwnerSession() {
     try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
+    TokenStore.clear();
     State.owner = null;
-    location.reload();
+  }
+
+  /**
+   * تسجيل خروج المالك عبر RPC logout_saas_owner
+   */
+  async function logoutOwner(opts = {}) {
+    const { silent = false } = opts;
+
+    stopTokenVerifyLoop();
+
+    try {
+      const client = getSb();
+      if (client && State.token) {
+        await client.rpc('logout_saas_owner');
+        console.log('[Owner.logout] ✅ Server session revoked');
+      }
+    } catch (e) {
+      console.warn('[Owner.logout] RPC failed (continuing):', e.message);
+    }
+
+    clearOwnerSession();
+
+    if (!silent) {
+      try { location.reload(); }
+      catch (_) { location.href = location.pathname; }
+    } else {
+      setTimeout(() => {
+        try { location.reload(); }
+        catch (_) { location.href = location.pathname; }
+      }, 300);
+    }
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §11 · DATA LOADERS
+     §13 · CHANGE PASSWORD — RPC-Based
      ═════════════════════════════════════════════════════════════════════ */
+  async function changeOwnerPassword(oldPassword, newPassword) {
+    const client = getSb();
+    if (!client) throw new Error('لا يوجد اتصال');
+
+    if (!oldPassword || !newPassword) {
+      throw new Error('أدخل كلمة المرور الحالية والجديدة');
+    }
+
+    if (newPassword.length < 8) {
+      throw new Error('كلمة المرور الجديدة قصيرة (8 أحرف على الأقل)');
+    }
+
+    console.log('[Owner.changePassword] Calling RPC…');
+
+    const { data, error } = await client.rpc('change_owner_password', {
+      p_old_password: String(oldPassword),
+      p_new_password: String(newPassword),
+    });
+
+    if (error) {
+      handleAuthError(error);
+      throw new Error(error.message || 'فشل تغيير كلمة المرور');
+    }
+
+    if (!data || !data.ok) {
+      const errorCode = data?.error || 'UNKNOWN';
+      const messages = {
+        NOT_AUTHENTICATED:   'الجلسة غير صالحة — أعد تسجيل الدخول',
+        OWNER_NOT_FOUND:     'المالك غير موجود',
+        INVALID_OLD_PASSWORD:'كلمة المرور الحالية غير صحيحة',
+        WEAK_PASSWORD:       data?.message || 'كلمة المرور الجديدة ضعيفة',
+        UNKNOWN:             'فشل تغيير كلمة المرور',
+      };
+      throw new Error(messages[errorCode] || messages.UNKNOWN);
+    }
+
+    console.log('[Owner.changePassword] ✅ Password changed');
+    return true;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     §14 · DATA LOADERS — كلها عبر RLS (بتعتمد على x-owner-token)
+     ═════════════════════════════════════════════════════════════════════ */
+
   async function loadBusinesses() {
     const client = getSb();
     if (!client) return [];
 
-    const { data, error } = await client
-      .from('businesses')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data, error } = await wrapQuery(
+      client.from('businesses').select('*')
+        .order('created_at', { ascending: false })
+    );
 
     if (error) {
       console.error('[Owner.loadBusinesses]', error);
@@ -751,11 +1048,11 @@
     const client = getSb();
     if (!client) return [];
 
-    const { data, error } = await client
-      .from('subscription_payments')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(500);
+    const { data, error } = await wrapQuery(
+      client.from('subscription_payments').select('*')
+        .order('created_at', { ascending: false })
+        .limit(500)
+    );
 
     if (error) {
       console.error('[Owner.loadPayments]', error);
@@ -770,11 +1067,12 @@
     const client = getSb();
     if (!client) return [];
 
-    const { data, error } = await client
-      .from('business_users')
-      .select('id, username, full_name, role, is_owner, is_active, last_login, phone, email, created_at')
-      .eq('business_id', businessId)
-      .order('created_at', { ascending: false });
+    const { data, error } = await wrapQuery(
+      client.from('business_users')
+        .select('id, username, full_name, role, is_owner, is_active, last_login, phone, email, created_at')
+        .eq('business_id', businessId)
+        .order('created_at', { ascending: false })
+    );
 
     if (error) {
       console.error('[Owner.loadBusinessUsers]', error);
@@ -788,11 +1086,11 @@
     const client = getSb();
     if (!client) return [];
 
-    const { data, error } = await client
-      .from('audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit || 200);
+    const { data, error } = await wrapQuery(
+      client.from('audit_logs').select('*')
+        .order('created_at', { ascending: false })
+        .limit(limit || 200)
+    );
 
     if (error) {
       console.error('[Owner.loadAuditLogs]', error);
@@ -804,7 +1102,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §12 · RENDER HELPERS
+     §15 · RENDER HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   function getBusinessStatus(b) {
     if (b.is_suspended) return 'SUSPENDED';
@@ -843,7 +1141,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §13 · RENDER — DASHBOARD
+     §16 · RENDER — DASHBOARD
      ═════════════════════════════════════════════════════════════════════ */
   function renderDashboard() {
     const now = new Date();
@@ -997,7 +1295,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §14 · RENDER — BUSINESSES
+     §17 · RENDER — BUSINESSES
      ═════════════════════════════════════════════════════════════════════ */
   function renderBusinessRow(b) {
     const status = getBusinessStatus(b);
@@ -1136,7 +1434,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §15 · RENDER — PAYMENTS
+     §18 · RENDER — PAYMENTS
      ═════════════════════════════════════════════════════════════════════ */
   function renderPayments() {
     const total = State.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
@@ -1222,7 +1520,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §16 · RENDER — AUDIT
+     §19 · RENDER — AUDIT
      ═════════════════════════════════════════════════════════════════════ */
   function renderAudit() {
     return `
@@ -1296,7 +1594,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §17 · RENDER — SETTINGS
+     §20 · RENDER — SETTINGS
      ═════════════════════════════════════════════════════════════════════ */
   function renderSettings() {
     const url = SBConfig.url;
@@ -1405,6 +1703,41 @@
 
       <div class="card">
         <div class="card-head">
+          <h3><i data-lucide="shield-check"></i> حالة الجلسة الأمنية</h3>
+        </div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
+            <div>
+              <div style="font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase">
+                نوع الجلسة
+              </div>
+              <div class="mono" style="font-size:14px;font-weight:900;margin-top:4px;
+                          color:var(--success)">
+                🛡️ Owner Session (Token)
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase">
+                تاريخ انتهاء الـ Token
+              </div>
+              <div class="mono" style="font-size:14px;font-weight:900;margin-top:4px">
+                ${State.tokenExpiresAt ? dateTimeAr(State.tokenExpiresAt) : '—'}
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase">
+                آخر تحقق
+              </div>
+              <div class="mono" style="font-size:14px;font-weight:900;margin-top:4px">
+                ${State._lastVerify ? timeAgo(State._lastVerify) : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
           <h3><i data-lucide="info"></i> معلومات النظام</h3>
         </div>
         <div class="card-body">
@@ -1430,7 +1763,7 @@
                 إصدار لوحة المالك
               </div>
               <div class="mono" style="font-size:20px;font-weight:900;margin-top:4px">
-                v1.1.1
+                v2.0.0
               </div>
             </div>
           </div>
@@ -1440,7 +1773,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §18 · RENDER — MAIN
+     §21 · RENDER — MAIN
      ═════════════════════════════════════════════════════════════════════ */
   function renderCurrentTab() {
     const host = document.getElementById('owner-content');
@@ -1469,7 +1802,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §19 · COPY HELPER
+     §22 · COPY HELPER
      ═════════════════════════════════════════════════════════════════════ */
   async function copyText(text) {
     try {
@@ -1494,7 +1827,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §20 · MODAL — CREATE BUSINESS
+     §23 · MODAL — CREATE BUSINESS
      ═════════════════════════════════════════════════════════════════════ */
   function openCreateBusiness() {
     const defaultCode = genCode();
@@ -1721,56 +2054,69 @@
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال بـ Supabase');
 
+            /* bcrypt hash للـ password — يُخزَّن في business_users.password_hash */
             const bcrypt = requireBcrypt();
+            const passwordHash = bcrypt.hashSync(owner.password, 10);
 
-            const { data: biz, error: bizErr } = await client
-              .from('businesses')
-              .insert(payload)
-              .select('id, code, name')
-              .single();
+            /* 1 · إنشاء النشاط */
+            const { data: biz, error: bizErr } = await wrapQuery(
+              client.from('businesses')
+                .insert(payload)
+                .select('id, code, name')
+                .single()
+            );
 
             if (bizErr) {
               if (bizErr.code === '23505') {
                 throw new Error('الكود التعريفي مستخدم مسبقاً — حاول مرة أخرى');
               }
+              if (handleAuthError(bizErr)) return;
               throw bizErr;
             }
 
-            const passwordHash = bcrypt.hashSync(owner.password, 10);
-
-            const { error: userErr } = await client
-              .from('business_users')
-              .insert({
-                business_id: biz.id,
-                username: owner.username,
-                password_hash: passwordHash,
-                full_name: owner.full_name,
-                phone: owner.phone || null,
-                role: 'SUPER_ADMIN',
-                is_owner: true,
-                created_by: State.owner?.id || null,
-              });
+            /* 2 · إنشاء مستخدم صاحب المحل */
+            const { error: userErr } = await wrapQuery(
+              client.from('business_users')
+                .insert({
+                  business_id: biz.id,
+                  username: owner.username,
+                  password_hash: passwordHash,
+                  full_name: owner.full_name,
+                  phone: owner.phone || null,
+                  role: 'SUPER_ADMIN',
+                  is_owner: true,
+                  created_by: State.owner?.id || null,
+                })
+            );
 
             if (userErr) {
+              /* تراجع — حذف النشاط */
               await client.from('businesses').delete().eq('id', biz.id);
+              if (handleAuthError(userErr)) return;
               throw userErr;
             }
 
+            /* 3 · رمز التحقق */
             const vcode = genVCode();
             const expiresAt = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
 
-            const { error: vErr } = await client
-              .from('business_verification_codes')
-              .insert({
-                business_id: biz.id,
-                code: vcode,
-                purpose: 'activation',
-                expires_at: expiresAt,
-                created_by: State.owner?.id || null,
-              });
+            const { error: vErr } = await wrapQuery(
+              client.from('business_verification_codes')
+                .insert({
+                  business_id: biz.id,
+                  code: vcode,
+                  purpose: 'activation',
+                  expires_at: expiresAt,
+                  created_by: State.owner?.id || null,
+                })
+            );
 
-            if (vErr) throw vErr;
+            if (vErr) {
+              if (handleAuthError(vErr)) return;
+              throw vErr;
+            }
 
+            /* 4 · تسجيل الدفعة (اختياري) */
             if (amount > 0) {
               try {
                 await client.from('subscription_payments').insert({
@@ -1806,7 +2152,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §21 · MODAL — SUCCESS CODES
+     §24 · MODAL — SUCCESS CODES
      ═════════════════════════════════════════════════════════════════════ */
   function showSuccessCodes(biz, vcode, owner) {
     Modal.show({
@@ -1944,7 +2290,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §22 · MODAL — EDIT BUSINESS
+     §25 · MODAL — EDIT BUSINESS
      ═════════════════════════════════════════════════════════════════════ */
   function openEditBusiness(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2060,12 +2406,16 @@
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال');
 
-            const { error } = await client
-              .from('businesses')
-              .update(updates)
-              .eq('id', bizId);
+            const { error } = await wrapQuery(
+              client.from('businesses')
+                .update(updates)
+                .eq('id', bizId)
+            );
 
-            if (error) throw error;
+            if (error) {
+              if (handleAuthError(error)) return;
+              throw error;
+            }
 
             close();
             Toast.ok('تم حفظ التعديلات');
@@ -2085,7 +2435,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §23 · MODAL — USERS
+     §26 · MODAL — USERS
      ═════════════════════════════════════════════════════════════════════ */
   async function openUsers(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2227,7 +2577,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §24 · MODAL — ADD USER
+     §27 · MODAL — ADD USER
      ═════════════════════════════════════════════════════════════════════ */
   function openAddUser(bizId, onSuccess) {
     Modal.show({
@@ -2336,14 +2686,15 @@
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال');
 
-            const { error } = await client
-              .from('business_users')
-              .insert(payload);
+            const { error } = await wrapQuery(
+              client.from('business_users').insert(payload)
+            );
 
             if (error) {
               if (error.code === '23505') {
                 throw new Error('Username مستخدم مسبقاً في هذا النشاط');
               }
+              if (handleAuthError(error)) return;
               throw error;
             }
 
@@ -2365,7 +2716,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §25 · USER ACTIONS
+     §28 · USER ACTIONS
      ═════════════════════════════════════════════════════════════════════ */
   async function deleteUser(userId, bizId) {
     const ok = confirm('⚠️ سيتم حذف المستخدم نهائياً.\nهل أنت متأكد؟');
@@ -2375,12 +2726,14 @@
       const client = getSb();
       if (!client) throw new Error('لا يوجد اتصال');
 
-      const { error } = await client
-        .from('business_users')
-        .delete()
-        .eq('id', userId);
+      const { error } = await wrapQuery(
+        client.from('business_users').delete().eq('id', userId)
+      );
 
-      if (error) throw error;
+      if (error) {
+        if (handleAuthError(error)) return;
+        throw error;
+      }
 
       Toast.ok('تم حذف المستخدم');
       Modal.closeAll();
@@ -2397,12 +2750,16 @@
       const client = getSb();
       if (!client) throw new Error('لا يوجد اتصال');
 
-      const { error } = await client
-        .from('business_users')
-        .update({ is_active: activate })
-        .eq('id', userId);
+      const { error } = await wrapQuery(
+        client.from('business_users')
+          .update({ is_active: activate })
+          .eq('id', userId)
+      );
 
-      if (error) throw error;
+      if (error) {
+        if (handleAuthError(error)) return;
+        throw error;
+      }
 
       Toast.ok(activate ? 'تم تنشيط المستخدم' : 'تم إيقاف المستخدم');
       Modal.closeAll();
@@ -2465,16 +2822,21 @@
           try {
             const bcrypt = requireBcrypt();
             const client = getSb();
-            const { error } = await client
-              .from('business_users')
-              .update({
-                password_hash: bcrypt.hashSync(pass, 10),
-                failed_attempts: 0,
-                locked_until: null,
-              })
-              .eq('id', userId);
 
-            if (error) throw error;
+            const { error } = await wrapQuery(
+              client.from('business_users')
+                .update({
+                  password_hash: bcrypt.hashSync(pass, 10),
+                  failed_attempts: 0,
+                  locked_until: null,
+                })
+                .eq('id', userId)
+            );
+
+            if (error) {
+              if (handleAuthError(error)) return;
+              throw error;
+            }
 
             close();
             Toast.ok('تم تحديث كلمة المرور', `الجديدة: ${pass}`);
@@ -2493,7 +2855,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §26 · MODAL — VERIFICATION CODE
+     §29 · MODAL — VERIFICATION CODE
      ═════════════════════════════════════════════════════════════════════ */
   function openVerificationCode(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2587,17 +2949,21 @@
 
             const expiresAt = new Date(Date.now() + duration * 3600 * 1000).toISOString();
 
-            const { error } = await client
-              .from('business_verification_codes')
-              .insert({
-                business_id: bizId,
-                code: newCode,
-                purpose: purpose,
-                expires_at: expiresAt,
-                created_by: State.owner?.id || null,
-              });
+            const { error } = await wrapQuery(
+              client.from('business_verification_codes')
+                .insert({
+                  business_id: bizId,
+                  code: newCode,
+                  purpose: purpose,
+                  expires_at: expiresAt,
+                  created_by: State.owner?.id || null,
+                })
+            );
 
-            if (error) throw error;
+            if (error) {
+              if (handleAuthError(error)) return;
+              throw error;
+            }
 
             close();
             Toast.ok('✅ تم توليد الرمز', `صالح لمدة ${duration} ساعة`);
@@ -2616,7 +2982,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §27 · MODAL — SUBSCRIPTION
+     §30 · MODAL — SUBSCRIPTION
      ═════════════════════════════════════════════════════════════════════ */
   function openSubscription(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2806,33 +3172,41 @@
             const baseDate = currentEnd > new Date() ? currentEnd : new Date();
             const newEnd = new Date(baseDate.getTime() + days * 86400000);
 
-            const { error: bizErr } = await client
-              .from('businesses')
-              .update({
-                subscription_end: newEnd.toISOString(),
-                subscription_start: biz.subscription_start,
-                is_suspended: false,
-                suspension_reason: null,
-              })
-              .eq('id', bizId);
+            const { error: bizErr } = await wrapQuery(
+              client.from('businesses')
+                .update({
+                  subscription_end: newEnd.toISOString(),
+                  subscription_start: biz.subscription_start,
+                  is_suspended: false,
+                  suspension_reason: null,
+                })
+                .eq('id', bizId)
+            );
 
-            if (bizErr) throw bizErr;
+            if (bizErr) {
+              if (handleAuthError(bizErr)) return;
+              throw bizErr;
+            }
 
             if (amount > 0) {
-              const { error: payErr } = await client
-                .from('subscription_payments')
-                .insert({
-                  business_id: bizId,
-                  amount: amount,
-                  currency: biz.currency || 'EGP',
-                  period_start: baseDate.toISOString(),
-                  period_end: newEnd.toISOString(),
-                  payment_method: paymentMethod,
-                  notes: notes || null,
-                  received_by: State.owner?.id || null,
-                });
+              const { error: payErr } = await wrapQuery(
+                client.from('subscription_payments')
+                  .insert({
+                    business_id: bizId,
+                    amount: amount,
+                    currency: biz.currency || 'EGP',
+                    period_start: baseDate.toISOString(),
+                    period_end: newEnd.toISOString(),
+                    payment_method: paymentMethod,
+                    notes: notes || null,
+                    received_by: State.owner?.id || null,
+                  })
+              );
 
-              if (payErr) console.warn('Payment record failed:', payErr);
+              if (payErr) {
+                console.warn('Payment record failed:', payErr);
+                handleAuthError(payErr);
+              }
             }
 
             close();
@@ -2853,7 +3227,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §28 · MODAL — DELETE BUSINESS
+     §31 · MODAL — DELETE BUSINESS
      ═════════════════════════════════════════════════════════════════════ */
   function deleteBusiness(bizId) {
     const biz = State.businesses.find(b => b.id === bizId);
@@ -2930,12 +3304,14 @@
             const client = getSb();
             if (!client) throw new Error('لا يوجد اتصال');
 
-            const { error } = await client
-              .from('businesses')
-              .delete()
-              .eq('id', bizId);
+            const { error } = await wrapQuery(
+              client.from('businesses').delete().eq('id', bizId)
+            );
 
-            if (error) throw error;
+            if (error) {
+              if (handleAuthError(error)) return;
+              throw error;
+            }
 
             close();
             Toast.ok('🗑️ تم حذف النشاط', biz.name);
@@ -2955,19 +3331,21 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §29 · UPDATE HELPERS
+     §32 · UPDATE HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   async function updateBusiness(bizId, updates) {
     try {
       const client = getSb();
       if (!client) throw new Error('لا يوجد اتصال');
 
-      const { error } = await client
-        .from('businesses')
-        .update(updates)
-        .eq('id', bizId);
+      const { error } = await wrapQuery(
+        client.from('businesses').update(updates).eq('id', bizId)
+      );
 
-      if (error) throw error;
+      if (error) {
+        if (handleAuthError(error)) return false;
+        throw error;
+      }
 
       Toast.ok('تم التحديث');
       await refreshAll();
@@ -2981,7 +3359,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §30 · TAB SWITCHING
+     §33 · TAB SWITCHING
      ═════════════════════════════════════════════════════════════════════ */
   function switchTab(tab) {
     State.activeTab = tab;
@@ -2989,7 +3367,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §31 · REFRESH HELPERS
+     §34 · REFRESH HELPERS
      ═════════════════════════════════════════════════════════════════════ */
   async function refreshAll() {
     State.loading = true;
@@ -3021,7 +3399,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §32 · SETTINGS EVENTS
+     §35 · SETTINGS EVENTS
      ═════════════════════════════════════════════════════════════════════ */
   function bindSettingsEvents() {
     const savePass = document.getElementById('set-save-pass');
@@ -3048,32 +3426,8 @@
         window.lucide?.createIcons();
 
         try {
-          const bcrypt = requireBcrypt();
-          const client = getSb();
-          const { data: rows } = await client
-            .from('saas_owners')
-            .select('password_hash')
-            .eq('id', State.owner.id)
-            .single();
-
-          if (!rows) throw new Error('المالك غير موجود');
-
-          const ok = bcrypt.compareSync(current, rows.password_hash);
-          if (!ok) {
-            showErr('كلمة المرور الحالية غير صحيحة');
-            btn.disabled = false;
-            btn.innerHTML = '<i data-lucide="key"></i> تحديث كلمة المرور';
-            window.lucide?.createIcons();
-            return;
-          }
-
-          const newHash = bcrypt.hashSync(newPass, 10);
-          const { error } = await client
-            .from('saas_owners')
-            .update({ password_hash: newHash })
-            .eq('id', State.owner.id);
-
-          if (error) throw error;
+          /* ✅ RPC — يتعامل مع crypt() على السيرفر */
+          await changeOwnerPassword(current, newPass);
 
           Toast.ok('✅ تم تحديث كلمة المرور');
           document.getElementById('set-current-pass').value = '';
@@ -3082,7 +3436,7 @@
 
         } catch (e) {
           console.error(e);
-          showErr(`فشل: ${e.message}`);
+          showErr(e.message);
         } finally {
           btn.disabled = false;
           btn.innerHTML = '<i data-lucide="key"></i> تحديث كلمة المرور';
@@ -3136,7 +3490,15 @@
         window.lucide?.createIcons();
 
         try {
-          const testClient = window.supabase.createClient(url, key);
+          const testClient = window.supabase.createClient(url, key, {
+            global: {
+              headers: {
+                get 'x-owner-token'() {
+                  return State.token || TokenStore.get() || '';
+                },
+              },
+            },
+          });
           const { error } = await testClient
             .from('businesses')
             .select('id')
@@ -3176,7 +3538,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §33 · LOGIN SCREEN
+     §36 · LOGIN SCREEN
      ═════════════════════════════════════════════════════════════════════ */
   function bindLogin() {
     const form = document.getElementById('owner-login-form');
@@ -3225,7 +3587,7 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §34 · SHOW APP / LOGIN
+     §37 · SHOW APP / LOGIN
      ═════════════════════════════════════════════════════════════════════ */
   function showApp() {
     const loginScreen = document.getElementById('owner-login-screen');
@@ -3239,6 +3601,9 @@
       nameEl.textContent = State.owner.full_name || State.owner.username;
     }
 
+    /* ✅ تشغيل حلقة التحقق من الـ token */
+    startTokenVerifyLoop();
+
     refreshAll();
   }
 
@@ -3251,13 +3616,15 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §35 · TOPBAR EVENTS
+     §38 · TOPBAR EVENTS
      ═════════════════════════════════════════════════════════════════════ */
   function bindTopbar() {
     const logoutBtn = document.getElementById('owner-logout-btn');
     if (logoutBtn) {
-      logoutBtn.onclick = () => {
-        if (confirm('تسجيل الخروج من لوحة المالك؟')) logoutOwner();
+      logoutBtn.onclick = async () => {
+        if (confirm('تسجيل الخروج من لوحة المالك؟')) {
+          await logoutOwner({ silent: false });
+        }
       };
     }
 
@@ -3280,37 +3647,56 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §36 · INIT
+     §39 · INIT
      ═════════════════════════════════════════════════════════════════════ */
   async function init() {
     if (State.initialized) return;
     State.initialized = true;
 
     console.log(
-      '%c🔐 SaaS Owner Panel initializing…',
+      '%c🔐 SaaS Owner Panel v2.0.0 initializing…',
       'color:#D4A017;font-weight:900;font-size:13px;'
     );
 
-    /* تحقق من bcrypt */
+    /* تحقق من bcrypt (اختياري للـ UX) */
     const b = getBcrypt();
     if (b) {
       console.log(
-        '%c✅ bcrypt resolved',
+        '%c✅ bcrypt resolved (client-side validation only)',
         'color:#0f7a43;font-weight:700;font-size:11px;'
       );
     } else {
       console.warn(
-        '%c⚠️ bcrypt غير محمَّل — تأكد من تحميل bcryptjs في owner.html',
-        'color:#b3261e;font-weight:900;font-size:12px;'
+        '%c⚠️ bcrypt غير محمَّل — سيتم الاعتماد على التحقق من السيرفر فقط',
+        'color:#a55a00;font-weight:900;font-size:12px;'
       );
     }
 
     bindSupabaseConfig();
 
+    /* استرجاع الجلسة */
     const session = restoreOwnerSession();
 
-    if (session && State.owner) {
-      showApp();
+    if (session && State.owner && State.token) {
+      console.log('[Owner.init] Session restored — verifying token…');
+
+      /* التحقق من الـ token عبر السيرفر قبل عرض الواجهة */
+      const client = getSb();
+      if (client) {
+        const ok = await verifyToken();
+        if (ok) {
+          showApp();
+        } else {
+          console.warn('[Owner.init] Token verification failed — showing login');
+          clearOwnerSession();
+          showLogin();
+          bindLogin();
+        }
+      } else {
+        /* Supabase غير مُهيّأ — نظهر Login */
+        showLogin();
+        bindLogin();
+      }
     } else {
       showLogin();
       bindLogin();
@@ -3324,13 +3710,13 @@
     }
 
     console.log(
-      `%c✅ Owner Panel ready${State.owner ? ` · ${State.owner.username}` : ''}`,
+      `%c✅ Owner Panel v2.0.0 ready${State.owner ? ` · ${State.owner.username}` : ''}`,
       'color:#0f7a43;font-weight:900;font-size:13px;'
     );
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §37 · EXPORT — window.OwnerPanel
+     §40 · EXPORT — window.OwnerPanel
      ═════════════════════════════════════════════════════════════════════ */
   window.OwnerPanel = {
     /* Lifecycle */
@@ -3341,6 +3727,7 @@
 
     /* Auth */
     logout: logoutOwner,
+    verifyToken,
 
     /* Modals */
     openCreateBusiness,
@@ -3362,7 +3749,7 @@
     SBConfig,
     bindSupabaseConfig,
 
-    /* bcrypt helper (للاستخدام الخارجي إن احتجت) */
+    /* bcrypt helper (client-side only) */
     getBcrypt,
 
     /* State (للتصحيح فقط) */
@@ -3370,7 +3757,7 @@
   };
 
   /* ═════════════════════════════════════════════════════════════════════
-     §38 · AUTO-INIT
+     §41 · AUTO-INIT
      ═════════════════════════════════════════════════════════════════════ */
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
@@ -3381,12 +3768,22 @@
   }
 
   /* ═════════════════════════════════════════════════════════════════════
-     §39 · LOADED CONFIRMATION
+     §42 · LOADED CONFIRMATION
      ═════════════════════════════════════════════════════════════════════ */
   console.log(
-    '%c👑 SaaS Owner Panel v1.1.1 loaded · bcrypt resolver + Supabase Config',
+    '%c👑 SaaS Owner Panel v2.0.0 loaded · Security Hardening Compliant',
     'color:#D4A017;font-weight:900;font-size:13px;padding:3px 8px;' +
     'background:linear-gradient(135deg,#f0d68c,#9c7726);border-radius:4px;'
+  );
+
+  console.log(
+    '%c🔐 RPC-based auth · Session tokens · x-owner-token header',
+    'color:#0f7a43;font-weight:900;font-size:11px;'
+  );
+
+  console.log(
+    '%c🛡️  كل CRUD محمي بـ RLS عبر owner_sessions — لا fallback',
+    'color:#1c4fd8;font-weight:700;font-size:11px;'
   );
 
   console.log(
