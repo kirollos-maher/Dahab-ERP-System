@@ -1,0 +1,443 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   GOLD MS ERP — mobile.css  (v1.0)
+   طبقة تحسين واجهة الموبايل — تُحمَّل بعد style.css و login-wizard.css
+   ─────────────────────────────────────────────────────────────────────
+   - كل القواعد مقيّدة بـ [data-layout="mobile"] → لا تؤثر على الديسكتوب
+   - بدون backdrop-filter / will-change / transform (أمان أجهزة Infinix/Tecno)
+   - الجداول تتحول لبطاقات (يعمل مع js/33-mobile-fit.js)
+   - لإبقاء جدول معيّن كجدول عادي أضف عليه class="tbl-keep"
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@media screen {
+
+/* ═════════════════════════════════════════════════════════════════════
+   §1 · SAFE AREA (PWA على شاشات بنوتش)
+   الـ topbar كان بياخد padding-top للنوتش وارتفاعه ثابت → المحتوى كان
+   بينضغط. هنا الارتفاع الكلي = الارتفاع الأصلي + النوتش.
+   ═════════════════════════════════════════════════════════════════════ */
+html[data-layout="mobile"][data-pwa-standalone="true"] {
+  --topbar-h: calc(56px + env(safe-area-inset-top, 0px));
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   §2 · TOPBAR — صف واحد مرتب + قائمة "المزيد"
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] .topbar {
+  gap: 8px;
+  padding-inline: 12px;
+}
+
+[data-layout="mobile"] .spacer { min-width: 0; }
+
+[data-layout="mobile"] .icon-btn {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+[data-layout="mobile"][data-layout-size="xs"] .icon-btn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+[data-layout="mobile"] .net-pill { padding: 8px 10px; }
+
+/* زر "المزيد" */
+#more-btn { display: none; }
+[data-layout="mobile"] #more-btn { display: grid; }
+#more-btn svg { width: 18px; height: 18px; }
+
+/* اللوحة المنسدلة */
+#topbar-more { display: none; }
+
+[data-layout="mobile"] #topbar-more.open {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: fixed;
+  top: calc(var(--topbar-h) + 6px);
+  inset-inline-end: 10px;
+  width: min(300px, calc(100vw - 20px));
+  max-height: calc(100vh - var(--topbar-h) - 20px);
+  max-height: calc(100dvh - var(--topbar-h) - 20px);
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .35);
+  z-index: 70;
+}
+
+[data-layout="mobile"] #topbar-more .role-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 8px 14px;
+}
+
+[data-layout="mobile"] #topbar-more .lang-switch {
+  display: flex;
+  width: 100%;
+}
+
+[data-layout="mobile"] #topbar-more .lang-btn {
+  flex: 1;
+  justify-content: center;
+  min-height: 42px;
+  font-size: 13px;
+}
+
+/* sync / cache كانت مخفية بالكامل على الموبايل — دلوقتي ظاهرة بالاسم */
+[data-layout="mobile"] #topbar-more .icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+[data-layout="mobile"] #topbar-more .icon-btn::after { content: attr(title); }
+
+/* ═════════════════════════════════════════════════════════════════════
+   §3 · TABS — اسم التبويب كامل + مسافات أوضح
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] .tab {
+  padding: 12px 15px;
+  font-size: 12px;
+  gap: 7px;
+}
+
+[data-layout="mobile"] .tab span:not(.tab-badge) {
+  max-width: 140px;
+}
+
+/* شريط الإعلانات كان بيتثبت فوق التبويبات */
+[data-layout="mobile"] .ticker {
+  top: calc(var(--topbar-h) + var(--tabs-h));
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   §4 · المسافات العامة (عشان العناصر متبقاش متقاربة)
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] .page {
+  padding: 14px 12px calc(28px + env(safe-area-inset-bottom, 0px));
+}
+
+[data-layout="mobile"] .page-header { margin-bottom: 16px; }
+
+[data-layout="mobile"] .card + .card { margin-top: 14px; }
+
+[data-layout="mobile"] .card-head {
+  gap: 10px;
+  padding: 13px 14px;
+}
+
+[data-layout="mobile"] .card-head .card-sub {
+  white-space: normal;
+  margin-inline-start: 0;
+}
+
+[data-layout="mobile"] .kpi-row,
+[data-layout="mobile"] .kpi-row.cols-3,
+[data-layout="mobile"] .kpi-row.cols-4,
+[data-layout="mobile"] .kpi-row.cols-5 {
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+[data-layout="mobile"] .grid-form,
+[data-layout="mobile"] .grid-form.three,
+[data-layout="mobile"] .grid-form.four { gap: 14px; }
+
+[data-layout="mobile"] .grid { gap: 12px; }
+[data-layout="mobile"] .field { gap: 6px; }
+[data-layout="mobile"] .field label { line-height: 1.5; }
+
+[data-layout="mobile"] .toolbar { gap: 10px; padding: 12px 14px; }
+[data-layout="mobile"] .toolbar-row { gap: 10px; padding: 12px 14px; }
+
+[data-layout="mobile"] .btn-row { gap: 10px; }
+
+/* الأزرار: النص الطويل ياخد سطرين بدل ما يتقص */
+[data-layout="mobile"] .btn {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.35;
+  padding-block: 11px;
+}
+
+[data-layout="mobile"] .btn-group .btn { white-space: nowrap; }
+
+[data-layout="mobile"] .row-actions { gap: 8px; flex-wrap: wrap; }
+
+[data-layout="mobile"] .row-act,
+[data-layout="mobile"] .icon-action {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+[data-layout="mobile"] .pg-controls { gap: 8px; }
+[data-layout="mobile"] .active-filters { padding: 0 14px 12px; gap: 8px; }
+
+[data-layout="mobile"] .karat-grid { gap: 10px; }
+
+[data-layout="mobile"] .queue-item,
+[data-layout="mobile"] .feed-item { margin-bottom: 10px; }
+
+[data-layout="mobile"] .audit-row { padding: 13px 12px; }
+
+[data-layout="mobile"] .setting-item { padding: 14px; gap: 12px; }
+[data-layout="mobile"] .setting-item + .setting-item { margin-top: 12px; }
+
+[data-layout="mobile"] .stat-row { padding: 11px 0; }
+
+[data-layout="mobile"] .calc-list .cl-row { padding: 12px 0; }
+
+/* الهوامش السالبة كانت (-16px) أكبر من padding الكارت (14px) فبتتقص */
+[data-layout="mobile"] .calc-list .cl-row.hi {
+  margin-inline: -14px;
+  padding-inline: 14px;
+}
+
+/* خطوط صغيرة جداً → حد أدنى 11px */
+[data-layout="mobile"] .pill,
+[data-layout="mobile"] .entry-type-pill,
+[data-layout="mobile"] .cell-sku .sku-meta,
+[data-layout="mobile"] .qi-meta,
+[data-layout="mobile"] .feed-meta,
+[data-layout="mobile"] .audit-meta,
+[data-layout="mobile"] .audit-time,
+[data-layout="mobile"] .tab .tab-badge,
+[data-layout="mobile"] .tolerance-labels,
+[data-layout="mobile"] .tolerance-zones-labels,
+[data-layout="mobile"] .branch-metric small,
+[data-layout="mobile"] .kpi-meta {
+  font-size: 11px;
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   §5 · الجداول → بطاقات (كل الأعمدة ظاهرة بدون سحب جانبي)
+   تعمل فقط بعد ما js/33-mobile-fit.js يضيف .m-cards و data-label
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] .m-cards-wrap {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  margin-inline: 0;
+  max-width: 100%;
+  padding: 10px 10px 0;
+}
+
+[data-layout="mobile"] .tbl.m-cards {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+[data-layout="mobile"] .tbl.m-cards thead { display: none; }
+
+[data-layout="mobile"] .tbl.m-cards tbody,
+[data-layout="mobile"] .tbl.m-cards tfoot {
+  display: block;
+}
+
+[data-layout="mobile"] .tbl.m-cards tr {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+  position: relative;
+  margin: 0 0 12px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+[data-layout="mobile"] .tbl.m-cards tbody tr:hover { background: var(--surface-2); }
+
+[data-layout="mobile"] .tbl.m-cards tbody tr.selected {
+  background: var(--gold-soft);
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+}
+
+[data-layout="mobile"] .tbl.m-cards tfoot tr {
+  background: var(--gold-soft);
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+}
+
+[data-layout="mobile"] .tbl.m-cards tbody td,
+[data-layout="mobile"] .tbl.m-cards tfoot td {
+  display: block;
+  min-width: 0;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: start !important;
+  overflow-wrap: anywhere;
+}
+
+[data-layout="mobile"] .tbl.m-cards td::before {
+  content: attr(data-label);
+  display: block;
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.4;
+  color: var(--muted);
+  letter-spacing: .2px;
+}
+
+[data-layout="mobile"] .tbl.m-cards td[data-label=""]::before,
+[data-layout="mobile"] .tbl.m-cards td:not([data-label])::before { display: none; }
+
+/* الأرقام: تفضل LTR لكن محاذاتها تتبع اتجاه الصفحة (التسمية والرقم بنفس الجهة) */
+html[dir="rtl"][data-layout="mobile"] .tbl.m-cards td.col-num { text-align: right !important; }
+
+html[dir="ltr"][data-layout="mobile"] .tbl.m-cards td.col-num { text-align: left !important; }
+
+[data-layout="mobile"] .tbl.m-cards td.col-num { white-space: normal; }
+
+[data-layout="mobile"] .tbl.m-cards td.m-main {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+[data-layout="mobile"] .tbl.m-cards td.m-main::before { display: none; }
+
+[data-layout="mobile"] .tbl.m-cards td.m-full { grid-column: 1 / -1; }
+
+[data-layout="mobile"] .tbl.m-cards td.m-blank { display: none; }
+
+[data-layout="mobile"] .tbl.m-cards td.m-act {
+  grid-column: 1 / -1;
+  padding-top: 12px !important;
+  border-top: 1px dashed var(--border) !important;
+}
+
+[data-layout="mobile"] .tbl.m-cards td.m-act::before { display: none; }
+
+[data-layout="mobile"] .tbl.m-cards td.m-act .row-actions { justify-content: flex-start; }
+
+[data-layout="mobile"] .tbl.m-cards td.m-chk {
+  position: absolute;
+  top: 14px;
+  inset-inline-end: 14px;
+  width: auto;
+}
+
+[data-layout="mobile"] .tbl.m-cards td.m-chk::before { display: none; }
+
+[data-layout="mobile"] .tbl.m-cards tr.m-has-chk td.m-main { padding-inline-end: 36px !important; }
+
+/* صف "لا توجد بيانات" */
+[data-layout="mobile"] .tbl.m-cards tr.m-empty {
+  display: block;
+  padding: 8px;
+  text-align: center;
+  background: transparent;
+  border: 0;
+}
+
+[data-layout="mobile"] .tbl.m-cards tr.m-empty td { text-align: center !important; }
+[data-layout="mobile"] .tbl.m-cards tr.m-empty td::before { display: none; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   §6 · النوافذ المنبثقة (Bottom Sheet حقيقي)
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] .overlay {
+  padding: 0;
+  padding-top: max(10px, env(safe-area-inset-top, 0px));
+  align-items: flex-end;
+}
+
+[data-layout="mobile"] .modal {
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(100vh - 10px);
+  max-height: calc(100dvh - max(10px, env(safe-area-inset-top, 0px)));
+}
+
+[data-layout="mobile"] .modal-head { gap: 10px; }
+[data-layout="mobile"] .modal-body { padding: 18px 16px; }
+
+[data-layout="mobile"] .modal-foot {
+  gap: 10px;
+  padding: 14px 16px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom, 0px));
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   §7 · شاشة الدخول
+   المشكلة: grid + place-items:center لما الكارت أطول من الشاشة (أو الكيبورد
+   مفتوح) الجزء العلوي بيتقص ومينفعش تسكرول له. الحل: flex + margin:auto.
+   ═════════════════════════════════════════════════════════════════════ */
+#login-screen {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+#login-screen .wizard-card { margin: auto; }
+
+[data-layout="mobile"] #login-screen {
+  padding: 0;
+  align-items: stretch;
+}
+
+[data-layout="mobile"] #login-screen .wizard-card {
+  margin: auto 0 0;
+  padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+}
+
+[data-layout="mobile"] .wizard-field { margin-bottom: 16px; }
+[data-layout="mobile"] .wizard-btn-row { gap: 12px; margin-top: 10px; }
+[data-layout="mobile"] .wizard-error { margin-top: 14px; }
+[data-layout="mobile"] .wizard-hint { margin-top: 14px; font-size: 12px; }
+[data-layout="mobile"] .wizard-footer { margin-top: 20px; }
+[data-layout="mobile"] .wizard-steps { margin-bottom: 20px; }
+
+/* ═════════════════════════════════════════════════════════════════════
+   §8 · شبكات مكتوبة inline في ملفات JS (3 أعمدة فأكتر → تتكيف)
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] [style*="repeat(3"],
+[data-layout="mobile"] [style*="repeat(4"],
+[data-layout="mobile"] [style*="repeat(5"],
+[data-layout="mobile"] [style*="repeat(6"] {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)) !important;
+  gap: 12px !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   §9 · حماية عامة من القص الأفقي
+   ═════════════════════════════════════════════════════════════════════ */
+[data-layout="mobile"] .card-body,
+[data-layout="mobile"] .modal-body,
+[data-layout="mobile"] .kpi,
+[data-layout="mobile"] .queue-item .qi-body,
+[data-layout="mobile"] .feed-body,
+[data-layout="mobile"] .audit-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-layout="mobile"] .page > * { max-width: 100%; }
+
+} /* end @media screen */
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ✅ mobile.css — نهاية الملف
+   ═══════════════════════════════════════════════════════════════════════ */
