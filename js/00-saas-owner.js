@@ -814,7 +814,7 @@
     /* ✅ RPC — التحقق + إنشاء session token */
     const { data, error } = await client.rpc('authenticate_saas_owner', {
       p_username: String(username).trim(),
-      p_password: String(password),
+      p_password: String(password).trim(),    // ← trim المسافات الزايدة
       p_ip: ip,
       p_user_agent: userAgent,
     });
