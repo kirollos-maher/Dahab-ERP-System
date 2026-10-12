@@ -162,24 +162,31 @@
 
     <form id="owner-login-form" autocomplete="on">
       <div class="field">
-        <label for="owner-username">Username</label>
-        <input type="text" id="owner-username"
-               required
-               dir="ltr"
-               class="mono"
-               autocomplete="username"
-               placeholder="owner"
-               spellcheck="false">
-      </div>
+  <label for="owner-username">Username</label>
+  <input type="text" id="owner-username"
+         required
+         dir="ltr"
+         class="mono"
+         autocomplete="username"
+         autocapitalize="none"
+         autocorrect="off"
+         spellcheck="false"
+         inputmode="text"
+         placeholder="owner">
+</div>
 
       <div class="field">
         <label for="owner-password">Password</label>
         <input type="password" id="owner-password"
-               required
-               dir="ltr"
-               class="mono"
-               autocomplete="current-password"
-               placeholder="••••••••">
+              required
+              dir="ltr"
+              class="mono"
+              autocomplete="current-password"
+              autocapitalize="none"
+              autocorrect="off"
+              spellcheck="false"
+              inputmode="text"
+              placeholder="••••••••">
       </div>
 
       <button type="submit" class="btn btn-primary btn-lg btn-block" id="owner-login-btn">
