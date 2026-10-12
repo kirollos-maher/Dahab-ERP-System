@@ -658,11 +658,12 @@
         auth: { persistSession: false, autoRefreshToken: false },
         realtime: { params: { eventsPerSecond: 10 } },
         global: {
-          headers: {
-            /* ✅ يُرسَل تلقائياً مع كل طلب — RLS يقرأه في is_valid_owner_session() */
-            get 'x-owner-token'() {
-              return State.token || TokenStore.get() || '';
-            },
+          /* ✅ FIX: التوكن بيتقرأ وقت كل طلب (مش مرة واحدة وقت createClient) */
+          fetch: (input, init = {}) => {
+            const h = new Headers(init.headers || (input && input.headers) || {});
+            const t = State.token || TokenStore.get() || '';
+            if (t) h.set('x-owner-token', t); else h.delete('x-owner-token');
+            return fetch(input, { ...init, headers: h });
           },
         },
       });
@@ -719,7 +720,6 @@
       msg.includes('unauthorized') ||
       msg.includes('jwt') ||
       code === 'pgrst301' ||
-      code === '42501' ||
       code === '28000';
 
     if (isAuthIssue) {
@@ -3492,10 +3492,10 @@
         try {
           const testClient = window.supabase.createClient(url, key, {
             global: {
-              headers: {
-                get 'x-owner-token'() {
-                  return State.token || TokenStore.get() || '';
-                },
+              fetch: (input, init = {}) => {
+                const h = new Headers(init.headers || {});
+                h.set('x-owner-token', State.token || TokenStore.get() || '');
+                return fetch(input, { ...init, headers: h });
               },
             },
           });
