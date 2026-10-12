@@ -658,11 +658,44 @@
         auth: { persistSession: false, autoRefreshToken: false },
         realtime: { params: { eventsPerSecond: 10 } },
         global: {
-          /* ✅ FIX: التوكن بيتقرأ وقت كل طلب (مش مرة واحدة وقت createClient) */
+          /* ✅ FIX v2.0.1: headers يتم دمجها تلقائياً + fetch interceptor */
+          headers: {
+            'x-owner-token': State.token || TokenStore.get() || '',
+          },
           fetch: (input, init = {}) => {
-            const h = new Headers(init.headers || (input && input.headers) || {});
+            let baseHeaders = {};
+
+            /* استخراج الهيدرز من init أو input بشكل آمن */
+            if (init && init.headers) {
+              if (init.headers instanceof Headers) {
+                init.headers.forEach((v, k) => { baseHeaders[k] = v; });
+              } else {
+                baseHeaders = { ...init.headers };
+              }
+            } else if (input && input.headers) {
+              if (input.headers instanceof Headers) {
+                input.headers.forEach((v, k) => { baseHeaders[k] = v; });
+              } else {
+                baseHeaders = { ...input.headers };
+              }
+            }
+
+            const h = new Headers(baseHeaders);
+
+            /* ✅ 1 · نضمن x-owner-token موجود دائماً */
             const t = State.token || TokenStore.get() || '';
-            if (t) h.set('x-owner-token', t); else h.delete('x-owner-token');
+            if (t) {
+              h.set('x-owner-token', t);
+            }
+
+            /* ✅ 2 · نضمن apikey و authorization موجودين */
+            if (!h.has('apikey') && key) {
+              h.set('apikey', key);
+            }
+            if (!h.has('authorization') && key) {
+              h.set('authorization', 'Bearer ' + key);
+            }
+
             return fetch(input, { ...init, headers: h });
           },
         },
@@ -815,6 +848,9 @@
 
     TokenStore.set(token, expiresAt);
 
+    /* ✅ FIX v2.0.1: إعادة إنشاء الـ client عشان يلتقط الـ token الجديد */
+    State.supabaseClient = null;
+
     const session = {
       session_type: 'saas_owner',
       owner: {
@@ -826,6 +862,7 @@
       expiresAt: expiresAt ? new Date(expiresAt).getTime() : Date.now() + SESSION_TTL_MS,
     };
 
+    
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     } catch (_) {}
@@ -870,6 +907,9 @@
         try { return localStorage.getItem(TOKEN_EXPIRES_KEY); }
         catch (_) { return null; }
       })();
+
+      /* ✅ FIX v2.0.1: نضمن الـ client يلتقط الـ token المسترجَع */
+      State.supabaseClient = null;
 
       return s;
     } catch (e) {
@@ -946,6 +986,9 @@
     try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
     TokenStore.clear();
     State.owner = null;
+
+    /* ✅ FIX v2.0.1: إعادة تعيين الـ client بعد الخروج */
+    State.supabaseClient = null;
   }
 
   /**
